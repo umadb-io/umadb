@@ -174,7 +174,6 @@ cross_build:
 	$(MAKE) ensure_target
 	@echo "🚀 Building RUST_TARGET: $(RUST_TARGET), HOST_OS: $(HOST_OS), HOST_ARCH: $(HOST_ARCH)"
 	echo "🔧 Standard cross build"
-	/usr/bin/protoc --version
 	CARGO_BUILD_BUILD_DIR="target/$(RUST_TARGET)/build" PROTOC=/usr/bin/protoc cross build --release --package umadb --target "$(RUST_TARGET)"
 
 # ---------------------------------------------
