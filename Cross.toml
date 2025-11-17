@@ -6,39 +6,32 @@
 # -----------------------------
 [target.x86_64-unknown-linux-gnu]
 image = "ghcr.io/cross-rs/x86_64-unknown-linux-gnu:latest"
-#pre-build = [
-#    'apt-get update && apt-get install -y unzip',
-#    'curl -LO "https://github.com/protocolbuffers/protobuf/releases/download/v33.1/protoc-33.1-linux-x86_64.zip" && unzip protoc-33.1-linux-x86_64.zip -d /usr/ && chmod 755 /usr/bin/protoc',
-#]
+pre-build = [
+    'apt-get update && apt-get install -y unzip',
+    'curl -LO "https://github.com/protocolbuffers/protobuf/releases/download/v33.1/protoc-33.1-linux-x86_64.zip" && unzip protoc-33.1-linux-x86_64.zip -d /usr/ && chmod 755 /usr/bin/protoc',
+]
 
 [target.aarch64-unknown-linux-gnu]
 image = "ghcr.io/cross-rs/aarch64-unknown-linux-gnu:latest"
-#pre-build = [
-#    "apt-get update && apt-get install -y git cmake g++ unzip",
-#    # Build protoc from source (works in cross)
-#    "git clone --depth 1 https://github.com/protocolbuffers/protobuf.git /tmp/protobuf",
-#    "cd /tmp/protobuf && cmake -B build -Dprotobuf_BUILD_TESTS=OFF && cmake --build build --target protoc --parallel",
-#    "cp /tmp/protobuf/build/protoc /usr/bin/protoc"
-#]
+pre-build = [
+    "apt-get update && apt-get install -y protobuf-compiler",
+]
 
 # -----------------------------
 # Linux MUSL targets
 # -----------------------------
 [target.x86_64-unknown-linux-musl]
 image = "ghcr.io/cross-rs/x86_64-unknown-linux-musl"
-#pre-build = [
-#    'apt-get update && apt-get install -y unzip',
-#    'curl -LO "https://github.com/protocolbuffers/protobuf/releases/download/v33.1/protoc-33.1-linux-x86_64.zip" && unzip protoc-33.1-linux-x86_64.zip -d /usr/ && chmod 755 /usr/bin/protoc',
-#]
+pre-build = [
+    'apt-get update && apt-get install -y unzip',
+    'curl -LO "https://github.com/protocolbuffers/protobuf/releases/download/v33.1/protoc-33.1-linux-x86_64.zip" && unzip protoc-33.1-linux-x86_64.zip -d /usr/ && chmod 755 /usr/bin/protoc',
+]
 
 [target.aarch64-unknown-linux-musl]
 image = "ghcr.io/cross-rs/aarch64-unknown-linux-musl"
-#pre-build = [
-#    "apk update && apk add git cmake g++ unzip",
-#    "git clone --depth 1 https://github.com/protocolbuffers/protobuf.git /tmp/protobuf",
-#    "cd /tmp/protobuf && cmake -B build -Dprotobuf_BUILD_TESTS=OFF && cmake --build build --target protoc --parallel",
-#    "cp /tmp/protobuf/build/protoc /usr/bin/protoc"
-#]
+pre-build = [
+    "apt-get update && apt-get install -y protobuf-compiler",
+]
 
 # -----------------------------
 # macOS targets
