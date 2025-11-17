@@ -14,8 +14,11 @@ pre-build = [
 [target.aarch64-unknown-linux-gnu]
 image = "ghcr.io/cross-rs/aarch64-unknown-linux-gnu:latest"
 pre-build = [
-    'apt-get update && apt-get install -y unzip',
-    'curl -LO "https://github.com/protocolbuffers/protobuf/releases/download/v23.2/protoc-23.2-linux-aarch_64.zip" && unzip protoc-23.2-linux-aarch_64.zip -d /usr/ && chmod 755 /usr/bin/protoc',
+    "apt-get update && apt-get install -y git cmake g++ unzip",
+    # Build protoc from source (works in cross)
+    "git clone --depth 1 https://github.com/protocolbuffers/protobuf.git /tmp/protobuf",
+    "cd /tmp/protobuf && cmake -B build -Dprotobuf_BUILD_TESTS=OFF && cmake --build build --target protoc --parallel",
+    "cp /tmp/protobuf/build/protoc /usr/bin/protoc"
 ]
 
 # -----------------------------
@@ -31,8 +34,10 @@ pre-build = [
 [target.aarch64-unknown-linux-musl]
 image = "ghcr.io/cross-rs/aarch64-unknown-linux-musl"
 pre-build = [
-    'apt-get update && apt-get install -y unzip',
-    'curl -LO "https://github.com/protocolbuffers/protobuf/releases/download/v23.2/protoc-23.2-linux-aarch_64.zip" && unzip protoc-23.2-linux-aarch_64.zip -d /usr/ && chmod 755 /usr/bin/protoc',
+    "apk update && apk add git cmake g++ unzip",
+    "git clone --depth 1 https://github.com/protocolbuffers/protobuf.git /tmp/protobuf",
+    "cd /tmp/protobuf && cmake -B build -Dprotobuf_BUILD_TESTS=OFF && cmake --build build --target protoc --parallel",
+    "cp /tmp/protobuf/build/protoc /usr/bin/protoc"
 ]
 
 # -----------------------------
