@@ -138,7 +138,7 @@ release-crates-execute:
 
 
 # ---------------------------------------------
-# Helpers
+# Cross Build Helpers
 # ---------------------------------------------
 
 CROSS := $(shell command -v cross 2>/dev/null)
@@ -185,23 +185,6 @@ define cross_build
 		CARGO_BUILD_BUILD_DIR=target/$(1) cross build --release --package umadb --target $(1); \
 	fi
 endef
-
-
-#define cross_build
-#	$(call ensure_cross)
-#	$(call ensure_target,$(1))
-#	@echo "🚀 Building $(1)..."
-#	@if [ "$(HOST_ARCH)" = "arm64" ] || [ "$(HOST_ARCH)" = "aarch64" ]; then \
-#		if [ "$(2)" = "x86_64" ]; then \
-#			CROSS_PLATFORM=linux/amd64 cross build --release --package umadb --target $(1); \
-#		else \
-#			cross build --release --package umadb --target $(1); \
-#		fi \
-#	else \
-#		cross build --release --package umadb --target $(1); \
-#	fi
-#endef
-
 
 # ---------------------------------------------
 # Build targets
