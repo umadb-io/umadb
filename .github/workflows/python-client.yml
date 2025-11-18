@@ -51,12 +51,14 @@ jobs:
           CIBW_BUILD: "cp310-*"
 
           # Build for all relevant architectures
-          CIBW_ARCHS_LINUX: "x86_64 aarch64"
+          CIBW_ARCHS_LINUX: "x86_64"
+#          CIBW_ARCHS_LINUX: "x86_64 aarch64"   aarch64 fails, probably need QEMU?
           CIBW_ARCHS_MACOS: "universal2"
-          CIBW_ARCHS_WINDOWS: "x86 AMD64"
+#          CIBW_ARCHS_WINDOWS: "x86 AMD64"  x86 gives linker errors when compiling protoc
+          CIBW_ARCHS_WINDOWS: "AMD64"
           CIBW_BUILD_VERBOSITY: 1
           MACOSX_DEPLOYMENT_TARGET: 10.12
-          
+
           # maturin arguments
 #          CIBW_MATURIN_ARGS: --release
         with:
