@@ -33,9 +33,6 @@ jobs:
 
       - name: Build wheels
         env:
-          # Tell cibuildwheel to use maturin
-          CIBW_BUILD_FRONTEND: "maturin"
-
           # Build abi3 wheels for CPython 3.10+
           CIBW_BUILD: "cp310-abi3-*"
 
