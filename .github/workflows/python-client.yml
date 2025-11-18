@@ -34,7 +34,7 @@ jobs:
       - name: Build wheels
         env:
           # Build abi3 wheels for CPython 3.10+
-          CIBW_BUILD: "cp310-abi3-*"
+          CIBW_BUILD: "cp310-abi3"
 
           # Build for all relevant architectures
           CIBW_ARCHS_LINUX: "x86_64 aarch64"
