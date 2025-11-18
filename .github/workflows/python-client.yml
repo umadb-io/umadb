@@ -55,7 +55,8 @@ jobs:
           CIBW_ARCHS_MACOS: "universal2"
           CIBW_ARCHS_WINDOWS: "x86 AMD64"
           CIBW_BUILD_VERBOSITY: 1
-
+          MACOSX_DEPLOYMENT_TARGET: 10.12
+          
           # maturin arguments
 #          CIBW_MATURIN_ARGS: --release
         with:
