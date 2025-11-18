@@ -32,6 +32,18 @@ jobs:
       - name: Install build tools
         run: pip install maturin cibuildwheel
 
+      - name: Install Rust
+        if: runner.os == 'macOS'
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+
+      - name: Install Rust targets (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          rustup target add x86_64-apple-darwin
+          rustup target add aarch64-apple-darwin
+
       - name: Build wheels
         uses: pypa/cibuildwheel@v3.3.0
         env:
