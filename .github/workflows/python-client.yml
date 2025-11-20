@@ -1,4 +1,4 @@
-name: Build and Publish Python Wheels
+name: Python Client
 
 on:
   push:
@@ -7,103 +7,240 @@ on:
     branches:
       - main
 
-
 permissions:
   contents: read
 
 jobs:
-  build:
-    name: Build wheels
-    runs-on: ${{ matrix.os }}
-
+  linux:
+    runs-on: ${{ matrix.platform.runner }}
+    env:
+      PYO3_USE_ABI3_FORWARD_COMPATIBILITY: 1
     strategy:
-      fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
-
+        python-version: ["3.10"]
+        #        python-version: ["3.9", "3.10", "3.11", "3.12", "3.13", "3.13t", "3.14", "3.14t"]
+        platform:
+          - runner: ubuntu-22.04
+            target: x86_64
+            container: quay.io/pypa/manylinux2014_x86_64:latest
+          #          - runner: ubuntu-22.04
+          #            target: x86
+          - runner: ubuntu-22.04
+            target: aarch64
+            container: quay.io/pypa/manylinux2014_aarch64:latest
+    #          - runner: ubuntu-22.04
+    #            target: armv7
+    #          - runner: ubuntu-22.04
+    #            target: s390x
+    #          - runner: ubuntu-22.04
+    #            target: ppc64le
     steps:
       - uses: actions/checkout@v4
-
-      # cibuildwheel always requires a Python, even with abi3
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: ${{ matrix.python-version }}
 
-      - name: Install Rust
-#        if: runner.os == 'macOS'
-        uses: dtolnay/rust-toolchain@master
+      - name: Setup QEMU
+        if: matrix.platform.target != 'x86_64'
+        uses: docker/setup-qemu-action@v1
+
+      - name: Build wheels
+        uses: PyO3/maturin-action@v1
         with:
-          toolchain: stable
+          target: ${{ matrix.platform.target }}
+          args: --release --out dist --manifest-path crates/python/Cargo.toml -i python${{ matrix.python-version }}
+          #          sccache: ${{ !startsWith(github.ref, 'refs/tags/') }}
+          manylinux: auto
+          container: ${{ matrix.platform.container }}
+          before-script-linux: |
+            PROTOC_VERSION=33.1
+            case "$(uname -m)" in
+              x86_64)  PROTOC_ZIP="protoc-${PROTOC_VERSION}-linux-x86_64.zip" ;;
+              aarch64) PROTOC_ZIP="protoc-${PROTOC_VERSION}-linux-aarch_64.zip" ;;
+              armv7l)  PROTOC_ZIP="protoc-${PROTOC_VERSION}-linux-armv7.zip" ;;
+              i686)    PROTOC_ZIP="protoc-${PROTOC_VERSION}-linux-x86_32.zip" ;;
+              *) echo "Unsupported arch: $(uname -m)" >&2; exit 1 ;;
+            esac
+            curl -LO "https://github.com/protocolbuffers/protobuf/releases/download/v${PROTOC_VERSION}/${PROTOC_ZIP}"
+            mkdir -p "$HOME/protoc"
+            python3 - "$PROTOC_ZIP" "$HOME/protoc" <<'PYCODE'
+            import zipfile, sys, os
+            with zipfile.ZipFile(sys.argv[1]) as zf:
+                zf.extractall(sys.argv[2])
+            PYCODE
+            chmod +x "$HOME/protoc/bin/protoc"
+            export PATH="$HOME/protoc/bin:$PATH"
 
-      - name: Install Rust targets (macOS)
-        if: runner.os == 'macOS'
-        run: |
-          rustup target add x86_64-apple-darwin
-          rustup target add aarch64-apple-darwin
+      - name: Upload wheels
+        uses: actions/upload-artifact@v4
+        with:
+          name: wheels-linux-${{ matrix.python-version }}-${{ matrix.platform.target }}
+          path: dist
 
-      - name: Install Protoc  # I think we only need this for macos?
+
+  musllinux:
+    runs-on: ${{ matrix.platform.runner }}
+    env:
+      PYO3_USE_ABI3_FORWARD_COMPATIBILITY: 1
+    strategy:
+      matrix:
+        python-version: ["3.10"]
+        platform:
+          - runner: ubuntu-22.04
+            target: x86_64
+          - runner: ubuntu-22.04
+            target: aarch64
+    #          - runner: ubuntu-22.04
+    #            target: armv7
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Setup QEMU
+        if: matrix.platform.target != 'x86_64'
+        uses: docker/setup-qemu-action@v1
+
+      - name: Build wheels
+        uses: PyO3/maturin-action@v1
+        with:
+          target: ${{ matrix.platform.target }}
+          args: --release --out dist --manifest-path crates/python/Cargo.toml -i python${{ matrix.python-version }}
+          #          sccache: ${{ !startsWith(github.ref, 'refs/tags/') }}
+          manylinux: musllinux_1_2
+          before-script-linux: |
+            PROTOC_VERSION=33.1
+            case "$(uname -m)" in
+              x86_64)  PROTOC_ZIP="protoc-${PROTOC_VERSION}-linux-x86_64.zip" ;;
+              aarch64) PROTOC_ZIP="protoc-${PROTOC_VERSION}-linux-aarch_64.zip" ;;
+              armv7l)  PROTOC_ZIP="protoc-${PROTOC_VERSION}-linux-armv7.zip" ;;
+              i686)    PROTOC_ZIP="protoc-${PROTOC_VERSION}-linux-x86_32.zip" ;;
+              *) echo "Unsupported arch: $(uname -m)" >&2; exit 1 ;;
+            esac
+            curl -LO "https://github.com/protocolbuffers/protobuf/releases/download/v${PROTOC_VERSION}/${PROTOC_ZIP}"
+            unzip "${PROTOC_ZIP}" -d "$HOME/protoc"
+            export PATH="$HOME/protoc/bin:$PATH"
+
+      - name: Upload wheels
+        uses: actions/upload-artifact@v4
+        with:
+          name: wheels-musllinux-${{ matrix.python-version }}-${{ matrix.platform.target }}
+          path: dist
+
+
+  windows:
+    runs-on: ${{ matrix.platform.runner }}
+    env:
+      PYO3_USE_ABI3_FORWARD_COMPATIBILITY: 1
+    strategy:
+      matrix:
+        python-version: ["3.10"]
+        platform:
+          - runner: windows-latest
+            target: x64
+          - runner: windows-latest
+            target: x86
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          architecture: ${{ matrix.platform.target }}
+
+      - name: Install Protoc
         uses: arduino/setup-protoc@v3
         with:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
 
-#      - name: Install build tools
-#        run: pip install maturin cibuildwheel
-#
-#       Only enable QEMU on Linux runners (for aarch64 on linux?)
-      - name: Setup QEMU
-        if: runner.os == 'Linux'
-        uses: docker/setup-qemu-action@v1
+      - name: Build wheels
+        uses: PyO3/maturin-action@v1
+        with:
+          target: ${{ matrix.platform.target }}
+          args: --release --out dist --manifest-path crates/python/Cargo.toml
 
-      - name: Set up Docker Buildx
-        if: runner.os == 'Linux'
-        uses: docker/setup-buildx-action@v2
+      - name: Upload wheels
+        uses: actions/upload-artifact@v4
+        with:
+          name: wheels-windows-${{ matrix.python-version }}-${{ matrix.platform.target }}
+          path: dist
+
+  macos:
+    runs-on: ${{ matrix.platform.runner }}
+    env:
+      PYO3_USE_ABI3_FORWARD_COMPATIBILITY: 1
+    strategy:
+      matrix:
+        python-version: ["3.10"]
+        platform:
+          - runner: macos-latest
+            target: aarch64
+          - runner: macos-15-intel
+            target: x86_64
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install Protoc
+        uses: arduino/setup-protoc@v3
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build wheels
-        uses: pypa/cibuildwheel@v3.3.0
-        env:
-          # Build abi3 wheels for CPython 3.10+
-          CIBW_BUILD: "cp310-*"
-
-          # Build for all relevant architectures
-#          CIBW_ARCHS_LINUX: "x86_64"
-#          CIBW_ARCHS_LINUX: "x86_64 aarch64"   aarch64 fails, probably need QEMU?
-          CIBW_ARCHS_LINUX: "auto"  # try again with aarch64
-          CIBW_ARCHS_MACOS: "auto"
-#          CIBW_ARCHS_WINDOWS: "x86 AMD64"  x86 gives linker errors when compiling protoc
-          CIBW_ARCHS_WINDOWS: "auto"
-#          CIBW_BUILD_VERBOSITY: 1
-          MACOSX_DEPLOYMENT_TARGET: 10.12
-
-          # maturin arguments
-#          CIBW_MATURIN_ARGS: --release
+        uses: PyO3/maturin-action@v1
         with:
-          package-dir: ./umadb-python
-          output-dir: wheelhouse
-          config-file: "./umadb-python/pyproject.toml"
+          target: ${{ matrix.platform.target }}
+          args: --release --out dist --manifest-path umadb-python/Cargo.toml
+      #          sccache: ${{ !startsWith(github.ref, 'refs/tags/') }}
 
-      - uses: actions/upload-artifact@v4
+      - name: Upload wheels
+        uses: actions/upload-artifact@v4
         with:
-          name: cibw-wheels-${{ matrix.os }}-${{ strategy.job-index }}
-          path: ./wheelhouse/*.whl
+          name: wheels-macos-${{ matrix.python-version }}-${{ matrix.platform.target }}
+          path: dist
 
-  upload:
-    name: Upload to PyPI
-    needs: build
-    runs-on: ubuntu-latest
-    permissions:
-      id-token: write
-      contents: write
+#  sdist:
+#    runs-on: ubuntu-latest
+#    steps:
+#      - uses: actions/checkout@v4
+#
+#      - name: Build sdist
+#        uses: PyO3/maturin-action@v1
+#        with:
+#          command: sdist
+#          args: --out dist --manifest-path crates/python/Cargo.toml
+#
+#      - name: Upload sdist
+#        uses: actions/upload-artifact@v4
+#        with:
+#          name: wheels-sdist
+#          path: dist
 
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          name: wheels
-          path: wheelhouse
-
-      - name: Publish to PyPI
-        env:
-          MATURIN_PYPI_TOKEN: ${{ secrets.PYPI_API_TOKEN }}
-        run: |
-          ls -lh wheelhouse/*
-          pip install maturin
-#          maturin upload --skip-existing wheelhouse/*
+#  release:
+#    name: Release
+#    runs-on: ubuntu-latest
+#    #    if: ${{ startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch' }}
+#    needs: [linux, musllinux, windows, macos, sdist]
+#    permissions:
+#      # Use to sign the release artifacts
+#      id-token: write
+#      # Used to upload release artifacts
+#      contents: write
+#      # Used to generate artifact attestation
+#      attestations: write
+#    steps:
+#      - uses: actions/download-artifact@v4
+#      - name: Generate artifact attestation
+#        uses: actions/attest-build-provenance@v2
+#        with:
+#          subject-path: 'wheels-*/*'
+#      - name: Publish to PyPI
+#        #        if: ${{ startsWith(github.ref, 'refs/tags/') }}
+#        uses: PyO3/maturin-action@v1
+#        env:
+#          MATURIN_PYPI_TOKEN: ${{ secrets.PYPI_API_TOKEN }}
+#        with:
+#          command: upload
+#          args: --non-interactive --skip-existing wheels-*/*
