@@ -76,21 +76,6 @@ jobs:
           pip install umadb --no-index --find-links dist --force-reinstall
           python -c "import umadb"
 
-      - name: Test built wheel
-        uses: addnab/docker-run-action@v3
-        with:
-          image: alpine:3.20
-          options: |
-            -v ${{ github.workspace }}:/work
-            --platform ${{ matrix.platform.test-on-docker-platform }}
-          run: |
-            apk add --no-cache python3 py3-pip
-            cd /work/dist
-            # Install your musllinux wheel
-            pip install *.whl
-            # Import test
-            python3 -c "import umadb; print('OK')"
-
       - name: Upload wheels
         uses: actions/upload-artifact@v4
         with:
@@ -144,9 +129,19 @@ jobs:
             export PATH="$HOME/protoc/bin:$PATH"
 
       - name: Test built wheel
-        run: |
-          pip install umadb --no-index --find-links dist --force-reinstall
-          python -c "import umadb"
+        uses: addnab/docker-run-action@v3
+        with:
+          image: alpine:3.20
+          options: |
+            -v ${{ github.workspace }}:/work
+            --platform ${{ matrix.platform.test-on-docker-platform }}
+          run: |
+            apk add --no-cache python3 py3-pip
+            cd /work/dist
+            # Install your musllinux wheel
+            pip install *.whl
+            # Import test
+            python3 -c "import umadb; print('OK')"
 
       - name: Upload wheels
         uses: actions/upload-artifact@v4
