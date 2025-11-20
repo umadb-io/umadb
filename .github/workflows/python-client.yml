@@ -23,11 +23,9 @@ jobs:
           - runner: ubuntu-22.04
             target: x86_64
             container: quay.io/pypa/manylinux2014_x86_64:latest
-            test-on-docker-platform: linux/amd64
           - runner: ubuntu-22.04
             target: aarch64
             container: quay.io/pypa/manylinux2014_aarch64:latest
-            test-on-docker-platform: linux/arm64
     #          - runner: ubuntu-22.04
     #            target: armv7
     #          - runner: ubuntu-22.04
@@ -94,8 +92,10 @@ jobs:
         platform:
           - runner: ubuntu-22.04
             target: x86_64
+            test-on-docker-platform: linux/amd64
           - runner: ubuntu-22.04
             target: aarch64
+            test-on-docker-platform: linux/arm64
     #          - runner: ubuntu-22.04
     #            target: armv7
     steps:
