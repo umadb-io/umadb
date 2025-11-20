@@ -87,7 +87,7 @@ jobs:
       - name: Test built wheel
         uses: addnab/docker-run-action@v3
         with:
-          image: quay.io/pypa/manylinux_2_28_x86_64
+          image: quay.io/pypa/manylinux_2_28_${{ matrix.platform.target }}
           options: |
             -v ${{ github.workspace }}:/work
             --platform ${{ matrix.platform.test-on-docker-platform }}
