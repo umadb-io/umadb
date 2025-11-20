@@ -71,6 +71,19 @@ jobs:
             chmod +x "$HOME/protoc/bin/protoc"
             export PATH="$HOME/protoc/bin:$PATH"
 
+      - name: Start UmaDB server
+        run: |
+          docker run -d --name umadb-test -p 50051:50051 umadb/umadb:latest
+          # Wait for server to become ready
+          for i in {1..20}; do
+              if nc -z localhost 50051; then
+                  echo "UmaDB server is up!"
+                  break
+              fi
+              echo "Waiting for UmaDB server..."
+              sleep 1
+          done
+
       - name: Test built wheel
         uses: addnab/docker-run-action@v3
         with:
@@ -81,7 +94,8 @@ jobs:
           run: |
             # Enable standard Python in the manylinux image
             /opt/python/cp310-cp310/bin/pip install /work/dist/*.whl
-            /opt/python/cp310-cp310/bin/python -c "import umadb; print('OK')"
+            /opt/python/cp310-cp310/bin/python -c "from umadb import Client; Client("http://localhost:50051")"
+
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -137,6 +151,19 @@ jobs:
             unzip "${PROTOC_ZIP}" -d "$HOME/protoc"
             export PATH="$HOME/protoc/bin:$PATH"
 
+      - name: Start UmaDB server
+        run: |
+          docker run -d --name umadb-test -p 50051:50051 umadb/umadb:latest
+          # Wait for server to become ready
+          for i in {1..20}; do
+              if nc -z localhost 50051; then
+                  echo "UmaDB server is up!"
+                  break
+              fi
+              echo "Waiting for UmaDB server..."
+              sleep 1
+          done
+
       - name: Test built wheel
         uses: addnab/docker-run-action@v3
         with:
@@ -150,7 +177,7 @@ jobs:
             . /venv/bin/activate
             cd /work/dist
             pip install *.whl
-            python -c "import umadb; print('musllinux OK')"
+            python -c "from umadb import Client; Client("http://localhost:50051")"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
