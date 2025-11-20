@@ -73,7 +73,8 @@ jobs:
 
       - name: Start UmaDB server
         run: |
-          docker run -d --name umadb-test -p 50051:50051 umadb/umadb:latest
+          docker network create umadb-net
+          docker run -d --network umadb-net --name umadb-server umadb/umadb:latest
           # Wait for server to become ready
           for i in {1..20}; do
               if nc -z localhost 50051; then
@@ -89,12 +90,12 @@ jobs:
         with:
           image: quay.io/pypa/manylinux_2_28_${{ matrix.platform.target }}
           options: |
-            -v ${{ github.workspace }}:/work
+            -v ${{ github.workspace }}/dict:/dist
             --platform ${{ matrix.platform.test-on-docker-platform }}
+            --network umadb-net
           run: |
-            # Enable standard Python in the manylinux image
-            /opt/python/cp310-cp310/bin/pip install /work/dist/*.whl
-            /opt/python/cp310-cp310/bin/python -c "from umadb import Client; Client('http://localhost:50051')"
+            /opt/python/cp310-cp310/bin/pip install /dist/*.whl
+            /opt/python/cp310-cp310/bin/python -c "from umadb import Client; Client('http://umadb-server:50051')"
 
 
       - name: Upload artifact
@@ -153,7 +154,8 @@ jobs:
 
       - name: Start UmaDB server
         run: |
-          docker run -d --name umadb-test -p 50051:50051 umadb/umadb:latest
+          docker network create umadb-net
+          docker run -d --network umadb-net --name umadb-server umadb/umadb:latest
           # Wait for server to become ready
           for i in {1..20}; do
               if nc -z localhost 50051; then
@@ -167,17 +169,14 @@ jobs:
       - name: Test built wheel
         uses: addnab/docker-run-action@v3
         with:
-          image: alpine:3.20
+          image: python:3.10-alpine
           options: |
-            -v ${{ github.workspace }}:/work
+            -v ${{ github.workspace }}/dist:/dist
             --platform ${{ matrix.platform.test-on-docker-platform }}
+            --network umadb-net
           run: |
-            apk add --no-cache python3 py3-pip
-            python3 -m venv /venv
-            . /venv/bin/activate
-            cd /work/dist
-            pip install *.whl
-            python -c "from umadb import Client; Client('http://localhost:50051')"
+            pip install /dist/*.whl
+            python -c "from umadb import Client; Client('http://umadb-server:50051')"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
