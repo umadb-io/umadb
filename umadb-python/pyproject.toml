@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "umadb"
-version = "0.1.21"
+version = "0.1.22"
 description = "Python client for UmaDB event store"
 readme = "README.md"
 requires-python = ">=3.9"

@@ -7,9 +7,9 @@ edition = { workspace = true }
 license = { workspace = true }
 
 [dependencies]
-umadb-dcb = { path = "../umadb-dcb", version = "0.1.21" }
-umadb-core = { path = "../umadb-core", version = "0.1.21" }
-umadb-proto = { path = "../umadb-proto", version = "0.1.21" }
+umadb-dcb = { path = "../umadb-dcb", version = "0.1.22" }
+umadb-core = { path = "../umadb-core", version = "0.1.22" }
+umadb-proto = { path = "../umadb-proto", version = "0.1.22" }
 tokio = { workspace = true }
 tonic = { workspace = true }
 tonic-health = { workspace = true }

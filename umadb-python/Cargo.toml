@@ -1,7 +1,7 @@
 [package]
 description = "Python bindings for UmaDB event store client"
 name = "umadb-python"
-version = "0.1.21"
+version = "0.1.22"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/pyeventsourcing/umadb"
@@ -17,7 +17,7 @@ name = "umadb"
 crate-type = ["cdylib"]
 
 [dependencies]
-umadb-client = { path = "../umadb-client", version = "0.1.21" }
-umadb-dcb = { path = "../umadb-dcb", version = "0.1.21" }
+umadb-client = { path = "../umadb-client", version = "0.1.22" }
+umadb-dcb = { path = "../umadb-dcb", version = "0.1.22" }
 pyo3 = { version = "0.24", features = ["abi3-py310", "extension-module"] }
 uuid = { version = "1.18.1", features = ["v4"] }
