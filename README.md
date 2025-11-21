@@ -456,7 +456,7 @@ clients concurrently appending events. By comparison with the unconstrained read
 
 ## Building the UmaDB Server
 
-UmaDB provides pre-built binary executables. The files are available on [GitHub Releases](https://github.com/pyeventsourcing/umadb/releases).
+UmaDB provides pre-built binary executables. The files are available on [GitHub Releases](https://github.com/umadb-io/umadb/releases).
 
 UmaDB can also be installed using Cargo.
 
@@ -547,14 +547,14 @@ umadb --listen 127.0.0.1:50051 --db-path ./uma.db  --tls-cert server.pem --tls-k
 
 UmaDB provides multi-platform Docker container images for the `linux/amd64` and `linux/arm64` platforms.
 
-The images are available on [GitHub Container Registry](https://github.com/pyeventsourcing/umadb/pkgs/container/umadb) and [Docker Hub](https://hub.docker.com/r/umadb/umadb).
+The images are available on [GitHub Container Registry](https://github.com/umadb-io/umadb/pkgs/container/umadb) and [Docker Hub](https://hub.docker.com/r/umadb/umadb).
 
 ### Pulling the Docker Image
 
 Pull "latest" from GitHub Container Registry.
 
 ```bash
-docker pull ghcr.io/pyeventsourcing/umadb:latest
+docker pull ghcr.io/umadb-io/umadb:latest
 ```
 
 Pull "latest" from Docker Hub.

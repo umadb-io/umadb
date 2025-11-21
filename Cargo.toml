@@ -23,7 +23,7 @@ exclude = [
 version = "0.1.22"
 edition = "2024"
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/pyeventsourcing/umadb"
+repository = "https://github.com/umadb-io/umadb"
 
 [workspace.dependencies]
 async-trait = "0.1.89"

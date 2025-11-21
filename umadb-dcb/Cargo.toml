@@ -4,7 +4,7 @@ version = { workspace = true }
 edition = { workspace = true }
 license = { workspace = true }
 description = "Dynamic Consistency Boundary (DCB) API - Core types and traits for UmaDB event store"
-repository = "https://github.com/pyeventsourcing/umadb"
+repository = "https://github.com/umadb-io/umadb"
 keywords = ["event-store", "event-sourcing", "database", "dcb"]
 categories = ["database"]
 

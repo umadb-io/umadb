@@ -4,7 +4,7 @@ version = { workspace = true }
 edition = { workspace = true }
 license = { workspace = true }
 description = "Core event store implementation for UmaDB"
-repository = "https://github.com/pyeventsourcing/umadb"
+repository = "https://github.com/umadb-io/umadb"
 keywords = ["event-store", "event-sourcing", "database"]
 categories = ["database"]
 

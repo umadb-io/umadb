@@ -27,8 +27,8 @@ classifiers = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/pyeventsourcing/umadb"
-Repository = "https://github.com/pyeventsourcing/umadb"
+Homepage = "https://github.com/umadb-io/umadb"
+Repository = "https://github.com/umadb-io/umadb"
 
 [tool.maturin]
 python-source = "python"
