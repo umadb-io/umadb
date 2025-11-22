@@ -1,4 +1,4 @@
-use clap::{CommandFactory, Parser, FromArgMatches};
+use clap::{CommandFactory, FromArgMatches, Parser};
 use tokio::signal;
 use tokio::sync::oneshot;
 use umadb_server::{start_server, start_server_secure_from_files};
@@ -39,7 +39,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
     let mut cmd = Args::command();
-    cmd = cmd.about(&format!("UmaDB gRPC server ({}-{})", std::env::consts::OS, std::env::consts::ARCH));
+    cmd = cmd.about(format!(
+        "UmaDB gRPC server ({}-{})",
+        std::env::consts::OS,
+        std::env::consts::ARCH
+    ));
 
     let matches = cmd.get_matches();
     let args = Args::from_arg_matches(&matches)?; // <-- FromArgMatches trait

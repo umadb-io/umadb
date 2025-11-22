@@ -37,7 +37,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Last known position is: {:?}", last_known_position);
 
     // Produce new event
-    let event = DCBEvent::new()
+    let event = DCBEvent::default()
         .event_type("example")
         .tags(["tag1", "tag2"])
         .data(b"Hello, world!")
@@ -50,7 +50,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Appended event at position: {}", position1);
 
     // Append conflicting event - expect an error
-    let conflicting_event = DCBEvent::new()
+    let conflicting_event = DCBEvent::default()
         .event_type("example")
         .tags(["tag1", "tag2"])
         .data(b"Hello, world!")

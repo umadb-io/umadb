@@ -1,7 +1,11 @@
-use crate::umadb::{
-    AppendConditionProto, ErrorResponseProto, EventProto, QueryItemProto, QueryProto,
-    SequencedEventProto,
+pub use crate::umadb::uma_db_service_client::UmaDbServiceClient;
+pub use crate::umadb::uma_db_service_server::{UmaDbService, UmaDbServiceServer};
+pub use crate::umadb::{
+    AppendConditionProto, AppendRequestProto, AppendResponseProto, ErrorResponseProto, EventProto,
+    HeadRequestProto, HeadResponseProto, QueryItemProto, QueryProto, ReadRequestProto,
+    ReadResponseProto, SequencedEventProto,
 };
+
 use prost::Message;
 use prost::bytes::Bytes;
 use tonic::{Code, Status};
@@ -11,7 +15,7 @@ use umadb_dcb::{
 use uuid::Uuid;
 
 // Include the generated proto code
-pub mod umadb {
+mod umadb {
     tonic::include_proto!("umadb");
 }
 

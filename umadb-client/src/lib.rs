@@ -13,15 +13,13 @@ use umadb_dcb::{
     DCBAppendCondition, DCBError, DCBEvent, DCBEventStoreAsync, DCBEventStoreSync, DCBQuery,
     DCBReadResponseAsync, DCBReadResponseSync, DCBResult, DCBSequencedEvent,
 };
-use umadb_proto::dcb_error_from_status;
-use umadb_proto::umadb::uma_db_service_client;
-use umadb_proto::umadb::{
+use umadb_proto::{
     AppendConditionProto, AppendRequestProto, EventProto, HeadRequestProto, ReadRequestProto,
-    ReadResponseProto,
+    ReadResponseProto, UmaDbServiceClient, dcb_error_from_status,
 };
 
-use tokio::sync::watch;
 use std::sync::{Once, OnceLock};
+use tokio::sync::watch;
 
 /// A global watch channel for shutdown/cancel signals.
 static CANCEL_SENDER: OnceLock<watch::Sender<()>> = OnceLock::new();
@@ -97,15 +95,22 @@ impl UmaDBClient {
     }
 
     pub fn connect(&self) -> DCBResult<SyncUmaDBClient> {
-        let client = SyncUmaDBClient::connect(self.url.clone(), self.ca_path.clone(), self.batch_size);
-        if !self.without_sigint_handler && let Ok(client) = &client  {
+        let client =
+            SyncUmaDBClient::connect(self.url.clone(), self.ca_path.clone(), self.batch_size);
+        if !self.without_sigint_handler
+            && let Ok(client) = &client
+        {
             client.register_cancel_sigint_handler();
         }
         client
     }
     pub async fn connect_async(&self) -> DCBResult<AsyncUmaDBClient> {
-        let client = AsyncUmaDBClient::connect(self.url.clone(), self.ca_path.clone(), self.batch_size).await;
-        if !self.without_sigint_handler && let Ok(client) = &client  {
+        let client =
+            AsyncUmaDBClient::connect(self.url.clone(), self.ca_path.clone(), self.batch_size)
+                .await;
+        if !self.without_sigint_handler
+            && let Ok(client) = &client
+        {
             client.register_cancel_sigint_handler().await;
         }
         client
@@ -168,7 +173,8 @@ impl SyncUmaDBClient {
     }
 
     pub fn register_cancel_sigint_handler(&self) {
-        self.handle.block_on(self.async_client.register_cancel_sigint_handler());
+        self.handle
+            .block_on(self.async_client.register_cancel_sigint_handler());
     }
 }
 
@@ -214,7 +220,7 @@ pub struct SyncClientReadResponse {
     finished: bool,
 }
 
-impl<'a> SyncClientReadResponse {
+impl SyncClientReadResponse {
     /// Fetch the next batch from the async response, filling the buffer
     fn fetch_next_batch(&mut self) -> Result<(), DCBError> {
         if self.finished {
@@ -231,7 +237,7 @@ impl<'a> SyncClientReadResponse {
     }
 }
 
-impl<'a> Iterator for SyncClientReadResponse {
+impl Iterator for SyncClientReadResponse {
     type Item = Result<DCBSequencedEvent, DCBError>;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -246,7 +252,7 @@ impl<'a> Iterator for SyncClientReadResponse {
     }
 }
 
-impl<'a> DCBReadResponseSync for SyncClientReadResponse {
+impl DCBReadResponseSync for SyncClientReadResponse {
     fn head(&mut self) -> DCBResult<Option<u64>> {
         self.rt.block_on(self.resp.head())
     }
@@ -273,7 +279,7 @@ impl<'a> DCBReadResponseSync for SyncClientReadResponse {
 
 // Async client implementation
 pub struct AsyncUmaDBClient {
-    client: uma_db_service_client::UmaDbServiceClient<Channel>,
+    client: UmaDbServiceClient<Channel>,
     batch_size: Option<u32>,
 }
 
@@ -287,7 +293,10 @@ impl AsyncUmaDBClient {
         let ca_pem = {
             if let Some(ca_path) = ca_path {
                 let ca_path = PathBuf::from(ca_path);
-                Some(fs::read(&ca_path).expect(&format!("Couldn't read cert_path: {:?}", ca_path)))
+                Some(
+                    fs::read(&ca_path)
+                        .unwrap_or_else(|_| panic!("Couldn't read cert_path: {:?}", ca_path)),
+                )
             } else {
                 None
             }
@@ -308,7 +317,7 @@ impl AsyncUmaDBClient {
     ) -> DCBResult<Self> {
         match new_channel(url, tls_options).await {
             Ok(channel) => Ok(Self {
-                client: uma_db_service_client::UmaDbServiceClient::new(channel),
+                client: UmaDbServiceClient::new(channel),
                 batch_size,
             }),
             Err(err) => Err(DCBError::TransportError(format!(
@@ -334,7 +343,6 @@ impl DCBEventStoreAsync for AsyncUmaDBClient {
         limit: Option<u32>,
         subscribe: bool,
     ) -> DCBResult<Box<dyn DCBReadResponseAsync + Send + 'static>> {
-        // Convert API types to protobuf types
         let query_proto = query.map(|q| q.into());
         let request = ReadRequestProto {
             query: query_proto,
@@ -344,12 +352,11 @@ impl DCBEventStoreAsync for AsyncUmaDBClient {
             subscribe: Some(subscribe),
             batch_size: self.batch_size,
         };
-
         let mut client = self.client.clone();
         let response = client.read(request).await.map_err(dcb_error_from_status)?;
         let stream = response.into_inner();
-
-        Ok(Box::new(AsyncClientReadResponse::new(stream)))    }
+        Ok(Box::new(AsyncClientReadResponse::new(stream)))
+    }
 
     async fn head(&self) -> DCBResult<Option<u64>> {
         let mut client = self.client.clone();
@@ -365,12 +372,10 @@ impl DCBEventStoreAsync for AsyncUmaDBClient {
         condition: Option<DCBAppendCondition>,
     ) -> DCBResult<u64> {
         let events_proto: Vec<EventProto> = events.into_iter().map(EventProto::from).collect();
-
         let condition_proto = condition.map(|c| AppendConditionProto {
             fail_if_events_match: Some(c.fail_if_events_match.into()),
             after: c.after,
         });
-
         let request = AppendRequestProto {
             events: events_proto,
             condition: condition_proto,

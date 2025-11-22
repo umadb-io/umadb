@@ -2,9 +2,9 @@
 
 use std::fs;
 use std::path::Path;
-use uuid::Uuid;
 use umadb_core::db::unconditional_append;
 use umadb_dcb::DCBEvent;
+use uuid::Uuid;
 
 fn main() -> std::io::Result<()> {
     use pprof::ProfilerGuard;
@@ -56,7 +56,6 @@ fn main() -> std::io::Result<()> {
         let page_size = 4096usize;
         let db = fresh_db(page_size);
 
-
         for warmup_i in 0..10000 {
             let start = Instant::now();
             for _ in 0..1000 {
@@ -77,10 +76,9 @@ fn main() -> std::io::Result<()> {
             let rate = 1000.0 / elapsed.as_secs_f64();
             println!("Warm up {}: Rate: {} events/s", warmup_i, rate);
             if rate < 100.0 {
-                break
+                break;
             }
         }
-
 
         profile_to_svg(&format!("append_at_large_volume"), || {
             let start = Instant::now();
@@ -104,8 +102,6 @@ fn main() -> std::io::Result<()> {
 
             // Log the measurement: sequence_position rate
             println!("Rate: {} events/s", rate);
-
-
         })?;
 
         Ok(())

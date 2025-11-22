@@ -1,3 +1,31 @@
+# umadb-client
+
+Rust gRPC client library for UmaDB event store.
+
+## Overview
+
+`umadb-client` provides a high-level, idiomatic Rust client for connecting to and interacting with UmaDB servers. It wraps the gRPC protocol defined in `umadb-proto` with a convenient async API.
+
+## Features
+
+- **Simple async API** for reading and writing events
+- **Type-safe operations** using `umadb-dcb` types
+- **Streaming subscriptions** for real-time event delivery
+- **Connection management** with automatic reconnection
+- **Built on Tokio and Tonic** for high-performance async I/O
+
+## Usage
+
+Add this to your `Cargo.toml`:
+
+```toml
+[dependencies]
+umadb-client = "0.1"
+```
+
+Basic example:
+
+```rust
 use futures::StreamExt;
 use umadb_client::UmaDBClient;
 use umadb_dcb::{
@@ -107,3 +135,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     Ok(())
 }
+```
+
+
+## Part of UmaDB
+
+This crate is part of [UmaDB](https://github.com/umadb-io/umadb), a high-performance open-source event store built for Dynamic Consistency Boundaries.
+
+## License
+
+Licensed under either of:
+
+- Apache License, Version 2.0 ([LICENSE-APACHE](../LICENSE-APACHE) or http://www.apache.org/licenses/LICENSE-2.0)
+- MIT license ([LICENSE-MIT](../LICENSE-MIT) or http://opensource.org/licenses/MIT)
+
+at your option.

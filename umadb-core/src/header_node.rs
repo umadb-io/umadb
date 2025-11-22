@@ -14,8 +14,8 @@ pub struct HeaderNode {
     pub next_position: Position,
 }
 
-impl HeaderNode {
-    pub fn default() -> Self {
+impl Default for HeaderNode {
+    fn default() -> Self {
         Self {
             tsn: Tsn(0),
             free_lists_tree_root_id: PageID(0),
@@ -25,7 +25,9 @@ impl HeaderNode {
             next_position: Position(0),
         }
     }
+}
 
+impl HeaderNode {
     /// Writes the serialized HeaderNode into the provided buffer and returns the number of bytes written (48).
     /// The buffer must be at least 48 bytes long.
     pub fn serialize_into(&self, buf: &mut [u8]) -> usize {

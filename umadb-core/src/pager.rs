@@ -1,16 +1,15 @@
 use crate::common::PageID;
 use memmap2::{Mmap, MmapOptions};
 // use memmap2::{Advice, MmapOptions};
+use nix::fcntl;
 use std::collections::HashMap;
 use std::fs::{File, OpenOptions};
 use std::io;
 use std::os::fd::{AsRawFd, RawFd};
+use std::os::unix::fs::FileExt;
 use std::path::Path;
 use std::sync::{Arc, RwLock};
 use umadb_dcb::{DCBError, DCBResult};
-use nix::fcntl;
-use std::os::unix::fs::FileExt;
-
 
 // Pager for file I/O
 pub struct Pager {
@@ -343,14 +342,18 @@ impl Pager {
 
         // Check the page doesn't overflow the file size.
         let file_len = self.writer.metadata()?.len();
-        if self.page_size as u64 * (page_id.0 + 1) > file_len {
-            if let Err(err) = preallocate(&self.writer, (self.mmap_pages_per_map * self.page_size) as u64) {
-                return Err(DCBError::Io(err))
-            }
+        if self.page_size as u64 * (page_id.0 + 1) > file_len
+            && let Err(err) = preallocate(
+                &self.writer,
+                (self.mmap_pages_per_map * self.page_size) as u64,
+            )
+        {
+            return Err(DCBError::Io(err));
         }
 
         // Write the page data
-        self.writer.write_at(page_data, page_id.0 * (self.page_size as u64))?;
+        self.writer
+            .write_at(page_data, page_id.0 * (self.page_size as u64))?;
 
         Ok(())
     }
@@ -415,7 +418,6 @@ pub fn preallocate(file: &File, len: u64) -> io::Result<()> {
     // --- LINUX ---------------------------------------------------------------
     #[cfg(target_os = "linux")]
     {
-
         current_len
             .checked_add(len)
             .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "size overflow"))?;
@@ -434,15 +436,15 @@ pub fn preallocate(file: &File, len: u64) -> io::Result<()> {
     // --- macOS ---------------------------------------------------------------
     #[cfg(target_os = "macos")]
     {
-        use nix::libc::{self, fstore_t, F_ALLOCATECONTIG, F_ALLOCATEALL, F_PEOFPOSMODE};
+        use nix::libc::{self, F_ALLOCATEALL, F_ALLOCATECONTIG, F_PEOFPOSMODE, fstore_t};
 
         let new_len = current_len
             .checked_add(len)
             .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "size overflow"))?;
 
         let mut store: fstore_t = fstore_t {
-            fst_flags: F_ALLOCATECONTIG as u32,
-            fst_posmode: F_PEOFPOSMODE as i32,
+            fst_flags: F_ALLOCATECONTIG,
+            fst_posmode: F_PEOFPOSMODE,
             fst_offset: 0,
             fst_length: len as i64,
             fst_bytesalloc: 0,
@@ -451,31 +453,28 @@ pub fn preallocate(file: &File, len: u64) -> io::Result<()> {
         // Try contiguous allocation
         let r = fcntl::fcntl(
             file, // <-- MUST BE the File object, not `fd`
-            fcntl::FcntlArg::F_PREALLOCATE(&mut store)
+            fcntl::FcntlArg::F_PREALLOCATE(&mut store),
         );
         if r.is_err() {
             println!("Trying non-contiguous file allocation");
             // Try non-contiguous allocation
             let mut store2: fstore_t = fstore_t {
-                fst_flags: F_ALLOCATEALL as u32,
-                fst_posmode: F_PEOFPOSMODE as i32,
+                fst_flags: F_ALLOCATEALL,
+                fst_posmode: F_PEOFPOSMODE,
                 fst_offset: 0,
                 fst_length: len as i64,
                 fst_bytesalloc: 0,
             };
 
-            let r2 = fcntl::fcntl(
-                file,
-                fcntl::FcntlArg::F_PREALLOCATE(&mut store2),
-            );
+            let r2 = fcntl::fcntl(file, fcntl::FcntlArg::F_PREALLOCATE(&mut store2));
 
-            if let Err(_) = r2 {
+            if r2.is_err() {
                 // fallback
                 file.set_len(new_len)?;
                 return Ok(());
             }
-        // } else {
-        //     println!("Success with contiguous file allocation");
+            // } else {
+            //     println!("Success with contiguous file allocation");
         }
 
         // Now extend file size (macOS requirement)
@@ -486,7 +485,7 @@ pub fn preallocate(file: &File, len: u64) -> io::Result<()> {
             }
         }
 
-        return Ok(());
+        Ok(())
     }
 
     // --- OTHER OSes ----------------------------------------------------------
@@ -563,7 +562,9 @@ mod tests {
         pager.write_page(PageID(0), &buf).expect("write p0");
         pager.fsync().expect("couldn't fsync");
 
-        let err = pager.read_page_mmap_slice(PageID(256*1024*2)).unwrap_err();
+        let err = pager
+            .read_page_mmap_slice(PageID(256 * 1024 * 2))
+            .unwrap_err();
         assert_eq!(err.kind(), std::io::ErrorKind::UnexpectedEof);
     }
 

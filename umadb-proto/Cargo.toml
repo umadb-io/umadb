@@ -5,6 +5,7 @@ edition = { workspace = true }
 license = { workspace = true }
 description = "Protocol buffer definitions and gRPC service for UmaDB event store"
 repository = "https://github.com/umadb-io/umadb"
+readme = "README.md"
 keywords = ["event-store", "grpc", "protobuf"]
 categories = ["database", "network-programming"]
 

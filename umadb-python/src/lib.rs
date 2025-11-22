@@ -1,9 +1,9 @@
-use std::sync::Arc;
-use pyo3::prelude::*;
 use pyo3::exceptions::{PyException, PyKeyboardInterrupt, PyRuntimeError, PyValueError};
+use pyo3::prelude::*;
 use pyo3::types::PyBytes;
 use pyo3::wrap_pyfunction;
-use umadb_client::{trigger_cancel, SyncUmaDBClient, UmaDBClient};
+use std::sync::Arc;
+use umadb_client::{SyncUmaDBClient, UmaDBClient, trigger_cancel};
 use umadb_dcb::{
     DCBAppendCondition, DCBError, DCBEvent, DCBEventStoreSync, DCBQuery, DCBQueryItem,
     DCBSequencedEvent,
@@ -45,7 +45,10 @@ impl PyEvent {
         uuid: Option<String>,
     ) -> PyResult<Self> {
         let uuid_parsed = if let Some(uuid_str) = uuid {
-            Some(Uuid::parse_str(&uuid_str).map_err(|e| PyValueError::new_err(format!("Invalid UUID: {}", e)))?)
+            Some(
+                Uuid::parse_str(&uuid_str)
+                    .map_err(|e| PyValueError::new_err(format!("Invalid UUID: {}", e)))?,
+            )
         } else {
             None
         };
@@ -256,7 +259,9 @@ impl PyUmaDBClient {
 
         let sync_client = client.connect().map_err(dcb_error_to_py_err)?;
 
-        Ok(PyUmaDBClient { inner: Arc::new(sync_client) })
+        Ok(PyUmaDBClient {
+            inner: Arc::new(sync_client),
+        })
     }
 
     /// Read events from the event store
@@ -281,7 +286,8 @@ impl PyUmaDBClient {
     ) -> PyResult<PyReadResponse> {
         let query_inner = query.map(|q| q.inner);
 
-        let response_iter = self.inner
+        let response_iter = self
+            .inner
             .read(query_inner, start, backwards, limit, subscribe)
             .map_err(dcb_error_to_py_err)?;
 
@@ -308,11 +314,7 @@ impl PyUmaDBClient {
     /// Returns:
     ///     Position of the last appended event
     #[pyo3(signature = (events, condition=None))]
-    fn append(
-        &self,
-        events: Vec<PyEvent>,
-        condition: Option<PyAppendCondition>,
-    ) -> PyResult<u64> {
+    fn append(&self, events: Vec<PyEvent>, condition: Option<PyAppendCondition>) -> PyResult<u64> {
         let dcb_events: Vec<DCBEvent> = events.into_iter().map(|e| e.inner).collect();
         let dcb_condition = condition.map(|c| c.inner);
 
@@ -325,7 +327,6 @@ impl PyUmaDBClient {
         "Client(connected)".to_string()
     }
 }
-
 
 #[pyfunction]
 #[pyo3(text_signature = "()")]

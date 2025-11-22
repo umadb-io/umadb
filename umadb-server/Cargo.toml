@@ -1,10 +1,13 @@
 [package]
 name = "umadb-server"
-description = "Event store Dynamic Consistency Boundaries"
+description = "gRPC server implementation for UmaDB event store"
 repository = "https://github.com/umadb-io/umadb"
 version = { workspace = true }
 edition = { workspace = true }
 license = { workspace = true }
+readme = "README.md"
+keywords = ["event-store", "grpc", "server"]
+categories = ["database", "network-programming"]
 
 [dependencies]
 umadb-dcb = { path = "../umadb-dcb", version = "0.1.24" }

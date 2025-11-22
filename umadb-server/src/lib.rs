@@ -1,5 +1,5 @@
-use std::fs;
 use futures::Stream;
+use std::fs;
 use std::path::Path;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -17,11 +17,10 @@ use umadb_dcb::{DCBAppendCondition, DCBError, DCBEvent, DCBQuery, DCBResult, DCB
 
 use tokio::runtime::Runtime;
 use umadb_core::common::Position;
-use umadb_proto::status_from_dcb_error;
-use umadb_proto::umadb::{
+use umadb_proto::{
     AppendRequestProto, AppendResponseProto, HeadRequestProto, HeadResponseProto, ReadRequestProto,
-    ReadResponseProto, SequencedEventProto,
-    uma_db_service_server::{UmaDbService, UmaDbServiceServer},
+    ReadResponseProto, SequencedEventProto, UmaDbService, UmaDbServiceServer,
+    status_from_dcb_error,
 };
 
 const APPEND_BATCH_MAX_EVENTS: usize = 2000;
@@ -90,14 +89,24 @@ pub async fn start_server_secure_from_files<
 ) -> Result<(), Box<dyn std::error::Error>> {
     let cert_path_ref = cert_path.as_ref();
     let cert_pem = fs::read(cert_path_ref).map_err(|e| -> Box<dyn std::error::Error> {
-        format!("Failed to open TLS certificate file '{}': {}", cert_path_ref.display(), e)
-            .into()
+        format!(
+            "Failed to open TLS certificate file '{}': {}",
+            cert_path_ref.display(),
+            e
+        )
+        .into()
     })?;
 
     let key_path_ref = key_path.as_ref();
     let key_pem = fs::read(key_path_ref).map_err(|e| -> Box<dyn std::error::Error> {
-        format!("Failed to open TLS key file '{}': {}", key_path_ref.display(), e).into()
-    })?;    start_server_secure(path, addr, shutdown_rx, cert_pem, key_pem).await
+        format!(
+            "Failed to open TLS key file '{}': {}",
+            key_path_ref.display(),
+            e
+        )
+        .into()
+    })?;
+    start_server_secure(path, addr, shutdown_rx, cert_pem, key_pem).await
 }
 
 async fn start_server_internal<P: AsRef<Path> + Send + 'static>(
@@ -256,7 +265,7 @@ impl UmaDbService for UmaDBServer {
                                     true
                                 }
                             })
-                            .map(|e| SequencedEventProto::from(e))
+                            .map(SequencedEventProto::from)
                             .collect();
 
                         let reached_captured_head = if captured_head.is_some() {

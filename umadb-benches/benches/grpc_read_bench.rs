@@ -107,7 +107,11 @@ pub fn grpc_read_benchmark(c: &mut Criterion) {
         }
     }
 
-    let group_name = if throttled { "grpc_read_throttled" } else { "grpc_read_unthrottled" };
+    let group_name = if throttled {
+        "grpc_read_throttled"
+    } else {
+        "grpc_read_unthrottled"
+    };
     let mut group = c.benchmark_group(group_name);
     group.sample_size(10);
     group.measurement_time(Duration::from_secs(10));
