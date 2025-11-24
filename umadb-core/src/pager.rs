@@ -359,25 +359,31 @@ impl Pager {
     }
 
     pub fn fsync(&self) -> io::Result<()> {
-        #[cfg(unix)]
+        #[cfg(target_os = "macos")]
         unsafe {
             let result = libc::fsync(self.writer_raw_fd);
             if result != 0 {
-                return Err(io::Error::last_os_error());
+                Err(io::Error::last_os_error())
+            } else {
+                Ok(())
             }
         }
 
-        #[cfg(not(unix))]
+        #[cfg(target_os = "linux")]
         {
-            // Decide what to do on non-Unix targets:
-            // - use std::fs::File::sync_data() or sync_all()
-            // - or return an error
-            return Err(DCBError::InternalError(
-                "fsync not supported on this platform".into(),
-            ));
+            // On Linux, prefer sync_data() over fsync() because:
+            // - It avoids unnecessary metadata flushes
+            // - It is implemented as fdatasync(), which is the Linux idiom
+            self.writer.sync_data()
         }
 
-        Ok(())
+        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+        {
+            Err(io::Error::new(
+                io::ErrorKind::Other,
+                "fsync not supported on this platform",
+            ))
+        }
     }
 
     #[cfg(test)]
