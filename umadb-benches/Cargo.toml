@@ -16,6 +16,7 @@ tokio = { workspace = true }
 criterion = { version = "0.7.0", features = ["html_reports", "csv_output"] }
 pprof = { version = "0.15.0", features = ["criterion", "flamegraph"] }
 uuid = { version = "1.18.1", features = ["v4"] }
+clap = { version = "4.5.51", features = ["derive"] }
 
 [package.metadata.release]
 release = false
@@ -68,7 +69,7 @@ harness = false
 name = "event_leaf_node_bench"
 harness = false
 
-[[bench]]
+[[bin]]
 name = "throughput_vs_volume"
+path = "src/bin/throughput_vs_volume.rs"
 harness = false
-

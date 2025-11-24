@@ -20,7 +20,10 @@ SHELL := /bin/bash
 .PHONY: build-cross-umadb-aarch64-unknown-linux-gnu
 .PHONY: build-cross-umadb-x86_64-apple-darwin
 .PHONY: build-cross-umadb-aarch64-apple-darwin
-.PHONY: cross_build
+.PHONY: cross_build_umadb
+.PHONY: cross_build_throughput_vs_volume
+.PHONY: build-cross-throughput-vs-volume-x86_64-unknown-linux-musl
+.PHONY: build-cross-throughput-vs-volume-aarch64-unknown-linux-musl
 .PHONY: test-cross-umadb-all
 .PHONY: test-cross-umadb-x86_64-unknown-linux-musl
 .PHONY: test-cross-umadb-aarch64-unknown-linux-musl
@@ -174,7 +177,7 @@ ensure_target:
 
 
 # Helper to build with platform if needed
-cross_build:
+cross_build_umadb:
 	$(MAKE) ensure_cross
 	$(MAKE) ensure_target
 	TARGET_ARCH=`echo "$(RUST_TARGET)" | cut -d"-" -f1`; \
@@ -195,28 +198,50 @@ cross_build:
       	CARGO_BUILD_BUILD_DIR="target/$(RUST_TARGET)/build" cross build --release --target "$(RUST_TARGET)" --package umadb; \
 	fi
 
+# Helper to build with platform if needed
+cross_build_throughput_vs_volume:
+	$(MAKE) ensure_cross
+	$(MAKE) ensure_target
+	TARGET_ARCH=`echo "$(RUST_TARGET)" | cut -d"-" -f1`; \
+	TARGET_OS=`echo "$(RUST_TARGET)" | cut -d"-" -f3`; \
+	TARGET_ABI=`echo "$(RUST_TARGET)" | cut -d"-" -f4`; \
+	if [ "$(HOST_ARCH)" = "arm64" ]; then HOST_ARCH=aarch64; else HOST_ARCH=$(HOST_ARCH); fi; \
+	echo "🚀 Building RUST_TARGET: $$RUST_TARGET"; \
+	echo "BIN_PATH: $$BIN_PATH"; \
+	echo "Target Arch: $$TARGET_ARCH"; \
+	echo "Target OS: $$TARGET_OS"; \
+	echo "Host Arch: $$HOST_ARCH"; \
+	echo "Host OS: $$HOST_OS"; \
+	if [ $$HOST_OS = "Darwin" ] && [ $$TARGET_OS == "darwin" ]; then \
+		echo "🏃 Running build with cargo directly on macOS host..."; \
+      	CARGO_BUILD_BUILD_DIR="target/$(RUST_TARGET)/build" cargo build --release --target "$(RUST_TARGET)" --package umadb-benches; \
+	else \
+	  	echo "🐳 Running build with cross on Docker"; \
+      	CARGO_BUILD_BUILD_DIR="target/$(RUST_TARGET)/build" cross build --release --target "$(RUST_TARGET)" --package umadb-benches; \
+	fi
+
 
 # ---------------------------------------------
 # Build targets
 # ---------------------------------------------
 
 build-cross-umadb-x86_64-unknown-linux-musl:
-	$(MAKE) cross_build RUST_TARGET=x86_64-unknown-linux-musl
+	$(MAKE) cross_build_umadb RUST_TARGET=x86_64-unknown-linux-musl
 
 build-cross-umadb-aarch64-unknown-linux-musl:
-	$(MAKE) cross_build RUST_TARGET=aarch64-unknown-linux-musl
+	$(MAKE) cross_build_umadb RUST_TARGET=aarch64-unknown-linux-musl
 
 build-cross-umadb-x86_64-unknown-linux-gnu:
-	$(MAKE) cross_build RUST_TARGET=x86_64-unknown-linux-gnu
+	$(MAKE) cross_build_umadb RUST_TARGET=x86_64-unknown-linux-gnu
 
 build-cross-umadb-aarch64-unknown-linux-gnu:
-	$(MAKE) cross_build RUST_TARGET=aarch64-unknown-linux-gnu
+	$(MAKE) cross_build_umadb RUST_TARGET=aarch64-unknown-linux-gnu
 
 build-cross-umadb-x86_64-apple-darwin:
-	$(MAKE) cross_build RUST_TARGET=x86_64-apple-darwin
+	$(MAKE) cross_build_umadb RUST_TARGET=x86_64-apple-darwin
 
 build-cross-umadb-aarch64-apple-darwin:
-	$(MAKE) cross_build RUST_TARGET=aarch64-apple-darwin
+	$(MAKE) cross_build_umadb RUST_TARGET=aarch64-apple-darwin
 
 build-cross-umadb-all: \
 	build-cross-umadb-x86_64-unknown-linux-musl \
@@ -225,6 +250,12 @@ build-cross-umadb-all: \
 	build-cross-umadb-aarch64-unknown-linux-gnu \
 	build-cross-umadb-x86_64-apple-darwin \
 	build-cross-umadb-aarch64-apple-darwin
+
+build-cross-throughput-vs-volume-x86_64-unknown-linux-musl:
+	$(MAKE) cross_build_throughput_vs_volume RUST_TARGET=x86_64-unknown-linux-musl
+
+build-cross-throughput-vs-volume-aarch64-unknown-linux-musl:
+	$(MAKE) cross_build_throughput_vs_volume RUST_TARGET=aarch64-unknown-linux-musl
 
 
 # ---------------------------------------------

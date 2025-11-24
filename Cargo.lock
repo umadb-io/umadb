@@ -2373,6 +2373,7 @@ dependencies = [
 name = "umadb-benches"
 version = "0.1.25"
 dependencies = [
+ "clap",
  "criterion 0.7.0",
  "futures",
  "pprof",
