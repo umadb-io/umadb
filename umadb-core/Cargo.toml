@@ -10,7 +10,7 @@ keywords = ["event-store", "event-sourcing", "database"]
 categories = ["database"]
 
 [dependencies]
-umadb-dcb = { path = "../umadb-dcb", version = "0.1.25" }
+umadb-dcb = { path = "../umadb-dcb", version = "0.1.26" }
 crc32fast = "1"
 dashmap = "6"
 itertools = "0.14"
