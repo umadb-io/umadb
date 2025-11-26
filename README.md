@@ -421,7 +421,7 @@ is writing 1000 events per request (no append condition).
 The benchmark plot below shows total events received per second across concurrent client read operations, whilst clients
 are selecting all events for one tag from a population of 10,000 tags, each of which has 20 recorded events.
 
-This is the kind of reading the might happen whilst building a decision model from which new events are generated.
+This is the kind of reading that might happen whilst building a decision model from which new events are generated.
 
 ![UmaDB benchmark](UmaDB-read-cond-bench.png)
 
@@ -430,7 +430,7 @@ This is the kind of reading the might happen whilst building a decision model fr
 The benchmark plot below shows total events received per second across concurrent client read operations, whilst clients
 are self-constrained to process events at around 10,000 events per second. This plot shows concurrent readers scale quite linearly.
 
-This is the kind of reading the might happen whilst projecting the state of an application
+This is the kind of reading that might happen whilst projecting the state of an application
 into a materialized view in a downstream event processing component (CQRS).
 
 ![UmaDB benchmark](UmaDB-read-throttled-bench.png)
