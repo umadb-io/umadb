@@ -155,5 +155,5 @@ y_max = 10 ** np.ceil(np.log10(max_value))
 plt.ylim(bottom=y_min, top=y_max)
 
 plt.tight_layout()
-plt.savefig(f"UmaDB-read-with-writers-bench.png", format="png", dpi=300)
+plt.savefig(f"images/UmaDB-read-with-writers-bench.png", format="png", dpi=300)
 plt.show()

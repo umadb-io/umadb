@@ -146,5 +146,5 @@ y_min = 10 ** np.floor(np.log10(min_value))
 plt.ylim(bottom=y_min)
 
 plt.tight_layout()
-plt.savefig(f"UmaDB-append-with-readers-bench.png", format="png", dpi=300)
+plt.savefig(f"images/UmaDB-append-with-readers-bench.png", format="png", dpi=300)
 plt.show()

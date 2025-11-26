@@ -157,6 +157,6 @@ y_max = 10 ** np.ceil(np.log10(max_value))
 plt.ylim(bottom=y_min, top=y_max)
 
 plt.tight_layout()
-filename = "UmaDB-read-throttled-bench.png" if THROTTLED else "UmaDB-read-unthrottled-bench.png"
+filename = "images/UmaDB-read-throttled-bench.png" if THROTTLED else "images/UmaDB-read-unthrottled-bench.png"
 plt.savefig(filename, format="png", dpi=300)
 plt.show()
