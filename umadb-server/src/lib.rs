@@ -484,14 +484,34 @@ impl RequestHandler {
                             response_tx,
                         } => {
                             // Batch processing: drain any immediately available requests
-                            let mut items: Vec<(Vec<DCBEvent>, Option<DCBAppendCondition>)> =
-                                Vec::new();
+                            // let mut items: Vec<(Vec<DCBEvent>, Option<DCBAppendCondition>)> =
+                            //     Vec::new();
                             let mut responders: Vec<oneshot::Sender<DCBResult<u64>>> = Vec::new();
 
                             let mut total_events = 0;
                             total_events += events.len();
-                            items.push((events, condition));
+                            // items.push((events, condition));
+
+                            let mvcc = &db.mvcc;
+                            let mut writer = match mvcc.writer() {
+                                Ok(writer) => writer,
+                                Err(err) => {
+                                    let _ = response_tx.send(Err(err));
+                                    continue;
+                                }
+                            };
                             responders.push(response_tx);
+
+                            let mut results: Vec<DCBResult<u64>> = Vec::new();
+
+                            UmaDB::process_append_request(
+                                events,
+                                condition,
+                                false,
+                                mvcc,
+                                &mut writer,
+                                &mut results,
+                            );
 
                             // Drain the channel for more pending writer requests without awaiting.
                             // Important: do not drop a popped request when hitting the batch limit.
@@ -507,7 +527,14 @@ impl RequestHandler {
                                         response_tx,
                                     }) => {
                                         let ev_len = events.len();
-                                        items.push((events, condition));
+                                        UmaDB::process_append_request(
+                                            events,
+                                            condition,
+                                            false,
+                                            mvcc,
+                                            &mut writer,
+                                            &mut results,
+                                        );
                                         responders.push(response_tx);
                                         total_events += ev_len;
                                     }
@@ -524,7 +551,14 @@ impl RequestHandler {
                             }
                             // println!("Total events: {total_events}");
                             // Execute a single batched append operation.
-                            let batch_result = db.append_batch(items, false);
+
+                            // Single commit at the end of the batch
+                            let batch_result = match mvcc.commit(&mut writer) {
+                                Ok(_) => Ok(results),
+                                Err(err) => Err(err),
+                            };
+
+                            // let batch_result = db.append_batch(items, false);
                             match batch_result {
                                 Ok(results) => {
                                     // Send individual results back to requesters
@@ -546,52 +580,6 @@ impl RequestHandler {
                                     // If the batch failed as a whole (e.g., commit failed), propagate the SAME error to all responders.
                                     // DCBError is not Clone (contains io::Error), so reconstruct a best-effort copy by using its Display text
                                     // for Io and cloning data for other variants.
-                                    fn clone_dcb_error(src: &DCBError) -> DCBError {
-                                        match src {
-                                            DCBError::Io(err) => {
-                                                DCBError::Io(std::io::Error::other(err.to_string()))
-                                            }
-                                            DCBError::IntegrityError(s) => {
-                                                DCBError::IntegrityError(s.clone())
-                                            }
-                                            DCBError::Corruption(s) => {
-                                                DCBError::Corruption(s.clone())
-                                            }
-                                            DCBError::PageNotFound(id) => {
-                                                DCBError::PageNotFound(*id)
-                                            }
-                                            DCBError::DirtyPageNotFound(id) => {
-                                                DCBError::DirtyPageNotFound(*id)
-                                            }
-                                            DCBError::RootIDMismatch(old_id, new_id) => {
-                                                DCBError::RootIDMismatch(*old_id, *new_id)
-                                            }
-                                            DCBError::DatabaseCorrupted(s) => {
-                                                DCBError::DatabaseCorrupted(s.clone())
-                                            }
-                                            DCBError::InternalError(s) => {
-                                                DCBError::InternalError(s.clone())
-                                            }
-                                            DCBError::SerializationError(s) => {
-                                                DCBError::SerializationError(s.clone())
-                                            }
-                                            DCBError::DeserializationError(s) => {
-                                                DCBError::DeserializationError(s.clone())
-                                            }
-                                            DCBError::PageAlreadyFreed(id) => {
-                                                DCBError::PageAlreadyFreed(*id)
-                                            }
-                                            DCBError::PageAlreadyDirty(id) => {
-                                                DCBError::PageAlreadyDirty(*id)
-                                            }
-                                            DCBError::TransportError(err) => {
-                                                DCBError::TransportError(err.clone())
-                                            }
-                                            DCBError::CancelledByUser() => {
-                                                DCBError::CancelledByUser()
-                                            }
-                                        }
-                                    }
                                     let total = responders.len();
                                     let mut iter = responders.into_iter();
                                     for _ in 0..total {
@@ -775,6 +763,25 @@ impl RequestHandler {
     #[allow(dead_code)]
     async fn shutdown(&self) {
         let _ = self.writer_request_tx.send(WriterRequest::Shutdown).await;
+    }
+}
+
+fn clone_dcb_error(src: &DCBError) -> DCBError {
+    match src {
+        DCBError::Io(err) => DCBError::Io(std::io::Error::other(err.to_string())),
+        DCBError::IntegrityError(s) => DCBError::IntegrityError(s.clone()),
+        DCBError::Corruption(s) => DCBError::Corruption(s.clone()),
+        DCBError::PageNotFound(id) => DCBError::PageNotFound(*id),
+        DCBError::DirtyPageNotFound(id) => DCBError::DirtyPageNotFound(*id),
+        DCBError::RootIDMismatch(old_id, new_id) => DCBError::RootIDMismatch(*old_id, *new_id),
+        DCBError::DatabaseCorrupted(s) => DCBError::DatabaseCorrupted(s.clone()),
+        DCBError::InternalError(s) => DCBError::InternalError(s.clone()),
+        DCBError::SerializationError(s) => DCBError::SerializationError(s.clone()),
+        DCBError::DeserializationError(s) => DCBError::DeserializationError(s.clone()),
+        DCBError::PageAlreadyFreed(id) => DCBError::PageAlreadyFreed(*id),
+        DCBError::PageAlreadyDirty(id) => DCBError::PageAlreadyDirty(*id),
+        DCBError::TransportError(err) => DCBError::TransportError(err.clone()),
+        DCBError::CancelledByUser() => DCBError::CancelledByUser(),
     }
 }
 

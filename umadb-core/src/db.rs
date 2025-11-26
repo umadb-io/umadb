@@ -21,7 +21,7 @@ pub const DEFAULT_DB_FILENAME: &str = "uma.db";
 
 /// EventStore implementing the DCBEventStoreSync interface
 pub struct UmaDB {
-    mvcc: Arc<Mvcc>,
+    pub mvcc: Arc<Mvcc>,
 }
 
 impl UmaDB {
@@ -63,80 +63,101 @@ impl UmaDB {
         let mut results: Vec<DCBResult<u64>> = Vec::with_capacity(items.len());
 
         for (events, condition) in items.into_iter() {
-            // Check condition using read_conditional (limit 1), starting after the provided position
-            if let Some(cond) = condition {
-                let from = cond.after.map(|after| Position(after + 1));
-                let read_result1 = read_conditional(
-                    mvcc,
-                    &writer.dirty,
-                    writer.events_tree_root_id,
-                    writer.tags_tree_root_id,
-                    cond.fail_if_events_match.clone(),
-                    from,
-                    false,
-                    Some(1),
-                    force_sequential_read,
-                );
-                match read_result1 {
-                    Ok(found_vec) => {
-                        // Read didn't error...
-                        if let Some(matched) = found_vec.first() {
-                            // Found one event... consider if the request is idempotent...
-                            match is_request_idempotent(
-                                mvcc,
-                                &writer.dirty,
-                                writer.events_tree_root_id,
-                                writer.tags_tree_root_id,
-                                &events,
-                                cond.fail_if_events_match.clone(),
-                                from,
-                            ) {
-                                Ok(Some(last_recorded_position)) => {
-                                    results.push(Ok(last_recorded_position));
-                                }
-                                Ok(None) => {
-                                    // Propagate an integrity error for this item but continue with others
-                                    let msg = format!(
-                                        "condition: {:?} matched: {:?}, ",
-                                        cond.clone(),
-                                        matched,
-                                    );
-                                    results.push(Err(DCBError::IntegrityError(msg)));
-                                }
-                                Err(err) => {
-                                    // Propagate the error for this item but continue with others
-                                    results.push(Err(err));
-                                }
-                            }
-                            continue;
-                        }
-                    }
-                    Err(e) => {
-                        // Propagate the read error for this item but continue with others
-                        results.push(Err(e));
-                        continue;
-                    }
-                }
-            }
-
-            if events.is_empty() {
-                results.push(Ok(0));
+            if Self::process_append_request(
+                events,
+                condition,
+                force_sequential_read,
+                mvcc,
+                &mut writer,
+                &mut results,
+            ) {
                 continue;
-            }
-
-            // Append unconditionally
-            match unconditional_append(mvcc, &mut writer, events) {
-                Ok(last) => results.push(Ok(last)),
-                Err(e) => {
-                    // Record error for this item and continue
-                    results.push(Err(e));
-                }
             }
         }
 
         // Single commit at the end of the batch
         mvcc.commit(&mut writer)?;
         Ok(results)
+    }
+
+    pub fn process_append_request(
+        events: Vec<DCBEvent>,
+        condition: Option<DCBAppendCondition>,
+        force_sequential_read: bool,
+        mvcc: &Arc<Mvcc>,
+        writer: &mut Writer,
+        results: &mut Vec<DCBResult<u64>>,
+    ) -> bool {
+        // Check condition using read_conditional (limit 1), starting after the provided position
+        if let Some(cond) = condition {
+            let from = cond.after.map(|after| Position(after + 1));
+            let read_result1 = read_conditional(
+                mvcc,
+                &writer.dirty,
+                writer.events_tree_root_id,
+                writer.tags_tree_root_id,
+                cond.fail_if_events_match.clone(),
+                from,
+                false,
+                Some(1),
+                force_sequential_read,
+            );
+            match read_result1 {
+                Ok(found_vec) => {
+                    // Read didn't error...
+                    if let Some(matched) = found_vec.first() {
+                        // Found one event... consider if the request is idempotent...
+                        match is_request_idempotent(
+                            mvcc,
+                            &writer.dirty,
+                            writer.events_tree_root_id,
+                            writer.tags_tree_root_id,
+                            &events,
+                            cond.fail_if_events_match.clone(),
+                            from,
+                        ) {
+                            Ok(Some(last_recorded_position)) => {
+                                results.push(Ok(last_recorded_position));
+                            }
+                            Ok(None) => {
+                                // Propagate an integrity error for this item but continue with others
+                                let msg = format!(
+                                    "condition: {:?} matched: {:?}, ",
+                                    cond.clone(),
+                                    matched,
+                                );
+                                results.push(Err(DCBError::IntegrityError(msg)));
+                            }
+                            Err(err) => {
+                                // Propagate the error for this item but continue with others
+                                results.push(Err(err));
+                            }
+                        }
+                        return true;
+                    }
+                }
+                Err(e) => {
+                    // Propagate the read error for this item but continue with others
+                    results.push(Err(e));
+                    return true;
+                }
+            }
+        }
+
+        if events.is_empty() {
+            results.push(Ok(0));
+            return true;
+        }
+
+        // Append unconditionally
+        match unconditional_append(mvcc, writer, events) {
+            Ok(last) => results.push(Ok(last)),
+            Err(e) => {
+                // Record error for this item and continue
+                results.push(Err(e));
+            }
+        }
+        false
     }
 }
 
