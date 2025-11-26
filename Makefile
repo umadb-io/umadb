@@ -4,7 +4,7 @@ SHELL := /bin/bash
 .PHONY: build
 .PHONY: build-workspace-exclude-python
 .PHONY: build-umadb-python
-.PHONY: bench-append bench-append-1 bench-append-10 bench-append-100 bench-append-all
+.PHONY: bench-append bench-append-1 bench-append-10 bench-append-100 bench-append-1000 bench-append-all
 .PHONY: bench-append-cond bench-append-cond-1 bench-append-cond-10 bench-append-cond-100 bench-append-cond-all
 .PHONY: bench-append-with-readers
 .PHONY: bench-read bench-read-throttled
@@ -76,6 +76,9 @@ bench-append-10:
 
 bench-append-100:
 	$(MAKE) bench-append EVENTS_PER_REQUEST=100
+
+bench-append-1000:
+	$(MAKE) bench-append EVENTS_PER_REQUEST=1000
 
 bench-append-all:
 	$(MAKE) bench-append-1

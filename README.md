@@ -411,13 +411,10 @@ is writing 100 events per request (no append condition).
 
 ![UmaDB benchmark](UmaDB-append-bench-100-per-request.png)
 
-### Unconditional Append with Concurrent Readers
+The benchmark plot below shows total appended events per second from concurrent clients. Each client
+is writing 1000 events per request (no append condition).
 
-The benchmark plot below shows total appended events per second from concurrent clients, whilst
-there are four other clients concurrently reading events. Each client is writing 1 event per request (no append condition).
-This plot shows writing is not drastically impeded by concurrent readers.
-
-![UmaDB benchmark](UmaDB-append-with-readers-bench.png)
+![UmaDB benchmark](UmaDB-append-bench-1000-per-request.png)
 
 ### Conditional Read
 
@@ -444,10 +441,19 @@ limitations.
 
 ![UmaDB benchmark](UmaDB-read-unthrottled-bench.png)
 
-### Unconditional Read with Concurrent Writers
+### Concurrent Reading and Writing
 
-The benchmark plot below shows total events received per second across concurrent client read operations, whilst there are four other
-clients concurrently appending events. By comparison with the unconstrained read without writers, this plot shows reading is not drastically impeded by concurrent writers.
+The benchmark plot below shows total appended events per second from concurrent clients, whilst
+there are four other clients concurrently reading events. Each client is writing one event per request.
+By comparison with the plots for append operations, this plot shows writing is not drastically impeded
+by concurrent readers.
+
+![UmaDB benchmark](UmaDB-append-with-readers-bench.png)
+
+
+The benchmark plot below shows total events received per second across concurrent client read operations,
+whilst there are four other clients concurrently appending events. By comparison with the unconstrained
+read without writers, this plot shows reading is not drastically impeded by concurrent writers.
 
 ![UmaDB benchmark](UmaDB-read-with-writers-bench.png)
 
