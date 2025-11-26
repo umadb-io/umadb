@@ -460,58 +460,55 @@ read without writers, this plot shows reading is not drastically impeded by conc
 
 ----
 
-## Building the UmaDB Server
+## Installing UmaDB Server
 
-UmaDB provides pre-built binary executables. The files are available on [GitHub Releases](https://github.com/umadb-io/umadb/releases).
+### Binaries from GitHub Releases
 
-UmaDB can also be installed using Cargo.
+Pre-built UmaDB binaries are available for:
+
+* x86_64 (AMD64)
+  * Linux (glibc)
+  * Linux (musl, static build)
+  * macOS
+* aarch64 (ARM64)
+  * Linux (glibc)
+  * Linux (musl, static build)
+  * macOS
+  
+The files are available on [GitHub Releases](https://github.com/umadb-io/umadb/releases).
+
+### Build with Cargo
+
+You can install UmaDB directly from source using Cargo:
 
 ```
 cargo install umadb
 ```
 
-This will build and install the `umadb` binary on your `PATH`.
+Cargo will compile UmaDB locally and place the resulting `umadb` binary in your `PATH`.
+
+----
+
+## Running UmaDB Server
+
+Start the `umadb` server by specifying the listen address and the database path:
 
 ```
 umadb --listen 127.0.0.1:50051 --db-path ./uma.db
 ```
 
-To build the UmaDB server binary executable, you need to have Rust and Cargo installed. If you don't have them installed, you can get them from [rustup.rs](https://rustup.rs/).
+`umadb` supports the following command-line options:
 
-Once you have Rust and Cargo installed, you could also clone the project Git repo and build `umadb` from source.
+- `--listen`:  Address to bind to (e.g. `127.0.0.1:50051`)
+- `--db-path`: Path to the database file or directory
+- `--tls-cert`: TLS server certificate (PEM), optional
+- `--tls-key`: TLS server private key (PEM), optional
+- `-h, --help`: Show help information
+- `-V, --version`: Show version information
 
-```bash
-cargo build --release
-```
-
-This will create `umadb` in `./target/release/`.
-
-```bash
-./target/release/umadb --listen 127.0.0.1:50051 --db-path ./uma.db
-```
-
-You can do `cargo run` for a faster dev build (builds faster, runs slower):
-
-```bash
-cargo run --bin umadb -- --listen 127.0.0.1:50051 --db-path ./uma.db
-```
-
-### Command-line Options
-
-The `umadb` executable accepts the following command-line options:
-
-- `--listen`:  Listen address, e.g. 127.0.0.1:50051
-- `--db-path`: Path to database file or folder
-- `--tls-cert`: Optional TLS server certificate (PEM)
-- `--tls-key`: Optional TLS server private key (PEM)
-- `-h, --help`: Print help information
-- `-V, --version`: Print version information
-
-
-Environment variable `UMADB_TLS_CERT` can be used to indicate a file system path to a server TLS certificate file.
-
-Environment variable `UMADB_TLS_KEY` can be used to indicate a file system path to a server TLS private key file.
-
+The TLS options can also be provided using environment variables:
+* `UMADB_TLS_CERT` — Path to the server TLS certificate (PEM), equivalent to `--tls-cert`
+* `UMADB_TLS_KEY` — Path to the server TLS private key (PEM), equivalent to `--tls-key`
 
 ### Self-signed TLS Certificate
 
@@ -549,35 +546,45 @@ umadb --listen 127.0.0.1:50051 --db-path ./uma.db  --tls-cert server.pem --tls-k
 
 ----
 
-## UmaDB Docker Containers
+## Docker Containers
 
-UmaDB provides multi-platform Docker container images for the `linux/amd64` and `linux/arm64` platforms.
+UmaDB publishes multi-platform Docker images for `linux/amd64` and `linux/arm64`.
 
-The images are available on [GitHub Container Registry](https://github.com/umadb-io/umadb/pkgs/container/umadb) and [Docker Hub](https://hub.docker.com/r/umadb/umadb).
+Images are available from both:
+* [GitHub Container Registry](https://github.com/umadb-io/umadb/pkgs/container/umadb), and
+* [Docker Hub](https://hub.docker.com/r/umadb/umadb).
+
+Each image is built from the Docker `scratch` base image and contains the
+statically linked Linux (musl) binaries distributed in GitHub Releases:
+
+* x86_64 (AMD64)
+* aarch64 (ARM64)
 
 ### Pulling the Docker Image
 
-Pull "latest" from GitHub Container Registry.
+Pull `latest` from GitHub Container Registry.
 
 ```bash
 docker pull ghcr.io/umadb-io/umadb:latest
 ```
 
-Pull "latest" from Docker Hub.
+Pull `latest` from Docker Hub.
 
 ```bash
 docker pull umadb/umadb:latest
 ```
 
-Images are tagged "latest", "x.y.z" (semantic version number), "x.y" (major and minor), and "x" (major).
+Images are tagged `latest`, `x.y.z` (semantic version number), `x.y` (major and minor), and `x` (major).
 
 ### Running the Container
 
-The container's `ENTRYPOINT` is the `umadb` binary. The default `CMD` are the `umadb` cli arguments
-`--listen 0.0.0.0:50051 --db-path /data`. This means that by default the container will run `umadb`
-listening to internal port `50051` and using the internal filepath `/data/uma.db` for the database file.
+The container's `ENTRYPOINT` is the `umadb` binary. By default, it is invoked with:
 
-You can supply alternative arguments, for example `--help` or `--version`.
+`--listen 0.0.0.0:50051 --db-path /data`
+
+This means the container will start umadb listening on port **50051** and using **/data/uma.db** as the database file.
+
+You may override the default arguments by supplying your own (e.g., `--help`, `--version`, or any other umadb options).
 
 Print the `umadb` version:
 
@@ -585,50 +592,56 @@ Print the `umadb` version:
 docker run umadb/umadb:latest --version
 ```
 
-Print the `umadb` help message:
+Show the help message:
 
 ```bash
 docker run umadb/umadb:latest --help
 ```
 
-Please note, the `umadb` container is a Docker `scratch` container with only one binary executable `/umadb`,
-and so attempting to use the `--entrypoint` argument of `docker run` to execute something other than `/umadb`,
-for example `bash` or anything else, will cause a "failed to create task" Docker error.
+Because the image is built on Docker’s `scratch` base and contains only the
+`umadb` executable, using `--entrypoint` to run any other command (such as `bash`)
+will fail with a “failed to create task” error.
 
 ### Connecting to UmaDB
 
-The `umadb` container exposes port `50051` internally. If you want to connect to the database server from
-outside Docker, then use the `-p, --publish` argument of `docker run` to publish the exposed port on the host.
+The umadb container listens on port **50051**. To make the server accessible from
+outside the container, publish the port using `-p` / `--publish` when starting the
+container:
 
 ```bash
 docker run --publish 50051:50051 umadb/umadb:latest
 ```
 
-### Persistent Storage with Local File
+### Persistent Storage with Local Directory
 
-The `umadb` container stores data in the internal file `/data/uma.db` by default. To persist
-the database file on your local filesystem, use the `-v, --volume` argument of `docker run` to mount
-a local directory to the container's internal `/data` directory:
+By default, the UmaDB container stores data in `/data/uma.db`. To persist
+the database file on your host, mount a local directory to the container's `/data`
+using `-v` / `--volume`:
 
 ```bash
 docker run --volume /path/to/local/data:/data umadb/umadb:latest
 ```
 
-UmaDB will then create and use the file `/path/to/local/data/uma.db` to store your events.
+UmaDB will then create and use `/path/to/local/data/uma.db` to store your events.
 
 ### Transaction Layer Security (TLS)
 
-By default, the `umadb` executable starts an "insecure" gRPC channel. To activate TLS, so that
-a "secure" channel will be started instead, mount a local "secrets" folder and provide an internal
-file system path to a TLS certificate and a private key using environment variables. You can do this
-using the `-v, --volume` and `-e, --env` arguments of `docker run`, and the UmaDB environment variables
-`UMADB_TLS_CERT` and `UMADB_TLS_KEY`.
+By default, `umadb` starts an "insecure" gRPC server. To enable TLS, mount a local folder
+containing you certificate and key, and provide their paths via environment variables
+`UMADB_TLS_CERT` and `UMADB_TLS_KEY`. Use `-v` / `--volume` and `-e` / `--env` with `docker run`
+to set this up:
 
 ```bash
-docker run --volume /path/to/local/secrets:/etc/secrets --env UMADB_TLS_CERT=/etc/secrets/server.pem --env UMADB_TLS_KEY=/etc/secrets/server.key umadb/umadb:latest
+docker run \
+  --volume /path/to/local/secrets:/etc/secrets \
+  --env UMADB_TLS_CERT=/etc/secrets/server.pem \
+  --env UMADB_TLS_KEY=/etc/secrets/server.key \
+  umadb/umadb:latest
 ```
 
-### Docker Run Example
+This will start UmaDB with a **secure** gRPC channel using your TLS certificate and key.
+
+### Examples
 
 The following example will run the `umadb` container with the name `umadb-insecure`, publish the container
 port at `50051`, store event data in the local file `/path/to/local/data/uma.db`, and start an "insecure"
@@ -658,7 +671,7 @@ docker run \
   umadb/umadb:latest
 ```
 
-### Docker Compose Example
+### Docker Compose
 
 For convenience, you can use Docker Compose.
 
@@ -1422,6 +1435,31 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 The [official Python client](https://pypi.org/project/umadb/) for UmaDB is available on PyPI.
 
 The Python client uses the Rust client via PYO3.
+
+----
+
+## Building the UmaDB Server
+
+To build the UmaDB server binary executable, you need to have Rust and Cargo installed. If you don't have them installed, you can get them from [rustup.rs](https://rustup.rs/).
+
+Once you have Rust and Cargo installed, clone the project Git repo and build `umadb` from source.
+
+```bash
+cargo build --release
+```
+
+This will create `umadb` in `./target/release/`.
+
+```bash
+./target/release/umadb --listen 127.0.0.1:50051 --db-path ./uma.db
+```
+
+You can do `cargo run` for a faster dev build (builds faster, runs slower):
+
+```bash
+cargo run --bin umadb -- --listen 127.0.0.1:50051 --db-path ./uma.db
+```
+
 
 ----
 
