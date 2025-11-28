@@ -382,12 +382,12 @@ These are the kinds of requests that would be made by an application after a dec
 
 ![UmaDB benchmark](images/UmaDB-append-bench-cond-1-per-request.png)
 
-The benchmark plot below shows total completed append operations per second from concurrent clients. Each client is
+The benchmark plot below shows total appended events per second from concurrent clients. Each client is
 writing 10 events per request with an append condition.
 
 ![UmaDB benchmark](images/UmaDB-append-bench-cond-10-per-request.png)
 
-The benchmark plot below shows total completed append operations per second from concurrent clients. Each client is
+The benchmark plot below shows total appended events per second from concurrent clients. Each client is
 writing 100 events per request with an append condition.
 
 ![UmaDB benchmark](images/UmaDB-append-bench-cond-100-per-request.png)
@@ -1442,10 +1442,10 @@ The Python client uses the Rust client via PYO3.
 
 To build the UmaDB server binary executable, you need to have Rust and Cargo installed. If you don't have them installed, you can get them from [rustup.rs](https://rustup.rs/).
 
-Once you have Rust and Cargo installed, clone the project Git repo and build `umadb` from source.
+Clone the project Git repo and build `umadb` from source.
 
 ```bash
-cargo build --release
+cargo build -p umadb --release
 ```
 
 This will create `umadb` in `./target/release/`.
