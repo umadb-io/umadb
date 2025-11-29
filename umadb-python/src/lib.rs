@@ -230,9 +230,7 @@ impl PyReadResponse {
         slf
     }
 
-    fn __next__(
-        mut slf: PyRefMut<Self>
-    ) -> Option<PyResult<PySequencedEvent>> {
+    fn __next__(mut slf: PyRefMut<Self>) -> Option<PyResult<PySequencedEvent>> {
         match slf.inner.next() {
             Some(Ok(event)) => Some(Ok(PySequencedEvent { inner: event })),
             Some(Err(err)) => Some(Err(dcb_error_to_py_err(err))),

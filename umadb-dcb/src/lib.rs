@@ -312,7 +312,9 @@ pub enum DCBError {
     #[error("Corruption detected: {0}")]
     Corruption(String),
 
-    // LMDB/Storage domain errors (unified into DCBError)
+    // Storage errors (unified into DCBError)
+    #[error("Initialization error: {0:?}")]
+    InitializationError(String),
     #[error("Page not found: {0:?}")]
     PageNotFound(u64),
     #[error("Dirty page not found: {0:?}")]

@@ -1,17 +1,28 @@
 use clap::{CommandFactory, FromArgMatches, Parser};
 use tokio::signal;
 use tokio::sync::oneshot;
-use umadb_server::{start_server, start_server_secure_from_files};
+use umadb_server::{start_server, start_server_secure_from_files, uptime};
+
+#[allow(dead_code)]
+const BANNER_BIG: &str = r#"
+  _    _                 _____  ____
+ | |  | |               |  __ \|  _ \
+ | |  | |_ __ ___   __ _| |  | | |_) |
+ | |  | | '_ ` _ \ / _` | |  | |  _ <
+ | |__| | | | | | | (_| | |__| | |_) |
+  \____/|_| |_| |_|\__,_|_____/|____/ "#;
+
+const BANNER: &str = BANNER_BIG;
 
 #[derive(Parser, Debug)]
 #[command(version)]
 struct Args {
     /// Listen address, e.g. 127.0.0.1:50051
-    #[arg(long = "listen")]
+    #[arg(long = "listen", default_value = "127.0.0.1:50051")]
     listen: String,
 
     /// Path to database file or folder
-    #[arg(long = "db-path")]
+    #[arg(long = "db-path", default_value = "./")]
     db_path: String,
 
     /// Optional file path to TLS server certificate (PEM) - can also be set via UMADB_TLS_CERT environment variable
@@ -24,6 +35,7 @@ struct Args {
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let _ = uptime();
     let rt = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(
             std::thread::available_parallelism()
@@ -56,6 +68,14 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
         let _ = signal::ctrl_c().await;
         let _ = tx.send(());
     });
+
+    // println!("{}", BANNER);
+    // println!("v{}", env!("CARGO_PKG_VERSION"));
+    // let mut rng = rng();
+    // let banner = BANNERS.choose(&mut rng).unwrap();
+    let banner = BANNER;
+    println!("{}  v{}", banner, env!("CARGO_PKG_VERSION"));
+    println!();
 
     match (cert, key) {
         (Some(cert), Some(key)) => {

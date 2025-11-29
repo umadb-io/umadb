@@ -132,6 +132,7 @@ impl Mvcc {
             // Sync the file to disk.
             mvcc.fsync()?;
         }
+        println!("UmaDB opened file {}", path.canonicalize()?.display());
 
         Ok(mvcc)
     }

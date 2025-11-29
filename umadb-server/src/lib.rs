@@ -3,12 +3,13 @@ use std::fs;
 use std::path::Path;
 use std::pin::Pin;
 use std::sync::Arc;
+use std::sync::LazyLock;
 use std::thread;
+use std::time::Instant;
 use tokio::sync::{mpsc, oneshot, watch};
 use tokio_stream::wrappers::ReceiverStream;
 use tonic::transport::{Identity, ServerTlsConfig};
 use tonic::{Request, Response, Status, transport::Server};
-
 use umadb_core::db::{
     DEFAULT_DB_FILENAME, DEFAULT_PAGE_SIZE, UmaDB, is_request_idempotent, read_conditional,
 };
@@ -16,12 +17,15 @@ use umadb_core::mvcc::Mvcc;
 use umadb_dcb::{DCBAppendCondition, DCBError, DCBEvent, DCBQuery, DCBResult, DCBSequencedEvent};
 
 use tokio::runtime::Runtime;
+use tonic::transport::server::TcpIncoming;
 use umadb_core::common::Position;
 use umadb_proto::{
     AppendRequestProto, AppendResponseProto, HeadRequestProto, HeadResponseProto, ReadRequestProto,
     ReadResponseProto, SequencedEventProto, UmaDbService, UmaDbServiceServer,
     status_from_dcb_error,
 };
+
+static START_TIME: LazyLock<Instant> = LazyLock::new(Instant::now);
 
 const APPEND_BATCH_MAX_EVENTS: usize = 2000;
 const READ_RESPONSE_BATCH_SIZE_DEFAULT: u32 = 100;
@@ -32,6 +36,10 @@ const READ_RESPONSE_BATCH_SIZE_MAX: u32 = 5000;
 pub struct ServerTlsOptions {
     pub cert_pem: Vec<u8>,
     pub key_pem: Vec<u8>,
+}
+
+pub fn uptime() -> std::time::Duration {
+    START_TIME.elapsed()
 }
 
 fn build_server_builder_with_options(tls: Option<ServerTlsOptions>) -> Server {
@@ -116,15 +124,36 @@ async fn start_server_internal<P: AsRef<Path> + Send + 'static>(
     tls: Option<ServerTlsOptions>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let addr = addr.parse()?;
+    // ---- Bind incoming manually like tonic ----
+    let incoming = match TcpIncoming::bind(addr) {
+        Ok(incoming) => incoming,
+        Err(err) => {
+            return Err(Box::new(DCBError::InitializationError(format!(
+                "Failed to bind to address {}: {}",
+                addr, err
+            ))));
+        }
+    }
+    .with_nodelay(Some(true))
+    .with_keepalive(Some(std::time::Duration::from_secs(60)));
+
     // Create a shutdown broadcast channel for terminating ongoing subscriptions
     let (srv_shutdown_tx, srv_shutdown_rx) = watch::channel(false);
-    let server = UmaDBServer::new(path, srv_shutdown_rx)?;
-    if tls.is_some() {
-        println!("Started UmaDB server (with TLS) listening on {addr}");
+    let server = match UmaDBServer::new(path.as_ref().to_owned(), srv_shutdown_rx) {
+        Ok(server) => server,
+        Err(err) => {
+            return Err(Box::new(err));
+        }
+    };
+    println!(
+        "UmaDB has {:?} events",
+        server.request_handler.head().await?.unwrap_or(0)
+    );
+    let server_mode_display_str = if tls.is_some() {
+        "with TLS"
     } else {
-        println!("UmaDB server (insecure) listening on {addr}");
-    }
-
+        "without TLS"
+    };
     let mut server_builder = build_server_builder_with_options(tls);
 
     // gRPC Health service setup
@@ -139,10 +168,15 @@ async fn start_server_internal<P: AsRef<Path> + Send + 'static>(
         .await;
     let health_reporter_for_shutdown = health_reporter.clone();
 
-    server_builder
+    let router = server_builder
         .add_service(health_service)
-        .add_service(server.into_service())
-        .serve_with_shutdown(addr, async move {
+        .add_service(server.into_service());
+
+    println!("UmaDB is listening on {addr} ({server_mode_display_str})");
+    println!("UmaDB started in {:?}", uptime());
+    // let incoming = router.server.bind_incoming();
+    router
+        .serve_with_incoming_shutdown(incoming, async move {
             // Wait for an external shutdown trigger
             let _ = shutdown_rx.await;
             // Mark health as NOT_SERVING before shutdown
@@ -163,7 +197,7 @@ async fn start_server_internal<P: AsRef<Path> + Send + 'static>(
 
 // gRPC server implementation
 pub struct UmaDBServer {
-    request_handler: RequestHandler,
+    pub(crate) request_handler: RequestHandler,
     shutdown_watch_rx: watch::Receiver<bool>,
 }
 
@@ -171,7 +205,7 @@ impl UmaDBServer {
     pub fn new<P: AsRef<Path> + Send + 'static>(
         path: P,
         shutdown_rx: watch::Receiver<bool>,
-    ) -> std::io::Result<Self> {
+    ) -> DCBResult<Self> {
         let command_handler = RequestHandler::new(path)?;
         Ok(Self {
             request_handler: command_handler,
@@ -439,7 +473,7 @@ struct RequestHandler {
 }
 
 impl RequestHandler {
-    fn new<P: AsRef<Path> + Send + 'static>(path: P) -> std::io::Result<Self> {
+    fn new<P: AsRef<Path> + Send + 'static>(path: P) -> DCBResult<Self> {
         // Create a channel for sending requests to the writer thread
         let (request_tx, mut request_rx) = mpsc::channel::<WriterRequest>(1024);
 
@@ -450,16 +484,11 @@ impl RequestHandler {
         } else {
             p.to_path_buf()
         };
-        let mvcc = Arc::new(
-            Mvcc::new(&file_path, DEFAULT_PAGE_SIZE, false)
-                .map_err(|e| std::io::Error::other(format!("Failed to init LMDB: {e:?}")))?,
-        );
+        let mvcc = Arc::new(Mvcc::new(&file_path, DEFAULT_PAGE_SIZE, false)?);
 
         // Initialize the head watch channel with the current head.
         let init_head = {
-            let (_, header) = mvcc
-                .get_latest_header()
-                .map_err(|e| std::io::Error::other(format!("Failed to read header: {e:?}")))?;
+            let (_, header) = mvcc.get_latest_header()?;
             let last = header.next_position.0.saturating_sub(1);
             if last == 0 { None } else { Some(last) }
         };
@@ -768,6 +797,7 @@ impl RequestHandler {
 
 fn clone_dcb_error(src: &DCBError) -> DCBError {
     match src {
+        DCBError::InitializationError(err) => DCBError::InitializationError(err.to_string()),
         DCBError::Io(err) => DCBError::Io(std::io::Error::other(err.to_string())),
         DCBError::IntegrityError(s) => DCBError::IntegrityError(s.clone()),
         DCBError::Corruption(s) => DCBError::Corruption(s.clone()),

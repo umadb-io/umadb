@@ -26,30 +26,49 @@ pub struct Pager {
 
 // Implementation for Pager
 impl Pager {
-    pub fn new(path: &Path, page_size: usize) -> io::Result<Self> {
+    pub fn new(path: &Path, page_size: usize) -> DCBResult<Self> {
         let is_file_new = !path.exists();
 
-        let reader_file = if is_file_new {
+        let reader_file = match if is_file_new {
             OpenOptions::new()
                 .read(true)
                 .write(true)
                 .create(true)
                 .truncate(false)
-                .open(path)?
+                .open(path)
         } else {
-            OpenOptions::new().read(true).write(true).open(path)?
+            OpenOptions::new().read(true).write(true).open(path)
+        } {
+            Ok(reader_file) => reader_file,
+            Err(err) => {
+                return Err(DCBError::InitializationError(format!(
+                    "Couldn't open file {} for reading: {}",
+                    path.display(),
+                    err
+                )));
+            }
         };
 
-        let writer_file = if is_file_new {
+        let writer_file = match if is_file_new {
             OpenOptions::new()
                 .read(true)
                 .write(true)
                 .create(true)
                 .truncate(false)
-                .open(path)?
+                .open(path)
         } else {
-            OpenOptions::new().read(true).write(true).open(path)?
+            OpenOptions::new().read(true).write(true).open(path)
+        } {
+            Ok(reader_file) => reader_file,
+            Err(err) => {
+                return Err(DCBError::InitializationError(format!(
+                    "Couldn't open file {} for writing: {}",
+                    path.display(),
+                    err
+                )));
+            }
         };
+
         let writer_raw_fd = writer_file.as_raw_fd();
 
         // Compute pages per mmap so that:
