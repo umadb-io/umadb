@@ -13,10 +13,7 @@ use umadb_dcb::{
     DCBAppendCondition, DCBError, DCBEvent, DCBEventStoreAsync, DCBEventStoreSync, DCBQuery,
     DCBReadResponseAsync, DCBReadResponseSync, DCBResult, DCBSequencedEvent,
 };
-use umadb_proto::{
-    AppendConditionProto, AppendRequestProto, EventProto, HeadRequestProto, ReadRequestProto,
-    ReadResponseProto, UmaDbServiceClient, dcb_error_from_status,
-};
+use umadb_proto;
 
 use std::sync::{Once, OnceLock};
 use tokio::sync::watch;
@@ -279,7 +276,7 @@ impl DCBReadResponseSync for SyncClientReadResponse {
 
 // Async client implementation
 pub struct AsyncUmaDBClient {
-    client: UmaDbServiceClient<Channel>,
+    client: umadb_proto::v1::dcb_client::DcbClient<Channel>,
     batch_size: Option<u32>,
 }
 
@@ -317,7 +314,7 @@ impl AsyncUmaDBClient {
     ) -> DCBResult<Self> {
         match new_channel(url, tls_options).await {
             Ok(channel) => Ok(Self {
-                client: UmaDbServiceClient::new(channel),
+                client: umadb_proto::v1::dcb_client::DcbClient::new(channel),
                 batch_size,
             }),
             Err(err) => Err(DCBError::TransportError(format!(
@@ -344,7 +341,7 @@ impl DCBEventStoreAsync for AsyncUmaDBClient {
         subscribe: bool,
     ) -> DCBResult<Box<dyn DCBReadResponseAsync + Send + 'static>> {
         let query_proto = query.map(|q| q.into());
-        let request = ReadRequestProto {
+        let request = umadb_proto::v1::ReadRequest {
             query: query_proto,
             start,
             backwards: Some(backwards),
@@ -353,16 +350,19 @@ impl DCBEventStoreAsync for AsyncUmaDBClient {
             batch_size: self.batch_size,
         };
         let mut client = self.client.clone();
-        let response = client.read(request).await.map_err(dcb_error_from_status)?;
+        let response = client
+            .read(request)
+            .await
+            .map_err(umadb_proto::dcb_error_from_status)?;
         let stream = response.into_inner();
         Ok(Box::new(AsyncClientReadResponse::new(stream)))
     }
 
     async fn head(&self) -> DCBResult<Option<u64>> {
         let mut client = self.client.clone();
-        match client.head(HeadRequestProto {}).await {
+        match client.head(umadb_proto::v1::HeadRequest {}).await {
             Ok(response) => Ok(response.into_inner().position),
-            Err(status) => Err(dcb_error_from_status(status)),
+            Err(status) => Err(umadb_proto::dcb_error_from_status(status)),
         }
     }
 
@@ -371,26 +371,29 @@ impl DCBEventStoreAsync for AsyncUmaDBClient {
         events: Vec<DCBEvent>,
         condition: Option<DCBAppendCondition>,
     ) -> DCBResult<u64> {
-        let events_proto: Vec<EventProto> = events.into_iter().map(EventProto::from).collect();
-        let condition_proto = condition.map(|c| AppendConditionProto {
+        let events_proto: Vec<umadb_proto::v1::Event> = events
+            .into_iter()
+            .map(umadb_proto::v1::Event::from)
+            .collect();
+        let condition_proto = condition.map(|c| umadb_proto::v1::AppendCondition {
             fail_if_events_match: Some(c.fail_if_events_match.into()),
             after: c.after,
         });
-        let request = AppendRequestProto {
+        let request = umadb_proto::v1::AppendRequest {
             events: events_proto,
             condition: condition_proto,
         };
         let mut client = self.client.clone();
         match client.append(request).await {
             Ok(response) => Ok(response.into_inner().position),
-            Err(status) => Err(dcb_error_from_status(status)),
+            Err(status) => Err(umadb_proto::dcb_error_from_status(status)),
         }
     }
 }
 
 /// Async read response wrapper that provides batched access and head metadata
 pub struct AsyncClientReadResponse {
-    stream: tonic::Streaming<ReadResponseProto>,
+    stream: tonic::Streaming<umadb_proto::v1::ReadResponse>,
     buffered: VecDeque<DCBSequencedEvent>,
     last_head: Option<Option<u64>>, // None = unknown yet; Some(x) = known
     ended: bool,
@@ -398,7 +401,7 @@ pub struct AsyncClientReadResponse {
 }
 
 impl AsyncClientReadResponse {
-    pub fn new(stream: tonic::Streaming<ReadResponseProto>) -> Self {
+    pub fn new(stream: tonic::Streaming<umadb_proto::v1::ReadResponse>) -> Self {
         Self {
             stream,
             buffered: VecDeque::new(),
@@ -434,7 +437,7 @@ impl AsyncClientReadResponse {
                         self.buffered = buffered;
                     }
                     Ok(None) => self.ended = true,
-                    Err(status) => return Err(dcb_error_from_status(status)),
+                    Err(status) => return Err(umadb_proto::dcb_error_from_status(status)),
                 }
             }
         }
@@ -519,7 +522,7 @@ impl Stream for AsyncClientReadResponse {
                 }
                 Some(Err(status)) => {
                     this.ended = true;
-                    Poll::Ready(Some(Err(dcb_error_from_status(status))))
+                    Poll::Ready(Some(Err(umadb_proto::dcb_error_from_status(status))))
                 }
                 None => {
                     this.ended = true;

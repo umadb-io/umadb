@@ -1,11 +1,3 @@
-pub use crate::umadb::uma_db_service_client::UmaDbServiceClient;
-pub use crate::umadb::uma_db_service_server::{UmaDbService, UmaDbServiceServer};
-pub use crate::umadb::{
-    AppendConditionProto, AppendRequestProto, AppendResponseProto, ErrorResponseProto, EventProto,
-    HeadRequestProto, HeadResponseProto, QueryItemProto, QueryProto, ReadRequestProto,
-    ReadResponseProto, SequencedEventProto,
-};
-
 use prost::Message;
 use prost::bytes::Bytes;
 use tonic::{Code, Status};
@@ -15,15 +7,15 @@ use umadb_dcb::{
 use uuid::Uuid;
 
 // Include the generated proto code
-mod umadb {
-    tonic::include_proto!("umadb");
+pub mod v1 {
+    tonic::include_proto!("umadb.v1");
 }
 
 // Conversion functions between proto and API types
-impl TryFrom<EventProto> for DCBEvent {
+impl TryFrom<v1::Event> for DCBEvent {
     type Error = DCBError;
 
-    fn try_from(proto: EventProto) -> DCBResult<Self> {
+    fn try_from(proto: v1::Event) -> DCBResult<Self> {
         let uuid = if proto.uuid.is_empty() {
             None
         } else {
@@ -31,7 +23,7 @@ impl TryFrom<EventProto> for DCBEvent {
                 Ok(uuid) => Some(uuid),
                 Err(_) => {
                     return Err(DCBError::DeserializationError(
-                        "Invalid UUID in EventProto".to_string(),
+                        "Invalid UUID in Event".to_string(),
                     ));
                 }
             }
@@ -46,9 +38,9 @@ impl TryFrom<EventProto> for DCBEvent {
     }
 }
 
-impl From<DCBEvent> for EventProto {
+impl From<DCBEvent> for v1::Event {
     fn from(event: DCBEvent) -> Self {
-        EventProto {
+        v1::Event {
             event_type: event.event_type,
             tags: event.tags,
             data: event.data,
@@ -57,8 +49,8 @@ impl From<DCBEvent> for EventProto {
     }
 }
 
-impl From<QueryItemProto> for DCBQueryItem {
-    fn from(proto: QueryItemProto) -> Self {
+impl From<v1::QueryItem> for DCBQueryItem {
+    fn from(proto: v1::QueryItem) -> Self {
         DCBQueryItem {
             types: proto.types,
             tags: proto.tags,
@@ -66,33 +58,33 @@ impl From<QueryItemProto> for DCBQueryItem {
     }
 }
 
-impl From<DCBQueryItem> for QueryItemProto {
+impl From<DCBQueryItem> for v1::QueryItem {
     fn from(item: DCBQueryItem) -> Self {
-        QueryItemProto {
+        v1::QueryItem {
             types: item.types,
             tags: item.tags,
         }
     }
 }
 
-impl From<QueryProto> for DCBQuery {
-    fn from(proto: QueryProto) -> Self {
+impl From<v1::Query> for DCBQuery {
+    fn from(proto: v1::Query) -> Self {
         DCBQuery {
             items: proto.items.into_iter().map(|item| item.into()).collect(),
         }
     }
 }
 
-impl From<DCBQuery> for QueryProto {
+impl From<DCBQuery> for v1::Query {
     fn from(query: DCBQuery) -> Self {
-        QueryProto {
+        v1::Query {
             items: query.items.into_iter().map(|item| item.into()).collect(),
         }
     }
 }
 
-impl From<AppendConditionProto> for DCBAppendCondition {
-    fn from(proto: AppendConditionProto) -> Self {
+impl From<v1::AppendCondition> for DCBAppendCondition {
+    fn from(proto: v1::AppendCondition) -> Self {
         DCBAppendCondition {
             fail_if_events_match: proto
                 .fail_if_events_match
@@ -102,9 +94,9 @@ impl From<AppendConditionProto> for DCBAppendCondition {
     }
 }
 
-impl From<DCBSequencedEvent> for SequencedEventProto {
+impl From<DCBSequencedEvent> for v1::SequencedEvent {
     fn from(event: DCBSequencedEvent) -> Self {
-        SequencedEventProto {
+        v1::SequencedEvent {
             position: event.position,
             event: Some(event.event.into()),
         }
@@ -116,29 +108,26 @@ pub fn status_from_dcb_error(e: &DCBError) -> Status {
     let (code, error_type) = match e {
         DCBError::IntegrityError(_) => (
             Code::FailedPrecondition,
-            umadb::error_response_proto::ErrorType::Integrity as i32,
+            v1::error_response::ErrorType::Integrity as i32,
         ),
         DCBError::Corruption(_)
         | DCBError::DatabaseCorrupted(_)
         | DCBError::DeserializationError(_) => (
             Code::DataLoss,
-            umadb::error_response_proto::ErrorType::Corruption as i32,
+            v1::error_response::ErrorType::Corruption as i32,
         ),
         DCBError::SerializationError(_) => (
             Code::InvalidArgument,
-            umadb::error_response_proto::ErrorType::Serialization as i32,
+            v1::error_response::ErrorType::Serialization as i32,
         ),
         DCBError::InternalError(_) => (
             Code::Internal,
-            umadb::error_response_proto::ErrorType::Internal as i32,
+            v1::error_response::ErrorType::Internal as i32,
         ),
-        _ => (
-            Code::Internal,
-            umadb::error_response_proto::ErrorType::Io as i32,
-        ),
+        _ => (Code::Internal, v1::error_response::ErrorType::Io as i32),
     };
     let msg = e.to_string();
-    let detail = ErrorResponseProto {
+    let detail = v1::ErrorResponse {
         message: msg.clone(),
         error_type,
     };
@@ -149,21 +138,21 @@ pub fn status_from_dcb_error(e: &DCBError) -> Status {
 // Helper: map tonic::Status -> DCBError by decoding details
 pub fn dcb_error_from_status(status: Status) -> DCBError {
     let details = status.details();
-    // Try to decode ErrorResponseProto directly from details
+    // Try to decode ErrorResponse directly from details
     if !details.is_empty()
-        && let Ok(err) = ErrorResponseProto::decode(details)
+        && let Ok(err) = v1::ErrorResponse::decode(details)
     {
         return match err.error_type {
-            x if x == umadb::error_response_proto::ErrorType::Integrity as i32 => {
+            x if x == v1::error_response::ErrorType::Integrity as i32 => {
                 DCBError::IntegrityError(err.message)
             }
-            x if x == umadb::error_response_proto::ErrorType::Corruption as i32 => {
+            x if x == v1::error_response::ErrorType::Corruption as i32 => {
                 DCBError::Corruption(err.message)
             }
-            x if x == umadb::error_response_proto::ErrorType::Serialization as i32 => {
+            x if x == v1::error_response::ErrorType::Serialization as i32 => {
                 DCBError::SerializationError(err.message)
             }
-            x if x == umadb::error_response_proto::ErrorType::Internal as i32 => {
+            x if x == v1::error_response::ErrorType::Internal as i32 => {
                 DCBError::InternalError(err.message)
             }
             _ => DCBError::Io(std::io::Error::other(err.message)),

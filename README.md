@@ -704,58 +704,58 @@ You can interact with an UmaDB server using its **gRPC API**. The server impleme
 - `Append`: Append events to the event store
 - `Head`: Get the sequence number of the last recorded event
 
-The following sections detail the protocol defined in `umadb.proto`.
+The following sections detail the protocol defined in `proto/v1/umadb.proto`.
 
-### Service Definition — `UmaDBService`
+### Service Definition — `DCB`
 
 The main gRPC service for reading and appending events.
 
 | RPC      | Request              | Response                            | Description                                                                        |
 |----------|----------------------|-------------------------------------|------------------------------------------------------------------------------------|
-| `Read`   | `ReadRequestProto`   | **stream**&nbsp;`ReadResponseProto` | Streams batches of events matching the query; may remain open if `subscribe=true`. |
-| `Append` | `AppendRequestProto` | `AppendResponseProto`               | Appends new events atomically, returning the final sequence number.                |
-| `Head`   | `HeadRequestProto`   | `HeadResponseProto`                 | Returns the current head position of the store.                                    |
+| `Read`   | `ReadRequest`   | **stream**&nbsp;`ReadResponse` | Streams batches of events matching the query; may remain open if `subscribe=true`. |
+| `Append` | `AppendRequest` | `AppendResponse`               | Appends new events atomically, returning the final sequence number.                |
+| `Head`   | `HeadRequest`   | `HeadResponse`                 | Returns the current head position of the store.                                    |
 
 
-### Read Request — **`ReadRequestProto`**
+### Read Request — **`ReadRequest`**
 
 Request to read events from the event store.
 
 | Field        | Type                           | Description                                                           |
 |--------------|--------------------------------|-----------------------------------------------------------------------|
-| `query`      | **optional**&nbsp;`QueryProto` | Optional filter for selecting specific event types or tags.           |
+| `query`      | **optional**&nbsp;`Query` | Optional filter for selecting specific event types or tags.           |
 | `start`      | **optional**&nbsp;`uint64`     | Read from this sequence number.                                       |
 | `backwards`  | **optional**&nbsp;`bool`       | Start reading backwards.                                              |
 | `limit`      | **optional**&nbsp;`uint32`     | Maximum number of events to return.                                   |
 | `subscribe`  | **optional**&nbsp;`bool`       | If true, the stream remains open and continues delivering new events. |
 | `batch_size` | **optional**&nbsp;`uint32`     | Optional batch size hint for streaming responses.                     |
 
-### Read Response — **`ReadResponseProto`**
+### Read Response — **`ReadResponse`**
 
 Returned for each streamed batch of messages in response to a `Read` request.
 
 | Field    | Type                                    | Description                                                      |
 |----------|-----------------------------------------|------------------------------------------------------------------|
-| `events` | **repeated**&nbsp;`SequencedEventProto` | A batch of events matching the query.                            |
+| `events` | **repeated**&nbsp;`SequencedEvent` | A batch of events matching the query.                            |
 | `head`   | **optional**&nbsp;`uint64`              | The current head position of the store when this batch was sent. |
 
-When `subscribe = true`, multiple `ReadResponseProto` messages may be streamed as new events arrive.
+When `subscribe = true`, multiple `ReadResponse` messages may be streamed as new events arrive.
 
 When `subscribe = true`, the value of `head` will be empty.
 
 When `limit` is empty, the value of `head` will be the position of the last recorded event in the database,
 otherwise it will be the position of the last selected event.
 
-### Append Request — **`AppendRequestProto`**
+### Append Request — **`AppendRequest`**
 
 Request to append new events to the store.
 
 | Field       | Type                                     | Description                                                                |
 |-------------|------------------------------------------|----------------------------------------------------------------------------|
-| `events`    | **repeated**&nbsp;`EventProto`           | Events to append, in order.                                                |
-| `condition` | **optional**&nbsp;`AppendConditionProto` | Optional condition to enforce optimistic concurrency or prevent conflicts. |
+| `events`    | **repeated**&nbsp;`Event`           | Events to append, in order.                                                |
+| `condition` | **optional**&nbsp;`AppendCondition` | Optional condition to enforce optimistic concurrency or prevent conflicts. |
 
-### Append Response — **`AppendResponseProto`**
+### Append Response — **`AppendResponse`**
 
 Response after successfully appending events.
 
@@ -766,13 +766,13 @@ Response after successfully appending events.
 With CQRS-style eventually consistent projections, clients can use the returned position to wait until downstream
 event processing components have become up-to-data.
 
-### Head Request — **`HeadRequestProto`**
+### Head Request — **`HeadRequest`**
 
 Empty request used to query the current head of the event store.
 
 _No fields._
 
-### Head Response — **`HeadResponseProto`**
+### Head Response — **`HeadResponse`**
 
 Response containing the current head position.
 
@@ -780,16 +780,16 @@ Response containing the current head position.
 |------------|----------------------------|-------------------------------------------------------------------|
 | `position` | **optional**&nbsp;`uint64` | The latest known event position, or `None` if the store is empty. |
 
-### Sequenced Event — **`SequencedEventProto`**
+### Sequenced Event — **`SequencedEvent`**
 
 Represents an event along with its assigned sequence number.
 
 | Field      | Type         | Description                                                |
 |------------|--------------|------------------------------------------------------------|
 | `position` | `uint64`     | Monotonically increasing event position in the global log. |
-| `event`    | `EventProto` | The underlying event payload.                              |
+| `event`    | `Event` | The underlying event payload.                              |
 
-### Event — **`EventProto`**
+### Event — **`Event`**
 
 Represents a single event.
 
@@ -800,15 +800,15 @@ Represents a single event.
 | `data`       | `bytes`                    | Serialized event data (e.g. JSON, CBOR, or binary payload).      |
 | `uuid`       | `string`                   | Serialized event UUID (e.g. A version 4 UUIDv4).                 |
 
-### Query — **`QueryProto`**
+### Query — **`Query`**
 
-Encapsulates one or more `QueryItemProto`ueryitemproto) entries.
+Encapsulates one or more `QueryItem`ueryitemproto) entries.
 
 | Field   | Type                               | Description                           |
 |---------|------------------------------------|---------------------------------------|
-| `items` | **repeated**&nbsp;`QueryItemProto` | A list of query clauses (logical OR). |
+| `items` | **repeated**&nbsp;`QueryItem` | A list of query clauses (logical OR). |
 
-### Query Item — **`QueryItemProto`**
+### Query Item — **`QueryItem`**
 
 Represents a **query clause** that matches a subset of events.
 
@@ -818,16 +818,16 @@ Represents a **query clause** that matches a subset of events.
 | `tags`  | **repeated**&nbsp;`string` | List of tags (logical AND).       |
 
 
-### Append Condition  — **`AppendConditionProto`**
+### Append Condition  — **`AppendCondition`**
 
 Optional conditions used to control whether an append should proceed.
 
 | Field                  | Type                           | Description                                                     |
 |------------------------|--------------------------------|-----------------------------------------------------------------|
-| `fail_if_events_match` | **optional**&nbsp;`QueryProto` | Prevents append if any events matching the query already exist. |
+| `fail_if_events_match` | **optional**&nbsp;`Query` | Prevents append if any events matching the query already exist. |
 | `after`                | **optional**&nbsp;`uint64`     | Only match events sequenced after this position.                |
 
-### Error Response — **`ErrorResponseProto`**
+### Error Response — **`ErrorResponse`**
 
 Represents an application-level error returned by the service.
 
@@ -852,12 +852,12 @@ The "rich status" message can be used to extract structured error details.
 
 | Category        | Message                                                                              | Description                         |
 |-----------------|--------------------------------------------------------------------------------------|-------------------------------------|
-| **Event Model** | `EventProto`, `SequencedEventProto`                                                  | Core event representation.          |
-| **Queries**     | `QueryProto`, `QueryItemProto`                                                       | Define filters for event selection. |
-| **Conditions**  | `AppendConditionProto`                                                               | Control write preconditions.        |
-| **Read/Write**  | `ReadRequestProto`, `ReadResponseProto`, `AppendRequestProto`, `AppendResponseProto` | Reading and appending APIs.         |
-| **Meta**        | `HeadRequestProto`, `HeadResponseProto`                                              | Retrieve current head position.     |
-| **Errors**      | `ErrorResponseProto`                                                                 | Consistent error representation.    |
+| **Event Model** | `Event`, `SequencedEvent`                                                  | Core event representation.          |
+| **Queries**     | `Query`, `QueryItem`                                                       | Define filters for event selection. |
+| **Conditions**  | `AppendCondition`                                                               | Control write preconditions.        |
+| **Read/Write**  | `ReadRequest`, `ReadResponse`, `AppendRequest`, `AppendResponse` | Reading and appending APIs.         |
+| **Meta**        | `HeadRequest`, `HeadResponse`                                              | Retrieve current head position.     |
+| **Errors**      | `ErrorResponse`                                                                 | Consistent error representation.    |
 
 ### Example
 
@@ -865,24 +865,24 @@ Using the gRPC API directly in Python code might look something like this.
 
 ```python
 from umadb_pb2 import (
-    EventProto,
-    QueryItemProto,
-    QueryProto,
-    AppendConditionProto,
-    ReadRequestProto,
-    AppendRequestProto,
+    Event,
+    QueryItem,
+    Query,
+    AppendCondition,
+    ReadRequest,
+    AppendRequest,
 )
-from umadb_pb2_grpc import UmaDBServiceStub
+from umadb_pb2_grpc import DcbStub
 import grpc
 
 # Connect to the gRPC server
 channel = grpc.insecure_channel("127.0.0.1:50051")
-client = UmaDBServiceStub(channel)
+client = DcbStub(channel)
 
 # Define a consistency boundary
-cb = QueryProto(
+cb = Query(
     items=[
-        QueryItemProto(
+        QueryItem(
             types=["example"],
             tags=["tag1", "tag2"],
         )
@@ -890,7 +890,7 @@ cb = QueryProto(
 )
 
 # Read events for a decision model
-read_request = ReadRequestProto(
+read_request = ReadRequest(
     query=cb,
     start=None,
     backwards=False,
@@ -912,16 +912,16 @@ for read_response in read_stream:
 print("Last known position is:", last_head)
 
 # Produce new event
-event = EventProto(
+event = Event(
     event_type="example",
     tags=["tag1", "tag2"],
     data=b"Hello, world!",
 )
 
 # Append event in consistency boundary
-append_request = AppendRequestProto(
+append_request = AppendRequest(
     events=[event],
-    condition=AppendConditionProto(
+    condition=AppendCondition(
         fail_if_events_match=cb,
         after=last_head,
     ),
@@ -931,9 +931,9 @@ commit_position = commit_response.position
 print("Appended event at position:", commit_position)
 
 # Append conflicting event - expect an error
-conflicting_request = AppendRequestProto(
+conflicting_request = AppendRequest(
     events=[event],
-    condition=AppendConditionProto(
+    condition=AppendCondition(
         fail_if_events_match=cb,
         after=last_head,
     ),
@@ -950,7 +950,7 @@ except grpc.RpcError as e:
         raise
 
 # Subscribe to all events for a projection
-subscription_request = ReadRequestProto()
+subscription_request = ReadRequest()
 
 subscription_stream = client.Read(subscription_request)
 

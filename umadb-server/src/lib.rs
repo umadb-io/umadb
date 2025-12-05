@@ -17,13 +17,94 @@ use umadb_core::mvcc::Mvcc;
 use umadb_dcb::{DCBAppendCondition, DCBError, DCBEvent, DCBQuery, DCBResult, DCBSequencedEvent};
 
 use tokio::runtime::Runtime;
+use tonic::codegen::{http};
 use tonic::transport::server::TcpIncoming;
 use umadb_core::common::Position;
-use umadb_proto::{
-    AppendRequestProto, AppendResponseProto, HeadRequestProto, HeadResponseProto, ReadRequestProto,
-    ReadResponseProto, SequencedEventProto, UmaDbService, UmaDbServiceServer,
-    status_from_dcb_error,
-};
+use umadb_proto;
+
+
+use std::convert::Infallible;
+use std::future::Future;
+use std::task::{Context, Poll};
+use tonic::server::NamedService;
+use tower;
+
+// This is just for the very early unversioned API (pre-v1).
+#[derive(Clone, Debug)]
+pub struct PathRewriterService<S> {
+    inner: S,
+}
+
+impl<S> tower::Service<http::Request<tonic::body::Body>> for PathRewriterService<S>
+where
+    S: tower::Service<http::Request<tonic::body::Body>, Response = http::Response<tonic::body::Body>, Error = Infallible> + Clone + Send + 'static,
+    S::Future: Send + 'static,
+{
+    type Response = S::Response;
+    type Error = S::Error;
+    type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send + 'static>>;
+
+    fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        self.inner.poll_ready(cx)
+    }
+
+    fn call(&mut self, mut req: http::Request<tonic::body::Body>) -> Self::Future {
+        let uri = req.uri().clone();
+        let path = uri.path();
+
+        // Check and rewrite the path string first
+        if path.starts_with("/umadb.UmaDBService/") {
+            let new_path_str = path.replace("/umadb.UmaDBService/", "/umadb.v1.DCB/");
+
+            // Use the existing authority and scheme if present, otherwise default to a simple path-only URI structure
+            // which is often safer than hardcoded hostnames in internal systems.
+            let new_uri = if let (Some(scheme), Some(authority)) = (uri.scheme(), uri.authority()) {
+                // If we have all components, try to build the full URI
+                http::Uri::builder()
+                    .scheme(scheme.clone())
+                    .authority(authority.clone())
+                    .path_and_query(new_path_str.as_str())
+                    .build()
+                    .ok() // Convert the final build Result into an Option
+            } else {
+                // Fallback for malformed requests (missing scheme/authority)
+                // Just try to build a path-only URI
+                new_path_str.parse::<http::Uri>().ok()
+            };
+
+            if let Some(final_uri) = new_uri {
+                *req.uri_mut() = final_uri;
+            } else {
+                eprintln!("Failed to construct valid URI for path: {}", path);
+            }
+        }
+
+        let fut = self.inner.call(req);
+        Box::pin(async move { fut.await })
+    }
+}
+
+// Add this implementation to satisfy the compiler error
+impl<S: NamedService> NamedService for PathRewriterService<S> {
+    const NAME: &'static str = S::NAME;
+}
+
+#[derive(Clone, Debug)]
+pub struct PathRewriterLayer;
+
+impl<S> tower::Layer<S> for PathRewriterLayer
+where
+    S: tower::Service<http::Request<tonic::body::Body>, Response = http::Response<tonic::body::Body>, Error = Infallible> + Clone + Send + 'static,
+    S::Future: Send + 'static,
+{
+    type Service = PathRewriterService<S>;
+
+    fn layer(&self, inner: S) -> Self::Service {
+        PathRewriterService { inner }
+    }
+}
+
+
 
 static START_TIME: LazyLock<Instant> = LazyLock::new(Instant::now);
 
@@ -139,22 +220,23 @@ async fn start_server_internal<P: AsRef<Path> + Send + 'static>(
 
     // Create a shutdown broadcast channel for terminating ongoing subscriptions
     let (srv_shutdown_tx, srv_shutdown_rx) = watch::channel(false);
-    let server = match UmaDBServer::new(path.as_ref().to_owned(), srv_shutdown_rx) {
+    let dcb_server = match DCBServer::new(path.as_ref().to_owned(), srv_shutdown_rx) {
         Ok(server) => server,
         Err(err) => {
             return Err(Box::new(err));
         }
     };
+
     println!(
         "UmaDB has {:?} events",
-        server.request_handler.head().await?.unwrap_or(0)
+        dcb_server.request_handler.head().await?.unwrap_or(0)
     );
     let server_mode_display_str = if tls.is_some() {
         "with TLS"
     } else {
         "without TLS"
     };
-    let mut server_builder = build_server_builder_with_options(tls);
+
 
     // gRPC Health service setup
     use tonic_health::ServingStatus; // server API expects this enum
@@ -164,13 +246,15 @@ async fn start_server_internal<P: AsRef<Path> + Send + 'static>(
         .set_service_status("", ServingStatus::Serving)
         .await;
     health_reporter
-        .set_service_status("umadb.UmaDBService", ServingStatus::Serving)
+        .set_service_status("umadb.v1.DCB", ServingStatus::Serving)
         .await;
     let health_reporter_for_shutdown = health_reporter.clone();
 
-    let router = server_builder
+    // Apply PathRewriterLayer at the server level to intercept all requests before routing
+    let router = build_server_builder_with_options(tls)
+        .layer(PathRewriterLayer)
         .add_service(health_service)
-        .add_service(server.into_service());
+        .add_service(dcb_server.into_service());
 
     println!("UmaDB is listening on {addr} ({server_mode_display_str})");
     println!("UmaDB started in {:?}", uptime());
@@ -184,7 +268,7 @@ async fn start_server_internal<P: AsRef<Path> + Send + 'static>(
                 .set_service_status("", ServingStatus::NotServing)
                 .await;
             let _ = health_reporter_for_shutdown
-                .set_service_status("umadb.UmaDBService", ServingStatus::NotServing)
+                .set_service_status("umadb.v1.DCB", ServingStatus::NotServing)
                 .await;
             // Broadcast shutdown to all subscription tasks
             let _ = srv_shutdown_tx.send(true);
@@ -196,12 +280,12 @@ async fn start_server_internal<P: AsRef<Path> + Send + 'static>(
 }
 
 // gRPC server implementation
-pub struct UmaDBServer {
+pub struct DCBServer {
     pub(crate) request_handler: RequestHandler,
     shutdown_watch_rx: watch::Receiver<bool>,
 }
 
-impl UmaDBServer {
+impl DCBServer {
     pub fn new<P: AsRef<Path> + Send + 'static>(
         path: P,
         shutdown_rx: watch::Receiver<bool>,
@@ -213,19 +297,19 @@ impl UmaDBServer {
         })
     }
 
-    pub fn into_service(self) -> UmaDbServiceServer<Self> {
-        UmaDbServiceServer::new(self)
+    pub fn into_service(self) -> umadb_proto::v1::dcb_server::DcbServer<Self> {
+        umadb_proto::v1::dcb_server::DcbServer::new(self)
     }
 }
 
 #[tonic::async_trait]
-impl UmaDbService for UmaDBServer {
+impl umadb_proto::v1::dcb_server::Dcb for DCBServer {
     type ReadStream =
-        Pin<Box<dyn Stream<Item = Result<ReadResponseProto, Status>> + Send + 'static>>;
+        Pin<Box<dyn Stream<Item = Result<umadb_proto::v1::ReadResponse, Status>> + Send + 'static>>;
 
     async fn read(
         &self,
-        request: Request<ReadRequestProto>,
+        request: Request<umadb_proto::v1::ReadRequest>,
     ) -> Result<Response<Self::ReadStream>, Status> {
         let read_request = request.into_inner();
 
@@ -290,17 +374,18 @@ impl UmaDbService for UmaDBServer {
                         let original_len = dcb_sequenced_events.len();
 
                         // Filter and map events, discarding those with position > captured_head
-                        let sequenced_event_protos: Vec<SequencedEventProto> = dcb_sequenced_events
-                            .into_iter()
-                            .filter(|e| {
-                                if let Some(h) = captured_head {
-                                    e.position <= h
-                                } else {
-                                    true
-                                }
-                            })
-                            .map(SequencedEventProto::from)
-                            .collect();
+                        let sequenced_event_protos: Vec<umadb_proto::v1::SequencedEvent> =
+                            dcb_sequenced_events
+                                .into_iter()
+                                .filter(|e| {
+                                    if let Some(h) = captured_head {
+                                        e.position <= h
+                                    } else {
+                                        true
+                                    }
+                                })
+                                .map(umadb_proto::v1::SequencedEvent::from)
+                                .collect();
 
                         let reached_captured_head = if captured_head.is_some() {
                             // Check if we filtered out any events
@@ -325,7 +410,7 @@ impl UmaDbService for UmaDBServer {
                         if sequenced_event_protos.is_empty() {
                             // Only send an empty response to communicate head if this is the first
                             if !sent_any {
-                                let response = ReadResponseProto {
+                                let response = umadb_proto::v1::ReadResponse {
                                     events: vec![],
                                     head: head_to_send,
                                 };
@@ -369,7 +454,7 @@ impl UmaDbService for UmaDBServer {
                         // Capture values needed after sequenced_event_protos is moved
                         let sent_count = sequenced_event_protos.len() as u32;
 
-                        let response = ReadResponseProto {
+                        let response = umadb_proto::v1::ReadResponse {
                             events: sequenced_event_protos,
                             head: head_to_send,
                         };
@@ -405,7 +490,7 @@ impl UmaDbService for UmaDBServer {
                         tokio::task::yield_now().await;
                     }
                     Err(e) => {
-                        let _ = tx.send(Err(status_from_dcb_error(&e))).await;
+                        let _ = tx.send(Err(umadb_proto::status_from_dcb_error(&e))).await;
                         break;
                     }
                 }
@@ -420,37 +505,37 @@ impl UmaDbService for UmaDBServer {
 
     async fn append(
         &self,
-        request: Request<AppendRequestProto>,
-    ) -> Result<Response<AppendResponseProto>, Status> {
+        request: Request<umadb_proto::v1::AppendRequest>,
+    ) -> Result<Response<umadb_proto::v1::AppendResponse>, Status> {
         let req = request.into_inner();
 
         // Convert protobuf types to API types
         let events: Vec<DCBEvent> = match req.events.into_iter().map(|e| e.try_into()).collect() {
             Ok(events) => events,
             Err(e) => {
-                return Err(status_from_dcb_error(&e));
+                return Err(umadb_proto::status_from_dcb_error(&e));
             }
         };
         let condition = req.condition.map(|c| c.into());
 
         // Call the event store append method
         match self.request_handler.append(events, condition).await {
-            Ok(position) => Ok(Response::new(AppendResponseProto { position })),
-            Err(e) => Err(status_from_dcb_error(&e)),
+            Ok(position) => Ok(Response::new(umadb_proto::v1::AppendResponse { position })),
+            Err(e) => Err(umadb_proto::status_from_dcb_error(&e)),
         }
     }
 
     async fn head(
         &self,
-        _request: Request<HeadRequestProto>,
-    ) -> Result<Response<HeadResponseProto>, Status> {
+        _request: Request<umadb_proto::v1::HeadRequest>,
+    ) -> Result<Response<umadb_proto::v1::HeadResponse>, Status> {
         // Call the event store head method
         match self.request_handler.head().await {
             Ok(position) => {
                 // Return the position as a response
-                Ok(Response::new(HeadResponseProto { position }))
+                Ok(Response::new(umadb_proto::v1::HeadResponse { position }))
             }
-            Err(e) => Err(status_from_dcb_error(&e)),
+            Err(e) => Err(umadb_proto::status_from_dcb_error(&e)),
         }
     }
 }

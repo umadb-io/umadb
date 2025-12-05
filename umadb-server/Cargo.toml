@@ -20,3 +20,4 @@ tonic-health = { workspace = true }
 futures = { workspace = true }
 tokio-stream = "0.1.14"
 async-trait = { workspace = true }
+tower = "0.5.2"

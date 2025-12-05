@@ -1,0 +1,78 @@
+syntax = "proto3";
+
+package umadb.v1;
+
+message Event {
+  string event_type = 1;
+  repeated string tags = 2;
+  bytes data = 3;
+  string uuid = 4;
+}
+
+message SequencedEvent {
+  uint64 position = 1;
+  Event event = 2;
+}
+
+message QueryItem {
+  repeated string types = 1;
+  repeated string tags = 2;
+}
+
+message Query {
+  repeated QueryItem items = 1;
+}
+
+message AppendCondition {
+  optional Query fail_if_events_match = 1;
+  optional uint64 after = 2;
+}
+
+message ReadRequest {
+  optional Query query = 1;
+  optional uint64 start = 2;
+  optional bool backwards = 3;
+  optional uint32 limit = 4;
+  optional bool subscribe = 5;
+  optional uint32 batch_size = 6;
+}
+
+message ReadResponse {
+  repeated SequencedEvent events = 1;
+  optional uint64 head = 2;
+}
+
+message AppendRequest {
+  repeated Event events = 1;
+  optional AppendCondition condition = 2;
+}
+
+message AppendResponse {
+  uint64 position = 1;
+}
+
+message HeadRequest {
+}
+
+message HeadResponse {
+  optional uint64 position = 1;
+}
+
+message ErrorResponse {
+  string message = 1;
+  ErrorType error_type = 2;
+
+  enum ErrorType {
+    IO = 0;
+    SERIALIZATION = 1;
+    INTEGRITY = 2;
+    CORRUPTION = 3;
+    INTERNAL = 4;
+  }
+}
+
+service DCB {
+  rpc Read(ReadRequest) returns (stream ReadResponse);
+  rpc Append(AppendRequest) returns (AppendResponse);
+  rpc Head(HeadRequest) returns (HeadResponse);
+}

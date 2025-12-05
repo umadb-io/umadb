@@ -16,23 +16,28 @@ Protocol buffer definitions and gRPC service for UmaDB event store.
 
 The UmaDB gRPC service provides:
 
-- **Read** - Query and retrieve events with optional filtering
-- **Append** - Write new events with optional consistency conditions
+- **Read**  — get events from the event store.
+- **Append** — write events to the event store.
+- **Head** — position of the last recorded event.
 
 ## Usage
 
-This crate is used by both `umadb-server` (to implement the gRPC service) and `umadb-client` (to communicate with the server):
+This crate is used by `umadb-server` and `umadb-client`.
+
+Clients send requests and convert gRPC status details to DCB errors.
 
 ```rust
-use umadb_proto::{
-    AppendRequestProto, ReadRequestProto, UmaDbServiceClient, dcb_error_from_status,
-};
+use umadb_proto::dcb_error_from_status;
+use umadb_proto::v1::dcb_client::DcbClient;
+use umadb_proto::v1::{AppendRequest, ReadRequest};
 ```
 
+Servers convert DCB errors to gRPC status details and send responses.
+
 ```rust
-use umadb_proto::{
-    AppendResponseProto, ReadResponseProto, UmaDbServiceServer, status_from_dcb_error,
-};
+use umadb_proto::status_from_dcb_error;
+use umadb_proto::v1::dcb_server::DcbServer;
+use umadb_proto::v1::{AppendResponse, ReadResponse};
 ```
 
 ## Protocol Buffers

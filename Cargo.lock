@@ -2388,6 +2388,10 @@ dependencies = [
 name = "tests-integration"
 version = "0.0.0"
 dependencies = [
+ "http-body-util",
+ "hyper",
+ "hyper-util",
+ "prost",
  "rcgen",
  "tempfile",
  "tokio",
@@ -2396,6 +2400,7 @@ dependencies = [
  "umadb-client",
  "umadb-core",
  "umadb-dcb",
+ "umadb-proto",
  "umadb-server",
  "uuid",
 ]
@@ -2814,6 +2819,7 @@ dependencies = [
  "tokio-stream",
  "tonic",
  "tonic-health",
+ "tower",
  "umadb-core",
  "umadb-dcb",
  "umadb-proto",

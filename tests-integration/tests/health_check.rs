@@ -74,7 +74,7 @@ async fn grpc_health_check_serving() {
     // Act + Assert: named UmaDB service should be SERVING
     let resp = client
         .check(HealthCheckRequest {
-            service: "umadb.UmaDBService".to_string(),
+            service: "umadb.v1.DCB".to_string(),
         })
         .await
         .expect("health check UmaDB");

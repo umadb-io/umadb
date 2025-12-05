@@ -11,10 +11,15 @@ umadb-dcb = { path = "../umadb-dcb" }
 umadb-core = { path = "../umadb-core" }
 umadb-client = { path = "../umadb-client" }
 umadb-server = { path = "../umadb-server" }
+umadb-proto = { path = "../umadb-proto" }
 #futures = { workspace = true }
 tokio = { workspace = true }
 tonic = { workspace = true }
 tonic-health = { workspace = true }
+prost = "0.14.1"
+hyper = "1"
+hyper-util = { version = "0.1", features = ["client", "client-legacy", "http2", "tokio"] }
+http-body-util = "0.1"
 
 #umadb-benches = { path = "../benches" }
 
