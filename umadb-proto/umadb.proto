@@ -3,7 +3,7 @@ syntax = "proto3";
 package umadb;
 
 // Event message
-message EventProto {
+message Event {
   string event_type = 1;
   repeated string tags = 2;
   bytes data = 3;
@@ -11,31 +11,31 @@ message EventProto {
 }
 
 // Sequenced Event message
-message SequencedEventProto {
+message SequencedEvent {
   uint64 position = 1;
-  EventProto event = 2;
+  Event event = 2;
 }
 
 // Query Item message
-message QueryItemProto {
+message QueryItem {
   repeated string types = 1;
   repeated string tags = 2;
 }
 
 // Query message
-message QueryProto {
-  repeated QueryItemProto items = 1;
+message Query {
+  repeated QueryItem items = 1;
 }
 
 // Append Condition message
-message AppendConditionProto {
-  optional QueryProto fail_if_events_match = 1;
+message AppendCondition {
+  optional Query fail_if_events_match = 1;
   optional uint64 after = 2;
 }
 
 // Read request message
-message ReadRequestProto {
-  optional QueryProto query = 1;
+message ReadRequest {
+  optional Query query = 1;
   optional uint64 start = 2;
   optional bool backwards = 3;
   optional uint32 limit = 4;
@@ -44,34 +44,34 @@ message ReadRequestProto {
 }
 
 // Read response message
-message ReadResponseProto {
-  repeated SequencedEventProto events = 1;
+message ReadResponse {
+  repeated SequencedEvent events = 1;
   optional uint64 head = 2;
 }
 
 // Append request message
-message AppendRequestProto {
-  repeated EventProto events = 1;
-  optional AppendConditionProto condition = 2;
+message AppendRequest {
+  repeated Event events = 1;
+  optional AppendCondition condition = 2;
 }
 
 // Append response message
-message AppendResponseProto {
+message AppendResponse {
   uint64 position = 1;
 }
 
 // Head request message
-message HeadRequestProto {
+message HeadRequest {
   // Empty request, no parameters needed
 }
 
 // Head response message
-message HeadResponseProto {
+message HeadResponse {
   optional uint64 position = 1;
 }
 
 // Error response
-message ErrorResponseProto {
+message ErrorResponse {
   string message = 1;
   ErrorType error_type = 2;
 
@@ -87,11 +87,11 @@ message ErrorResponseProto {
 // UmaDB service
 service UmaDBService {
   // Read events from the store
-  rpc Read(ReadRequestProto) returns (stream ReadResponseProto);
+  rpc Read(ReadRequest) returns (stream ReadResponse);
 
   // Append events to the store
-  rpc Append(AppendRequestProto) returns (AppendResponseProto);
+  rpc Append(AppendRequest) returns (AppendResponse);
 
   // Get the current head position of the event store
-  rpc Head(HeadRequestProto) returns (HeadResponseProto);
+  rpc Head(HeadRequest) returns (HeadResponse);
 }

@@ -19,11 +19,7 @@ use umadb_dcb::{DCBAppendCondition, DCBError, DCBEvent, DCBQuery, DCBResult, DCB
 use tokio::runtime::Runtime;
 use tonic::transport::server::TcpIncoming;
 use umadb_core::common::Position;
-use umadb_proto::{
-    AppendRequestProto, AppendResponseProto, HeadRequestProto, HeadResponseProto, ReadRequestProto,
-    ReadResponseProto, SequencedEventProto, UmaDbService, UmaDbServiceServer,
-    status_from_dcb_error,
-};
+use umadb_proto;
 
 static START_TIME: LazyLock<Instant> = LazyLock::new(Instant::now);
 
@@ -213,19 +209,19 @@ impl UmaDBServer {
         })
     }
 
-    pub fn into_service(self) -> UmaDbServiceServer<Self> {
-        UmaDbServiceServer::new(self)
+    pub fn into_service(self) -> umadb_proto::UmaDbServiceServer<Self> {
+        umadb_proto::UmaDbServiceServer::new(self)
     }
 }
 
 #[tonic::async_trait]
-impl UmaDbService for UmaDBServer {
+impl umadb_proto::UmaDbService for UmaDBServer {
     type ReadStream =
-        Pin<Box<dyn Stream<Item = Result<ReadResponseProto, Status>> + Send + 'static>>;
+        Pin<Box<dyn Stream<Item = Result<umadb_proto::ReadResponse, Status>> + Send + 'static>>;
 
     async fn read(
         &self,
-        request: Request<ReadRequestProto>,
+        request: Request<umadb_proto::ReadRequest>,
     ) -> Result<Response<Self::ReadStream>, Status> {
         let read_request = request.into_inner();
 
@@ -290,7 +286,7 @@ impl UmaDbService for UmaDBServer {
                         let original_len = dcb_sequenced_events.len();
 
                         // Filter and map events, discarding those with position > captured_head
-                        let sequenced_event_protos: Vec<SequencedEventProto> = dcb_sequenced_events
+                        let sequenced_event_protos: Vec<umadb_proto::SequencedEvent> = dcb_sequenced_events
                             .into_iter()
                             .filter(|e| {
                                 if let Some(h) = captured_head {
@@ -299,7 +295,7 @@ impl UmaDbService for UmaDBServer {
                                     true
                                 }
                             })
-                            .map(SequencedEventProto::from)
+                            .map(umadb_proto::SequencedEvent::from)
                             .collect();
 
                         let reached_captured_head = if captured_head.is_some() {
@@ -325,7 +321,7 @@ impl UmaDbService for UmaDBServer {
                         if sequenced_event_protos.is_empty() {
                             // Only send an empty response to communicate head if this is the first
                             if !sent_any {
-                                let response = ReadResponseProto {
+                                let response = umadb_proto::ReadResponse {
                                     events: vec![],
                                     head: head_to_send,
                                 };
@@ -369,7 +365,7 @@ impl UmaDbService for UmaDBServer {
                         // Capture values needed after sequenced_event_protos is moved
                         let sent_count = sequenced_event_protos.len() as u32;
 
-                        let response = ReadResponseProto {
+                        let response = umadb_proto::ReadResponse {
                             events: sequenced_event_protos,
                             head: head_to_send,
                         };
@@ -405,7 +401,7 @@ impl UmaDbService for UmaDBServer {
                         tokio::task::yield_now().await;
                     }
                     Err(e) => {
-                        let _ = tx.send(Err(status_from_dcb_error(&e))).await;
+                        let _ = tx.send(Err(umadb_proto::status_from_dcb_error(&e))).await;
                         break;
                     }
                 }
@@ -420,37 +416,37 @@ impl UmaDbService for UmaDBServer {
 
     async fn append(
         &self,
-        request: Request<AppendRequestProto>,
-    ) -> Result<Response<AppendResponseProto>, Status> {
+        request: Request<umadb_proto::AppendRequest>,
+    ) -> Result<Response<umadb_proto::AppendResponse>, Status> {
         let req = request.into_inner();
 
         // Convert protobuf types to API types
         let events: Vec<DCBEvent> = match req.events.into_iter().map(|e| e.try_into()).collect() {
             Ok(events) => events,
             Err(e) => {
-                return Err(status_from_dcb_error(&e));
+                return Err(umadb_proto::status_from_dcb_error(&e));
             }
         };
         let condition = req.condition.map(|c| c.into());
 
         // Call the event store append method
         match self.request_handler.append(events, condition).await {
-            Ok(position) => Ok(Response::new(AppendResponseProto { position })),
-            Err(e) => Err(status_from_dcb_error(&e)),
+            Ok(position) => Ok(Response::new(umadb_proto::AppendResponse { position })),
+            Err(e) => Err(umadb_proto::status_from_dcb_error(&e)),
         }
     }
 
     async fn head(
         &self,
-        _request: Request<HeadRequestProto>,
-    ) -> Result<Response<HeadResponseProto>, Status> {
+        _request: Request<umadb_proto::HeadRequest>,
+    ) -> Result<Response<umadb_proto::HeadResponse>, Status> {
         // Call the event store head method
         match self.request_handler.head().await {
             Ok(position) => {
                 // Return the position as a response
-                Ok(Response::new(HeadResponseProto { position }))
+                Ok(Response::new(umadb_proto::HeadResponse { position }))
             }
-            Err(e) => Err(status_from_dcb_error(&e)),
+            Err(e) => Err(umadb_proto::status_from_dcb_error(&e)),
         }
     }
 }

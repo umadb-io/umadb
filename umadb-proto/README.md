@@ -21,17 +21,21 @@ The UmaDB gRPC service provides:
 
 ## Usage
 
-This crate is used by both `umadb-server` (to implement the gRPC service) and `umadb-client` (to communicate with the server):
+This crate is used by both `umadb-server` (to implement the gRPC service) and `umadb-client` (to communicate with the server).
+
+Clients send requests and convert gRPC status details to DCB errors.
 
 ```rust
 use umadb_proto::{
-    AppendRequestProto, ReadRequestProto, UmaDbServiceClient, dcb_error_from_status,
+    AppendRequest, ReadRequest, UmaDbServiceClient, dcb_error_from_status,
 };
 ```
 
+Servers convert DCB errors to gRPC status details and send responses.
+
 ```rust
 use umadb_proto::{
-    AppendResponseProto, ReadResponseProto, UmaDbServiceServer, status_from_dcb_error,
+    AppendResponse, ReadResponse, UmaDbServiceServer, status_from_dcb_error,
 };
 ```
 
