@@ -29,5 +29,7 @@ jobs:
       run: make install-uv
     - name: Install Python tools
       run: make install-python-tools
-    - name: Run tests
+    - name: Build
+      run: make build
+    - name: Tests
       run: make test

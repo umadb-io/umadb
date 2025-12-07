@@ -9,6 +9,8 @@ UVX ?= uvx@$(UV_VERSION)
 .PHONY: clean
 .PHONY: build
 .PHONY: build-workspace-exclude-python
+.PHONY: test
+.PHONY: test-workspace-exclude-python
 .PHONY: bench-append bench-append-1 bench-append-10 bench-append-100 bench-append-1000 bench-append-all
 .PHONY: bench-append-cond bench-append-cond-1 bench-append-cond-10 bench-append-cond-100 bench-append-cond-all
 .PHONY: bench-append-with-readers
