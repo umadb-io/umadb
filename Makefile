@@ -373,14 +373,13 @@ maturin-python-build-release:
 
 test-umadb-python:
 	{ \
+	  set -e; \
 	  cargo build --bin umadb; \
 	  cargo run --bin umadb -- --db-path=./uma-tmp.db & \
-	  my_process_id=$$!; \
-	  echo "PID: $$my_process_id"; \
+	  pid=$$!; \
+	  trap "echo 'Cleaning up…'; kill -SIGINT $$pid 2>/dev/null || true; rm -f ./uma-tmp.db" EXIT; \
+	  echo 'PID:' $$pid; \
 	  sleep 1; \
 	  $(UV) run python ./umadb-python/examples/basic_usage.py; \
-	  echo "PID: $$my_process_id"; \
-	  kill -SIGINT $$my_process_id; \
-	  sleep 1; \
-	  rm ./uma-tmp.db;\
+	  echo 'Python succeeded'; \
 	}
