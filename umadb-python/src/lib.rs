@@ -220,7 +220,7 @@ impl PyAppendCondition {
 #[pyclass(name = "ReadResponse", unsendable)]
 pub struct PyReadResponse {
     // _client: Arc<SyncUmaDBClient>,
-    inner: Box<dyn Iterator<Item = Result<DCBSequencedEvent, DCBError>> + 'static>,
+    inner: Box<dyn umadb_dcb::DCBReadResponseSync + 'static>,
 }
 
 #[gen_stub_pymethods()]
@@ -235,6 +235,30 @@ impl PyReadResponse {
             Some(Ok(event)) => Some(Ok(PySequencedEvent { inner: event })),
             Some(Err(err)) => Some(Err(dcb_error_to_py_err(err))),
             None => None,
+        }
+    }
+
+    /// Returns the current head position of the event store, or None if empty
+    fn head(mut slf: PyRefMut<Self>) -> PyResult<Option<u64>> {
+        slf.inner.head().map_err(dcb_error_to_py_err)
+    }
+
+    /// Collects all remaining events along with the head position
+    fn collect_with_head(mut slf: PyRefMut<Self>) -> PyResult<(Vec<PySequencedEvent>, Option<u64>)> {
+        match slf.inner.collect_with_head() {
+            Ok((events, head)) => {
+                let py_events: Vec<PySequencedEvent> = events.into_iter().map(|e| PySequencedEvent { inner: e }).collect();
+                Ok((py_events, head))
+            }
+            Err(err) => Err(dcb_error_to_py_err(err)),
+        }
+    }
+
+    /// Returns the next batch of events for this read. If there are no more events, returns an empty list.
+    fn next_batch(mut slf: PyRefMut<Self>) -> PyResult<Vec<PySequencedEvent>> {
+        match slf.inner.next_batch() {
+            Ok(batch) => Ok(batch.into_iter().map(|e| PySequencedEvent { inner: e }).collect()),
+            Err(err) => Err(dcb_error_to_py_err(err)),
         }
     }
 }

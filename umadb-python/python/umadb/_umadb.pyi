@@ -102,6 +102,18 @@ class ReadResponse:
     """
     def __iter__(self) -> ReadResponse: ...
     def __next__(self) -> SequencedEvent: ...
+    def head(self) -> typing.Optional[builtins.int]:
+        r"""
+        Returns the current head position of the event store, or None if empty
+        """
+    def collect_with_head(self) -> tuple[builtins.list[SequencedEvent], typing.Optional[builtins.int]]:
+        r"""
+        Collects all remaining events along with the head position
+        """
+    def next_batch(self) -> builtins.list[SequencedEvent]:
+        r"""
+        Returns the next batch of events for this read. If there are no more events, returns an empty list.
+        """
 
 @typing.final
 class SequencedEvent:

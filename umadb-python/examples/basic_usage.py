@@ -17,7 +17,7 @@ from umadb import Client, Event, Query, QueryItem, AppendCondition, IntegrityErr
 def main() -> None:
     # Connect to UmaDB server (make sure server is running)
     print("Connecting to UmaDB server...")
-    client = Client("http://localhost:50051")
+    client = Client("http://localhost:50051", batch_size=2)
 
     # Get current head position
     head = client.head()
@@ -49,16 +49,22 @@ def main() -> None:
     # Read all events
     print("\nReading all events...")
     all_events = client.read()
+    print(f"  - read response head is now: {all_events.head()}")
     for seq_event in all_events:
         print(f"  Position {seq_event.position}: {seq_event.event.event_type} - tags: {seq_event.event.tags}")
+        print(f"  - read response head is now: {all_events.head()}")
+    print(f"  Last known position is: {all_events.head()}")
 
     # Read with query to filter events
     print("\nReading user-related events...")
     user_query_item = QueryItem(tags=["user"])
     user_query = Query(items=[user_query_item])
     user_events = client.read(query=user_query)
+    print(f"  - read response head is now: {user_events.head()}")
     for seq_event in user_events:
         print(f"  Position {seq_event.position}: {seq_event.event.event_type}")
+        print(f"  - read response head is now: {user_events.head()}")
+    print(f"  Last known position is: {user_events.head()}")
 
     # Read with multiple filters (OR logic)
     print("\nReading UserCreated OR OrderCreated events...")
@@ -67,14 +73,47 @@ def main() -> None:
         QueryItem(types=["OrderCreated"]),
     ])
     filtered_events = client.read(query=query)
+    print(f"  - read response head is now: {filtered_events.head()}")
     for seq_event in filtered_events:
         print(f"  Position {seq_event.position}: {seq_event.event.event_type}")
+        print(f"  - read response head is now: {filtered_events.head()}")
+    print(f"  Last known position is: {filtered_events.head()}")
 
-    # Read with limit
-    print("\nReading last 2 events...")
-    recent_events = client.read(limit=2, backwards=True)
+    # Read with limit forwards
+    print("\nReading first 2 events forwards from the start...")
+    recent_events = client.read(limit=2)
+    print(f"  - read response head is now: {recent_events.head()}")
     for seq_event in recent_events:
         print(f"  Position {seq_event.position}: {seq_event.event.event_type}")
+        print(f"  - read response head is now: {recent_events.head()}")
+    print(f"  Last known position is: {recent_events.head()}")
+
+    # Read with limit forwards
+    print("\nReading first 3 events forwards from the start...")
+    recent_events = client.read(limit=3)
+    print(f"  - read response head is now: {recent_events.head()}")
+    for seq_event in recent_events:
+        print(f"  Position {seq_event.position}: {seq_event.event.event_type}")
+        print(f"  - read response head is now: {recent_events.head()}")
+    print(f"  Last known position is: {recent_events.head()}")
+
+    # Read with limit backwards
+    print("\nReading last 2 events backwards from the end...")
+    old_events = client.read(limit=2, backwards=True)
+    print(f"  - read response head is now: {old_events.head()}")
+    for seq_event in old_events:
+        print(f"  Position {seq_event.position}: {seq_event.event.event_type}")
+        print(f"  - read response head is now: {old_events.head()}")
+    print(f"  Last known position is: {old_events.head()}")
+
+    # Read backwards without limit
+    print("\nReading all events backwards from the end...")
+    backwards_events = client.read(backwards=True)
+    print(f"  - read response head is now: {backwards_events.head()}")
+    for seq_event in backwards_events:
+        print(f"  Position {seq_event.position}: {seq_event.event.event_type}")
+        print(f"  - read response head is now: {backwards_events.head()}")
+    print(f"  Last known position is: {backwards_events.head()}")
 
     # Try conditional append (preventing duplicate UserCreated for user:123)
     print("\nTrying conditional append (should fail)...")

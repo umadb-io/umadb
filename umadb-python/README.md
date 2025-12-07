@@ -36,9 +36,7 @@ events = client.read()
 for seq_event in events:
     print(f"Position {seq_event.position}: {seq_event.event.event_type}")
 
-# Get current head position
-head = client.head()
-print(f"Current head: {head}")
+print(f"Last known position: {events.head()}")
 ```
 
 ### Using Queries
@@ -59,6 +57,8 @@ query = Query(items=[query_item])
 events = client.read(query=query)
 for seq_event in events:
     print(f"Position {seq_event.position}: {seq_event.event.event_type}")
+
+print(f"Last known position: {events.head()}")
 ```
 
 ### Using Append Conditions
