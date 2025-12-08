@@ -20,7 +20,7 @@ exclude = [
   "umadb-benches",
 ]
 [workspace.package]
-version = "0.1.28"
+version = "0.1.29"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/umadb-io/umadb"

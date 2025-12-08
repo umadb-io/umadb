@@ -11,9 +11,9 @@ keywords = ["event-store", "grpc", "server"]
 categories = ["database", "network-programming"]
 
 [dependencies]
-umadb-dcb = { path = "../umadb-dcb", version = "0.1.28" }
-umadb-core = { path = "../umadb-core", version = "0.1.28" }
-umadb-proto = { path = "../umadb-proto", version = "0.1.28" }
+umadb-dcb = { path = "../umadb-dcb", version = "0.1.29" }
+umadb-core = { path = "../umadb-core", version = "0.1.29" }
+umadb-proto = { path = "../umadb-proto", version = "0.1.29" }
 tokio = { workspace = true }
 tonic = { workspace = true }
 tonic-health = { workspace = true }
