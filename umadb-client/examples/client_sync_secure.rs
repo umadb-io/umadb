@@ -9,7 +9,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let url = "https://localhost:50051".to_string();
     let client = UmaDBClient::new(url)
         .ca_path("server.pem".to_string()) // For self-signed server certificates.
-        .api_key("umadb:example-api-key-4f7c2b1d9e5f4a038c1a72d8b8a0e4f1".to_string())
+        .api_key("umadb:example-api-key-4f7c2b1d9e5f4a038c1a".to_string())
         .connect()?;
 
     // Define a consistency boundary

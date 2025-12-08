@@ -288,10 +288,16 @@ async fn start_server_internal<P: AsRef<Path> + Send + 'static>(
         "UmaDB has {:?} events",
         dcb_server.request_handler.head().await?.unwrap_or(0)
     );
-    let server_mode_display_str = if tls.is_some() {
+    let tls_mode_display_str = if tls.is_some() {
         "with TLS"
     } else {
         "without TLS"
+    };
+
+    let api_key_display_str = if api_key.is_some() {
+        "with API key"
+    } else {
+        "without API key"
     };
 
 
@@ -316,7 +322,7 @@ async fn start_server_internal<P: AsRef<Path> + Send + 'static>(
     builder = builder.add_service(dcb_server.into_service());
     let router = builder;
 
-    println!("UmaDB is listening on {addr} ({server_mode_display_str})");
+    println!("UmaDB is listening on {addr} ({tls_mode_display_str}, {api_key_display_str})");
     println!("UmaDB started in {:?}", uptime());
     // let incoming = router.server.bind_incoming();
     router

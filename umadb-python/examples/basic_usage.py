@@ -9,6 +9,7 @@ This example demonstrates:
 4. Using queries to filter events
 5. Using append conditions
 """
+import os
 import uuid
 
 from umadb import Client, Event, Query, QueryItem, AppendCondition, IntegrityError
@@ -16,8 +17,14 @@ from umadb import Client, Event, Query, QueryItem, AppendCondition, IntegrityErr
 
 def main() -> None:
     # Connect to UmaDB server (make sure server is running)
+    api_key = os.environ.get("UMADB_API_KEY")
+    ca_path = os.environ.get("UMADB_TLS_CERT")
+    if ca_path:
+        url = "https://localhost:50051"
+    else:
+        url = "http://localhost:50051"
     print("Connecting to UmaDB server...")
-    client = Client("http://localhost:50051", batch_size=2)
+    client = Client(url, ca_path=ca_path, api_key=api_key, batch_size=2)
 
     # Get current head position
     head = client.head()

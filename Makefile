@@ -47,6 +47,7 @@ UVX ?= uvx@$(UV_VERSION)
 .PHONY: maturin-python-develop
 .PHONY: maturin-python-build
 .PHONY: maturin-python-build-release
+.PHONY: self-signed-cert
 
 clean:
 	cargo clean
@@ -372,8 +373,12 @@ maturin-python-build-release:
 	PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1 $(UV) run maturin build --release -m umadb-python/Cargo.toml
 
 test-umadb-python:
+	$(MAKE) self-signed-cert
 	{ \
 	  set -e; \
+	  export UMADB_TLS_CERT=./server.pem; \
+	  export UMADB_TLS_KEY=./server.key; \
+	  export UMADB_API_KEY=something-something; \
 	  cargo build --bin umadb; \
 	  cargo run --bin umadb -- --db-path=./uma-tmp.db & \
 	  pid=$$!; \
@@ -383,3 +388,15 @@ test-umadb-python:
 	  $(UV) run python ./umadb-python/examples/basic_usage.py; \
 	  echo 'Python succeeded'; \
 	}
+
+self-signed-cert:
+	openssl req \
+      -x509 \
+      -newkey rsa:4096 \
+      -keyout server.key \
+      -out server.pem \
+      -days 365 \
+      -nodes \
+      -subj "/CN=localhost" \
+      -addext "basicConstraints = CA:FALSE" \
+      -addext "subjectAltName = DNS:localhost"
