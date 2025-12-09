@@ -141,3 +141,7 @@ class TransportError(RuntimeError):
 class CorruptionError(RuntimeError):
     """Raised when on-disk data corruption is detected."""
     ...
+
+class AuthenticationError(RuntimeError):
+    """Raised when on-disk data corruption is detected."""
+    ...
