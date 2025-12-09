@@ -26,7 +26,7 @@ pub trait DCBEventStoreSync {
         backwards: bool,
         limit: Option<u32>,
         subscribe: bool,
-    ) -> DCBResult<Box<dyn DCBReadResponseSync + 'static>>;
+    ) -> DCBResult<Box<dyn DCBReadResponseSync + Send + 'static>>;
 
     /// Reads events from the store and returns them as a tuple of (Vec<DCBSequencedEvent>, Option<u64>)
     fn read_with_head(
@@ -56,7 +56,7 @@ pub trait DCBEventStoreSync {
 }
 
 /// Response from a read operation, providing an iterator over sequenced events
-pub trait DCBReadResponseSync: Iterator<Item = Result<DCBSequencedEvent, DCBError>> {
+pub trait DCBReadResponseSync: Iterator<Item = Result<DCBSequencedEvent, DCBError>> + Send {
     /// Returns the current head position of the event store, or None if empty
     fn head(&mut self) -> DCBResult<Option<u64>>;
     /// Returns a vector of events with head

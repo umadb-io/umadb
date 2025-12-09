@@ -194,7 +194,7 @@ impl DCBEventStoreSync for SyncUmaDBClient {
         backwards: bool,
         limit: Option<u32>,
         subscribe: bool,
-    ) -> Result<Box<dyn DCBReadResponseSync + 'static>, DCBError> {
+    ) -> Result<Box<dyn DCBReadResponseSync + Send + 'static>, DCBError> {
         let async_read_response = self.handle.block_on(
             self.async_client
                 .read(query, start, backwards, limit, subscribe),

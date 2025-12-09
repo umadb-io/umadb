@@ -4,7 +4,7 @@ use pyo3::types::PyBytes;
 use pyo3::wrap_pyfunction;
 use pyo3_stub_gen::define_stub_info_gatherer;
 use pyo3_stub_gen::derive::*;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use umadb_client::{SyncUmaDBClient, UmaDBClient, trigger_cancel};
 use umadb_dcb::{
     DCBAppendCondition, DCBError, DCBEvent, DCBEventStoreSync, DCBQuery, DCBQueryItem,
@@ -219,10 +219,9 @@ impl PyAppendCondition {
 
 /// Python iterator over sequenced events
 #[gen_stub_pyclass]
-#[pyclass(name = "ReadResponse", unsendable)]
+#[pyclass(name = "ReadResponse")]
 pub struct PyReadResponse {
-    // _client: Arc<SyncUmaDBClient>,
-    inner: Box<dyn umadb_dcb::DCBReadResponseSync + 'static>,
+    inner: Arc<Mutex<Box<dyn umadb_dcb::DCBReadResponseSync + Send + 'static>>>,
 }
 
 #[gen_stub_pymethods()]
@@ -232,8 +231,15 @@ impl PyReadResponse {
         slf
     }
 
-    fn __next__(mut slf: PyRefMut<Self>) -> Option<PyResult<PySequencedEvent>> {
-        match slf.inner.next() {
+    fn __next__(slf: PyRefMut<Self>, py: Python<'_>) -> Option<PyResult<PySequencedEvent>> {
+        // Clone the Arc and drop the PyRefMut before releasing the GIL so the closure doesn't capture non-Send data
+        let inner = slf.inner.clone();
+        drop(slf);
+        let result = py.detach(move || {
+            // Release the GIL while we potentially block waiting for the next batch/event
+            inner.lock().unwrap().next()
+        });
+        match result {
             Some(Ok(event)) => Some(Ok(PySequencedEvent { inner: event })),
             Some(Err(err)) => Some(Err(dcb_error_to_py_err(err))),
             None => None,
@@ -241,15 +247,28 @@ impl PyReadResponse {
     }
 
     /// Returns the current head position of the event store, or None if empty
-    fn head(mut slf: PyRefMut<Self>) -> PyResult<Option<u64>> {
-        slf.inner.head().map_err(dcb_error_to_py_err)
+    fn head(slf: PyRefMut<Self>, py: Python<'_>) -> PyResult<Option<u64>> {
+        let inner = slf.inner.clone();
+        drop(slf);
+        let result = py.detach(move || {
+            inner.lock().unwrap().head()
+        });
+        result.map_err(dcb_error_to_py_err)
     }
 
     /// Collects all remaining events along with the head position
-    fn collect_with_head(mut slf: PyRefMut<Self>) -> PyResult<(Vec<PySequencedEvent>, Option<u64>)> {
-        match slf.inner.collect_with_head() {
+    fn collect_with_head(slf: PyRefMut<Self>, py: Python<'_>) -> PyResult<(Vec<PySequencedEvent>, Option<u64>)> {
+        let inner = slf.inner.clone();
+        drop(slf);
+        let result = py.detach(move || {
+            inner.lock().unwrap().collect_with_head()
+        });
+        match result {
             Ok((events, head)) => {
-                let py_events: Vec<PySequencedEvent> = events.into_iter().map(|e| PySequencedEvent { inner: e }).collect();
+                let py_events: Vec<PySequencedEvent> = events
+                    .into_iter()
+                    .map(|e| PySequencedEvent { inner: e })
+                    .collect();
                 Ok((py_events, head))
             }
             Err(err) => Err(dcb_error_to_py_err(err)),
@@ -257,8 +276,13 @@ impl PyReadResponse {
     }
 
     /// Returns the next batch of events for this read. If there are no more events, returns an empty list.
-    fn next_batch(mut slf: PyRefMut<Self>) -> PyResult<Vec<PySequencedEvent>> {
-        match slf.inner.next_batch() {
+    fn next_batch(slf: PyRefMut<Self>, py: Python<'_>) -> PyResult<Vec<PySequencedEvent>> {
+        let inner = slf.inner.clone();
+        drop(slf);
+        let result = py.detach(move || {
+            inner.lock().unwrap().next_batch()
+        });
+        match result {
             Ok(batch) => Ok(batch.into_iter().map(|e| PySequencedEvent { inner: e }).collect()),
             Err(err) => Err(dcb_error_to_py_err(err)),
         }
@@ -289,6 +313,7 @@ impl PyUmaDBClient {
     #[new]
     #[pyo3(signature = (url, ca_path=None, batch_size=None, api_key=None))]
     fn new(
+        py: Python<'_>,
         url: String,
         ca_path: Option<String>,
         batch_size: Option<u32>,
@@ -299,7 +324,8 @@ impl PyUmaDBClient {
         let client = if let Some(bs) = batch_size { client.batch_size(bs) } else { client };
         let client = if let Some(k) = api_key { client.api_key(k) } else { client };
 
-        let sync_client = client.connect().map_err(dcb_error_to_py_err)?;
+        let sync_client = py.detach(move || client.connect())
+            .map_err(dcb_error_to_py_err)?;
 
         Ok(PyUmaDBClient {
             inner: Arc::new(sync_client),
@@ -320,6 +346,7 @@ impl PyUmaDBClient {
     #[pyo3(signature = (query=None, start=None, backwards=false, limit=None, subscribe=false))]
     fn read(
         &self,
+        py: Python<'_>,
         query: Option<PyQuery>,
         start: Option<u64>,
         backwards: bool,
@@ -327,15 +354,13 @@ impl PyUmaDBClient {
         subscribe: bool,
     ) -> PyResult<PyReadResponse> {
         let query_inner = query.map(|q| q.inner);
-
-        let response_iter = self
-            .inner
-            .read(query_inner, start, backwards, limit, subscribe)
+        let inner = self.inner.clone();
+        let response_iter = py
+            .detach(move || inner.read(query_inner, start, backwards, limit, subscribe))
             .map_err(dcb_error_to_py_err)?;
 
         Ok(PyReadResponse {
-            // _client: client_for_py,
-            inner: response_iter,
+            inner: Arc::new(Mutex::new(response_iter)),
         })
     }
 
@@ -343,8 +368,9 @@ impl PyUmaDBClient {
     ///
     /// Returns:
     ///     Optional position (None if store is empty)
-    fn head(&self) -> PyResult<Option<u64>> {
-        self.inner.head().map_err(dcb_error_to_py_err)
+    fn head(&self, py: Python<'_>) -> PyResult<Option<u64>> {
+        let inner = self.inner.clone();
+        py.detach(move || inner.head()).map_err(dcb_error_to_py_err)
     }
 
     /// Append events to the event store
@@ -356,12 +382,11 @@ impl PyUmaDBClient {
     /// Returns:
     ///     Position of the last appended event
     #[pyo3(signature = (events, condition=None))]
-    fn append(&self, events: Vec<PyEvent>, condition: Option<PyAppendCondition>) -> PyResult<u64> {
+    fn append(&self, py: Python<'_>, events: Vec<PyEvent>, condition: Option<PyAppendCondition>) -> PyResult<u64> {
         let dcb_events: Vec<DCBEvent> = events.into_iter().map(|e| e.inner).collect();
         let dcb_condition = condition.map(|c| c.inner);
-
-        self.inner
-            .append(dcb_events, dcb_condition)
+        let inner = self.inner.clone();
+        py.detach(move || inner.append(dcb_events, dcb_condition))
             .map_err(dcb_error_to_py_err)
     }
 
