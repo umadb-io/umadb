@@ -15,6 +15,7 @@ from umadb._umadb import (
     IntegrityError,
     TransportError,
     CorruptionError,
+    ReadResponse,
 )
 
 __version__ = "0.1.29"
@@ -29,4 +30,5 @@ __all__ = [
     "IntegrityError",
     "TransportError",
     "CorruptionError",
+    "ReadResponse",
 ]
