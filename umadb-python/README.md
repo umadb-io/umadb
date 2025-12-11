@@ -1,6 +1,6 @@
 # UmaDB Python Client
 
-A Python client for UmaDB event store built using Rust bindings via PyO3 and Maturin.
+Official Python client for [UmaDB](https://umadb.io), built using Rust bindings via PyO3 and Maturin.
 
 ## Installation
 
