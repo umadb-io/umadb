@@ -29,7 +29,7 @@ classifiers = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/umadb-io/umadb"
+Homepage = "https://umadb.io"
 Repository = "https://github.com/umadb-io/umadb"
 
 [tool.maturin]
