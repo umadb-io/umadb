@@ -6,6 +6,7 @@ use crate::events_tree_nodes::{
 use crate::mvcc::{Mvcc, Writer};
 use crate::node::Node;
 use crate::page::{PAGE_HEADER_SIZE, Page};
+use std::borrow::Cow;
 use std::collections::HashMap;
 use umadb_dcb::{DCBError, DCBResult};
 
@@ -19,7 +20,8 @@ fn write_overflow_chain(mvcc: &Mvcc, writer: &mut Writer, data: &[u8]) -> DCBRes
         ));
     }
     // Split data into chunks from end to start so we can set next ids easily
-    let mut chunks: Vec<&[u8]> = Vec::new();
+    let chunk_count = data.len().div_ceil(payload_cap);
+    let mut chunks: Vec<&[u8]> = Vec::with_capacity(chunk_count);
     let mut i = 0;
     while i < data.len() {
         let end = (i + payload_cap).min(data.len());
@@ -270,7 +272,7 @@ pub fn event_tree_append(
     let mut current_replacement_info = replacement_info;
     while let Some(parent_page_id) = stack.pop() {
         // Make the internal page dirty
-        let dirty_page_id = { writer.get_dirty_page_id(parent_page_id)? };
+        let dirty_page_id = writer.get_dirty_page_id(parent_page_id)?;
         let parent_replacement_info: Option<(PageID, PageID)> = {
             if dirty_page_id != parent_page_id {
                 Some((parent_page_id, dirty_page_id))
@@ -419,9 +421,9 @@ pub fn event_tree_lookup(
     loop {
         // Prefer the dirty (unflushed) page if present; otherwise read from disk
         let page = if let Some(p) = dirty.get(&current_page_id) {
-            p.clone()
+            Cow::Borrowed(p)
         } else {
-            mvcc.read_page(current_page_id)?
+            Cow::Owned(mvcc.read_page(current_page_id)?)
         };
         match &page.node {
             Node::EventInternal(internal) => {
