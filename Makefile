@@ -68,7 +68,7 @@ test-workspace-exclude-python:
 
 
 # Default EVENTS_PER_REQUEST to 10 if not provided
-EVENTS_PER_REQUEST ?= 10
+EVENTS_PER_REQUEST ?= 1
 
 bench-all:
 	$(MAKE) bench-append-all

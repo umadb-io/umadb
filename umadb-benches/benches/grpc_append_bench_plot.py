@@ -5,7 +5,7 @@ from pathlib import Path
 import os
 
 # Keep this in sync with benches/grpc_append
-EVENTS_PER_REQUEST = int(os.environ.get('EVENTS_PER_REQUEST', '10'))  # number of events appended per client request
+EVENTS_PER_REQUEST = int(os.environ.get('EVENTS_PER_REQUEST', '1'))  # number of events appended per client request
 MAX_THREADS = int(os.environ.get('MAX_THREADS', '0')) if os.environ.get('MAX_THREADS') else None
 
 # Thread variants you ran (match the bench). Edit if you change the bench.

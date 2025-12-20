@@ -7,4 +7,5 @@ dependencies = [
     "maturin",
     "mypy",
     "uv",
+    "matplotlib"
 ]
