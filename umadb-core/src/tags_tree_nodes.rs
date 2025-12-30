@@ -1,12 +1,38 @@
 use crate::common::{PageID, Position};
 use byteorder::{ByteOrder, LittleEndian};
 use umadb_dcb::{DCBError, DCBResult};
+use std::sync::atomic::{AtomicUsize, Ordering};
 
-/// Length in bytes of the hashed tag key used in tag index leaf/internal nodes
-pub const TAG_HASH_LEN: usize = 8;
+/// Length in bytes of the hashed tag key used in-memory for TagHash
+pub const TAG_HASH_LEN: usize = 16;
 
 /// Alias for the fixed-size tag hash
 pub type TagHash = [u8; TAG_HASH_LEN];
+
+// Runtime-configurable on-disk tag key width (in bytes). Defaults to 16.
+static TAG_KEY_WIDTH_BYTES: AtomicUsize = AtomicUsize::new(TAG_HASH_LEN);
+
+#[inline]
+pub fn get_tag_key_width() -> usize {
+    TAG_KEY_WIDTH_BYTES.load(Ordering::Relaxed)
+}
+
+#[inline]
+pub fn set_tag_key_width(width: usize) {
+    // Allowed values: 4 (legacy schema 0) or 16 (current). Others are accepted but unsupported.
+    TAG_KEY_WIDTH_BYTES.store(width, Ordering::Relaxed);
+}
+
+#[inline]
+pub fn normalize_tag_hash_for_current_width(mut hash: TagHash) -> TagHash {
+    let keyw = get_tag_key_width();
+    if keyw < TAG_HASH_LEN {
+        for b in &mut hash[keyw..] {
+            *b = 0;
+        }
+    }
+    hash
+}
 
 // ========================= Tag Index (by tag-hash) =========================
 
@@ -27,7 +53,8 @@ pub struct TagsLeafNode {
 impl TagsLeafNode {
     pub fn calc_serialized_size(&self) -> usize {
         // 2 bytes for keys_len + keys + values
-        let mut total = 2 + self.keys.len() * TAG_HASH_LEN;
+        let keyw = get_tag_key_width();
+        let mut total = 2 + self.keys.len() * keyw;
         for v in &self.values {
             // root_id (8 bytes)
             total += 8;
@@ -45,9 +72,10 @@ impl TagsLeafNode {
         buf[i..i + 2].copy_from_slice(&klen.to_le_bytes());
         i += 2;
         // keys
+        let keyw = get_tag_key_width();
         for key in &self.keys {
-            buf[i..i + TAG_HASH_LEN].copy_from_slice(key);
-            i += TAG_HASH_LEN;
+            buf[i..i + keyw].copy_from_slice(&key[..keyw]);
+            i += keyw;
         }
         // values
         for v in &self.values {
@@ -78,8 +106,9 @@ impl TagsLeafNode {
         // keys_len
         let keys_len = LittleEndian::read_u16(&slice[0..2]) as usize;
 
-        // keys
-        let keys_bytes = 2 + keys_len * TAG_HASH_LEN;
+        // keys (runtime width)
+        let keyw = get_tag_key_width();
+        let keys_bytes = 2 + keys_len * keyw;
         if slice.len() < keys_bytes {
             return Err(DCBError::DeserializationError(format!(
                 "Expected at least {} bytes for keys, got {}",
@@ -90,9 +119,10 @@ impl TagsLeafNode {
 
         let mut keys = Vec::with_capacity(keys_len);
         for i in 0..keys_len {
-            let start = 2 + i * TAG_HASH_LEN;
+            let start = 2 + i * keyw;
             let mut key = [0u8; TAG_HASH_LEN];
-            key.copy_from_slice(&slice[start..start + TAG_HASH_LEN]);
+            // copy the on-disk width and leave the rest as zeros (legacy schema 0)
+            key[..keyw].copy_from_slice(&slice[start..start + keyw]);
             keys.push(key);
         }
 
@@ -156,7 +186,8 @@ pub struct TagsInternalNode {
 impl TagsInternalNode {
     pub fn calc_serialized_size(&self) -> usize {
         // 2 bytes for keys_len + keys + child_ids (no len field, keys_len+1 implied)
-        2 + (self.keys.len() * TAG_HASH_LEN) + (self.child_ids.len() * 8)
+        let keyw = get_tag_key_width();
+        2 + (self.keys.len() * keyw) + (self.child_ids.len() * 8)
     }
 
     /// No-allocation serialization into the provided buffer. Returns bytes written.
@@ -167,9 +198,10 @@ impl TagsInternalNode {
         buf[i..i + 2].copy_from_slice(&klen.to_le_bytes());
         i += 2;
         // keys
+        let keyw = get_tag_key_width();
         for key in &self.keys {
-            buf[i..i + TAG_HASH_LEN].copy_from_slice(key);
-            i += TAG_HASH_LEN;
+            buf[i..i + keyw].copy_from_slice(&key[..keyw]);
+            i += keyw;
         }
         // child ids (len implied as keys_len + 1)
         for id in &self.child_ids {
@@ -187,7 +219,8 @@ impl TagsInternalNode {
             )));
         }
         let keys_len = LittleEndian::read_u16(&slice[0..2]) as usize;
-        let keys_bytes = 2 + keys_len * TAG_HASH_LEN;
+        let keyw = get_tag_key_width();
+        let keys_bytes = 2 + keys_len * keyw;
         if slice.len() < keys_bytes {
             return Err(DCBError::DeserializationError(format!(
                 "Expected at least {} bytes for keys, got {}",
@@ -197,9 +230,9 @@ impl TagsInternalNode {
         }
         let mut keys = Vec::with_capacity(keys_len);
         for i in 0..keys_len {
-            let start = 2 + i * TAG_HASH_LEN;
+            let start = 2 + i * keyw;
             let mut key = [0u8; TAG_HASH_LEN];
-            key.copy_from_slice(&slice[start..start + TAG_HASH_LEN]);
+            key[..keyw].copy_from_slice(&slice[start..start + keyw]);
             keys.push(key);
         }
 
@@ -431,9 +464,9 @@ mod tests {
         let mut k1 = [0u8; TAG_HASH_LEN];
         let mut k2 = [0u8; TAG_HASH_LEN];
         let mut k3 = [0u8; TAG_HASH_LEN];
-        k1.copy_from_slice(&[1, 2, 3, 4, 5, 6, 7, 8]);
-        k2.copy_from_slice(&[10, 20, 30, 40, 50, 60, 70, 80]);
-        k3.copy_from_slice(&[11, 22, 33, 44, 55, 66, 77, 88]);
+        k1.copy_from_slice(&[1, 2, 3, 4, 5, 6, 7, 8, 1, 2, 3, 4, 5, 6, 7, 8]);
+        k2.copy_from_slice(&[10, 20, 30, 40, 50, 60, 70, 80, 10, 20, 30, 40, 50, 60, 70, 80]);
+        k3.copy_from_slice(&[11, 22, 33, 44, 55, 66, 77, 88, 11, 22, 33, 44, 55, 66, 77, 88]);
 
         let leaf = TagsLeafNode {
             keys: vec![k1, k2, k3],
@@ -464,9 +497,9 @@ mod tests {
         let mut k1 = [0u8; TAG_HASH_LEN];
         let mut k2 = [0u8; TAG_HASH_LEN];
         let mut k3 = [0u8; TAG_HASH_LEN];
-        k1.copy_from_slice(&[1, 2, 3, 4, 5, 6, 7, 8]);
-        k2.copy_from_slice(&[10, 20, 30, 40, 50, 60, 70, 80]);
-        k3.copy_from_slice(&[11, 22, 33, 44, 55, 66, 77, 88]);
+        k1.copy_from_slice(&[1, 2, 3, 4, 5, 6, 7, 8, 1, 2, 3, 4, 5, 6, 7, 8]);
+        k2.copy_from_slice(&[10, 20, 30, 40, 50, 60, 70, 80, 10, 20, 30, 40, 50, 60, 70, 80]);
+        k3.copy_from_slice(&[11, 22, 33, 44, 55, 66, 77, 88, 11, 22, 33, 44, 55, 66, 77, 88]);
 
         let node = TagsInternalNode {
             keys: vec![k1, k2, k3],
@@ -512,7 +545,8 @@ mod tests {
         // keys_len = 1, provide one key but no child ids -> should error
         let mut buf = Vec::new();
         buf.extend_from_slice(&(1u16).to_le_bytes()); // keys_len = 1
-        buf.extend_from_slice(&0u64.to_le_bytes()); // one key
+        // one key (TAG_HASH_LEN bytes)
+        buf.extend_from_slice(&[0u8; TAG_HASH_LEN]);
         // missing the two child ids (keys_len + 1 = 2)
         assert!(TagInternalNode::from_slice(&buf).is_err());
     }

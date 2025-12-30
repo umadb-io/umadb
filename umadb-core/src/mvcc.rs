@@ -1,4 +1,3 @@
-// use std::cell::RefCell;
 use crate::common::Position;
 use crate::common::{PageID, Tsn};
 use crate::events_tree_nodes::EventLeafNode;
@@ -10,9 +9,8 @@ use crate::node::Node;
 use crate::page::{PAGE_HEADER_SIZE, Page, serialize_page_into};
 use crate::pager::Pager;
 use crate::tags_tree_nodes::TagsLeafNode;
+use crate::tags_tree_nodes::set_tag_key_width;
 use umadb_dcb::{DCBError, DCBResult};
-// use rayon::prelude::*;
-// use std::os::unix::fs::FileExt; // For write_at on Unix
 use dashmap::DashMap;
 use std::collections::HashMap;
 use std::collections::VecDeque;
@@ -21,16 +19,11 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::sleep;
 use std::time::Duration;
-// use crate::db::DEFAULT_PAGE_SIZE;
 
 const GET_LATEST_HEADER_RETRIES: usize = 5;
 const GET_LATEST_HEADER_DELAY: Duration = Duration::from_millis(10);
 const HEADER_PAGE_ID_0: PageID = PageID(0);
 const HEADER_PAGE_ID_1: PageID = PageID(1);
-
-// thread_local! {
-//     static PAGE_BUF: RefCell<Vec<u8>> = RefCell::new(vec![0u8; DEFAULT_PAGE_SIZE]);
-// }
 
 // Main MVCC structure
 pub struct Mvcc {
@@ -76,6 +69,9 @@ impl Mvcc {
         };
 
         if mvcc.pager.is_file_new {
+            // Newly created DB uses 128-bit tag hashes.
+            set_tag_key_width(crate::tags_tree_nodes::TAG_HASH_LEN);
+
             // Initialize new database
             let initial_tsn = Tsn(0);
             let initial_free_lists_tree_root_id = PageID(2);
@@ -131,6 +127,15 @@ impl Mvcc {
 
             // Sync the file to disk.
             mvcc.fsync()?;
+        } else {
+            // Existing DB: detect schema from latest header and set tag key width accordingly
+            if let Ok((_hid, header)) = mvcc.get_latest_header() {
+                if header.schema_version == 0 {
+                    set_tag_key_width(8);  // For 64-bit CRC tag hash.
+                } else {
+                    set_tag_key_width(crate::tags_tree_nodes::TAG_HASH_LEN);
+                }
+            }
         }
         println!("UmaDB opened file {}", path.canonicalize()?.display());
 

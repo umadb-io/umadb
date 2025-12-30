@@ -925,8 +925,10 @@ mod tests {
     }
 
     fn th(n: u64) -> TagHash {
-        // simple helper to generate an 8-byte TagHash from a number
-        n.to_le_bytes()
+        // helper to generate a 16-byte TagHash from a number (for tests)
+        let mut out: TagHash = [0u8; crate::tags_tree_nodes::TAG_HASH_LEN];
+        out[0..8].copy_from_slice(&n.to_le_bytes());
+        out
     }
 
     fn tags_tree_lookup(

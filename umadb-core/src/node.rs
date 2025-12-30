@@ -74,7 +74,8 @@ impl Node {
 
     pub fn calc_serialized_size(&self) -> usize {
         match self {
-            Node::Header(_) => 48, // HeaderNode has a fixed size of 48 bytes (includes root_tags_tree_id and next_position)
+            // HeaderNode now has a fixed size of 52 bytes (legacy 48 + 4 bytes schema_version)
+            Node::Header(_) => 52,
             Node::FreeListLeaf(node) => node.calc_serialized_size(),
             Node::FreeListInternal(node) => node.calc_serialized_size(),
             Node::EventLeaf(node) => node.calc_serialized_size(),

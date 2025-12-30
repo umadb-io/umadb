@@ -6,7 +6,7 @@ use crate::events_tree_nodes::EventRecord;
 use crate::mvcc::{Mvcc, Writer};
 use crate::page::Page;
 use crate::tags_tree::{TagsTreeIterator, tags_tree_insert};
-use crate::tags_tree_nodes::TagHash;
+use crate::tags_tree_nodes::{TagHash, get_tag_key_width};
 use itertools::Itertools;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
@@ -18,6 +18,10 @@ use uuid::Uuid;
 
 pub static DEFAULT_PAGE_SIZE: usize = 4096;
 pub const DEFAULT_DB_FILENAME: &str = "uma.db";
+
+/// Database on-disk schema version for HeaderNode and related structures.
+/// Set to 1 for current releases; previous versions of the code used 0.
+pub const DB_SCHEMA_VERSION: u32 = 1;
 
 /// EventStore implementing the DCBEventStoreSync interface
 pub struct UmaDB {
@@ -565,9 +569,21 @@ pub fn read_conditional(
 
     Ok(out)
 }
-/// Compute a TagHash ([u8; 8]) from a tag string using a stable 64-bit hash.
+/// Compute a TagHash ([u8; 16]) from a tag string using a stable UUID v5 hash.
 #[inline(always)]
-pub fn tag_to_hash(tag: &str) -> TagHash {
+pub fn tag_to_hash_v5uuid(tag: &str) -> TagHash {
+    // Use a fixed namespace (URL) so the same tag always maps to the same UUID.
+    // UUID v5 is name-based and stable across runs.
+    let u = Uuid::new_v5(&Uuid::NAMESPACE_URL, tag.as_bytes());
+    u.into_bytes()
+}
+
+#[inline(always)]
+pub fn tag_to_hash_crc64(tag: &str) -> TagHash {
+    // This is the legacy "schema version 0" tag hasher, which 
+    // creates 64-bit hashes. This causes too many conflicts
+    // when there are many millions of events in the database.
+    // And so it was replaced with version 5 UUIDs of the tag.
     const SALT: [u8; 4] = [0x9E, 0x37, 0x79, 0xB9];
     // Build a 64-bit value by combining two crc32 hashes for stability and simplicity.
     let mut hasher1 = crc32fast::Hasher::new();
@@ -585,7 +601,19 @@ pub fn tag_to_hash(tag: &str) -> TagHash {
     let b = hasher2.finalize();
 
     let value = ((a as u64) << 32) | (b as u64);
-    value.to_le_bytes()
+    let mut out: TagHash = [0u8; crate::tags_tree_nodes::TAG_HASH_LEN];
+    out[..8].copy_from_slice(&value.to_le_bytes());
+    // The remaining 8 bytes are zeros as required by the new 128-bit TagHash format.
+    out
+}
+
+#[inline]
+pub fn tag_to_hash(tag: &str) -> TagHash {
+    if get_tag_key_width() == 16 {
+        tag_to_hash_v5uuid(tag)
+    } else {
+        tag_to_hash_crc64(tag)
+    }
 }
 
 pub fn is_request_idempotent(

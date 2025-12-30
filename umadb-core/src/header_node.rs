@@ -12,6 +12,8 @@ pub struct HeaderNode {
     pub tags_tree_root_id: PageID,
     pub next_page_id: PageID,
     pub next_position: Position,
+    /// On-disk schema version for the header node
+    pub schema_version: u32,
 }
 
 impl Default for HeaderNode {
@@ -23,30 +25,34 @@ impl Default for HeaderNode {
             tags_tree_root_id: PageID(0),
             next_page_id: PageID(0),
             next_position: Position(0),
+            schema_version: crate::db::DB_SCHEMA_VERSION,
         }
     }
 }
 
 impl HeaderNode {
-    /// Writes the serialized HeaderNode into the provided buffer and returns the number of bytes written (48).
-    /// The buffer must be at least 48 bytes long.
+    /// Writes the serialized HeaderNode into the provided buffer and returns the number of bytes written (52).
+    /// The buffer must be at least 52 bytes long.
     pub fn serialize_into(&self, buf: &mut [u8]) -> usize {
         assert!(
-            buf.len() >= 48,
-            "HeaderNode::serialize_into dst must be at least 48 bytes"
+            buf.len() >= 52,
+            "HeaderNode::serialize_into dst must be at least 52 bytes"
         );
-        // Write fields in little-endian order
+        // Write fields in little-endian order (first 48 bytes are the legacy layout)
         buf[0..8].copy_from_slice(&self.tsn.0.to_le_bytes());
         buf[8..16].copy_from_slice(&self.next_page_id.0.to_le_bytes());
         buf[16..24].copy_from_slice(&self.free_lists_tree_root_id.0.to_le_bytes());
         buf[24..32].copy_from_slice(&self.events_tree_root_id.0.to_le_bytes());
         buf[32..40].copy_from_slice(&self.tags_tree_root_id.0.to_le_bytes());
         buf[40..48].copy_from_slice(&self.next_position.0.to_le_bytes());
-        48
+        // Append schema version at the end (new field, keeps first 48 bytes compatible)
+        buf[48..52].copy_from_slice(&self.schema_version.to_le_bytes());
+        52
     }
 
     /// Creates a HeaderNode from a byte slice
-    /// Expects a slice with 48 bytes:
+    /// Accepts legacy 48-byte layout (no schema, schema_version=0) or the current 52-byte layout (schema as u32 at the end).
+    /// Layout (first 48 bytes):
     /// - 8 bytes for tsn
     /// - 8 bytes for next_page_id
     /// - 8 bytes for free_lists_tree_root_id
@@ -60,9 +66,9 @@ impl HeaderNode {
     /// # Returns
     /// * `Result<Self>` - The deserialized HeaderNode or an error
     pub fn from_slice(slice: &[u8]) -> DCBResult<Self> {
-        if slice.len() != 48 {
+        if slice.len() != 48 && slice.len() != 52 {
             return Err(DCBError::DeserializationError(format!(
-                "Expected 48 bytes, got {}",
+                "Expected 48 or 52 bytes, got {}",
                 slice.len()
             )));
         }
@@ -73,6 +79,10 @@ impl HeaderNode {
         let position_root_id = LittleEndian::read_u64(&slice[24..32]);
         let tags_root_id = LittleEndian::read_u64(&slice[32..40]);
         let next_position = LittleEndian::read_u64(&slice[40..48]);
+        let schema_version: u32 = match slice.len() {
+            52 => LittleEndian::read_u32(&slice[48..52]),
+            _ => 0,
+        };
 
         Ok(HeaderNode {
             tsn: Tsn(tsn),
@@ -81,6 +91,7 @@ impl HeaderNode {
             events_tree_root_id: PageID(position_root_id),
             tags_tree_root_id: PageID(tags_root_id),
             next_position: Position(next_position),
+            schema_version,
         })
     }
 }
@@ -98,14 +109,15 @@ mod tests {
             events_tree_root_id: PageID(789),
             tags_tree_root_id: PageID(321),
             next_position: Position(9876543210),
+            schema_version: crate::db::DB_SCHEMA_VERSION,
         };
 
         // Serialize the HeaderNode
-        let mut serialized = [0u8; 48];
+        let mut serialized = [0u8; 52];
         header_node.serialize_into(&mut serialized);
 
         // Verify the serialized output has the correct length
-        assert_eq!(48, serialized.len());
+        assert_eq!(52, serialized.len());
 
         // Verify the serialized output has the correct byte values
         // TSN(42) = 42u64 = [42, 0, 0, 0, 0, 0, 0, 0] in little-endian
@@ -126,6 +138,9 @@ mod tests {
         // next_position 9876543210u64 => little-endian bytes
         assert_eq!(&9876543210u64.to_le_bytes(), &serialized[40..48]);
 
+        // schema_version
+        assert_eq!(&crate::db::DB_SCHEMA_VERSION.to_le_bytes(), &serialized[48..52]);
+
         // Deserialize back to a HeaderNode
         let deserialized =
             HeaderNode::from_slice(&serialized).expect("Failed to deserialize HeaderNode");
@@ -142,5 +157,44 @@ mod tests {
             deserialized.events_tree_root_id
         );
         assert_eq!(header_node.next_position, deserialized.next_position);
+        assert_eq!(header_node.schema_version, deserialized.schema_version);
     }
+}
+
+
+#[cfg(test)]
+mod header_node_legacy_tests {
+    use super::*;
+
+    #[test]
+    fn test_legacy_48_byte_deserialize_sets_schema_version_0() {
+        // Build a header and serialize to current 52-byte format
+        let header_node = HeaderNode {
+            tsn: Tsn(1),
+            next_page_id: PageID(2),
+            free_lists_tree_root_id: PageID(3),
+            events_tree_root_id: PageID(4),
+            tags_tree_root_id: PageID(5),
+            next_position: Position(6),
+            schema_version: crate::db::DB_SCHEMA_VERSION,
+        };
+        let mut bytes52 = [0u8; 52];
+        header_node.serialize_into(&mut bytes52);
+
+        // Take only the first 48 bytes to simulate legacy on-disk header
+        let mut bytes48 = [0u8; 48];
+        bytes48.copy_from_slice(&bytes52[..48]);
+
+        // Deserialize and verify schema_version defaults to 0
+        let deserialized = HeaderNode::from_slice(&bytes48)
+            .expect("legacy 48-byte header should deserialize");
+        assert_eq!(deserialized.tsn, Tsn(1));
+        assert_eq!(deserialized.next_page_id, PageID(2));
+        assert_eq!(deserialized.free_lists_tree_root_id, PageID(3));
+        assert_eq!(deserialized.events_tree_root_id, PageID(4));
+        assert_eq!(deserialized.tags_tree_root_id, PageID(5));
+        assert_eq!(deserialized.next_position, Position(6));
+        assert_eq!(deserialized.schema_version, 0);
+    }
+
 }

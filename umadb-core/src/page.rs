@@ -130,6 +130,7 @@ mod tests {
             events_tree_root_id: PageID(789),
             tags_tree_root_id: PageID(1011),
             next_position: Position(1234),
+            schema_version: crate::db::DB_SCHEMA_VERSION,
         });
 
         // Create a Page with the node
