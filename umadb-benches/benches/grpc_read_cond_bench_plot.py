@@ -5,7 +5,7 @@ from pathlib import Path
 import os
 
 # Keep this in sync with benches/grpc_read_cond_bench.rs
-TOTAL_EVENTS = 20  # events per tag
+EVENTS_PER_TAG = 10
 MAX_THREADS = int(os.environ.get('MAX_THREADS', '0')) if os.environ.get('MAX_THREADS') else None
 
 # Thread variants you ran (match the bench). Edit if you change the bench.
@@ -53,7 +53,7 @@ for t in threads:
     ci_lower_sec = ci_lower_ns / 1e9
     ci_upper_sec = ci_upper_ns / 1e9
     
-    events_total = TOTAL_EVENTS * t  # total across all threads for this variant
+    events_total = EVENTS_PER_TAG * t  # total across all threads for this variant
     
     # Calculate mean throughput
     mean_eps = events_total / mean_sec
@@ -134,7 +134,7 @@ plt.xscale('log')
 plt.yscale('log')
 plt.xlabel('Clients')
 plt.ylabel('Total events/sec')
-plt.title(f'UmaDB: Conditional Read Operations ({TOTAL_EVENTS} events per tag)')
+plt.title(f'UmaDB: Conditional Read Operations ({EVENTS_PER_TAG} events per tag)')
 # Show y-axis grid lines and x-axis grid lines only at major ticks (the labeled x ticks)
 plt.grid(True, which='both', axis='y', alpha=0.3)
 plt.grid(True, which='major', axis='x', alpha=0.3)

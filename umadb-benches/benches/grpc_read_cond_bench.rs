@@ -13,8 +13,8 @@ use umadb_core::db::UmaDB;
 use umadb_dcb::{DCBEvent, DCBEventStoreAsync, DCBEventStoreSync, DCBQuery, DCBQueryItem};
 use umadb_server::start_server;
 
-const EVENTS_PER_TAG: u32 = 20;
-const BATCH_SIZE: u32 = 10000;
+const EVENTS_PER_TAG: u32 = 10;
+const NUM_TAGS: u32 = 100000;
 
 fn get_max_threads() -> Option<usize> {
     std::env::var("MAX_THREADS")
@@ -31,8 +31,8 @@ fn init_db_with_events() -> (tempfile::TempDir, String) {
 
     // Prepare events and append in moderate batches to avoid huge allocations
     for _ in 0..EVENTS_PER_TAG {
-        let mut events = Vec::with_capacity(BATCH_SIZE as usize);
-        for j in 0..BATCH_SIZE {
+        let mut events = Vec::with_capacity(NUM_TAGS as usize);
+        for j in 0..NUM_TAGS {
             let ev = DCBEvent {
                 event_type: "bench".to_string(),
                 data: format!("event-{}", j).into_bytes(),
@@ -128,7 +128,7 @@ pub fn grpc_read_cond_benchmark(c: &mut Criterion) {
             let c = rt
                 .block_on(
                     UmaDBClient::new(addr_http.clone())
-                        .batch_size(BATCH_SIZE)
+                        .batch_size(EVENTS_PER_TAG)
                         .connect_async(),
                 )
                 .expect("connect client");

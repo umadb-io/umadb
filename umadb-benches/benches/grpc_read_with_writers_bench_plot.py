@@ -5,7 +5,7 @@ from pathlib import Path
 import os
 
 # Keep this in sync with benches/grpc_read_with_writers_bench.rs
-TOTAL_EVENTS = 10_000
+TOTAL_EVENTS = 100_000
 WRITER_COUNT = 4  # number of background writers running during the read bench
 MAX_THREADS = int(os.environ.get('MAX_THREADS', '0')) if os.environ.get('MAX_THREADS') else None
 

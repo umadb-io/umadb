@@ -5,7 +5,7 @@ from pathlib import Path
 import os
 
 # Keep this in sync with benches/grpc_read_bench.rs
-TOTAL_EVENTS = 10_000  # events per iteration per client
+TOTAL_EVENTS = 100_000  # events per iteration per client
 MAX_THREADS = int(os.environ.get('MAX_THREADS', '0')) if os.environ.get('MAX_THREADS') else None
 THROTTLED = bool(os.environ.get('BENCH_READ_THROTTLED', ''))
 GROUP_NAME = "grpc_read_throttled" if THROTTLED else "grpc_read_unthrottled"

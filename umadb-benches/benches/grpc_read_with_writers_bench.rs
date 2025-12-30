@@ -52,13 +52,14 @@ fn init_db_with_events(num_events: usize) -> (tempfile::TempDir, String) {
 }
 
 pub fn grpc_read_with_writers_benchmark(c: &mut Criterion) {
-    const TOTAL_EVENTS: u32 = 10_000;
-    const READ_BATCH_SIZE: u32 = 1000;
+    const EVENTS_IN_DB: u32 = 1_000_000;
+    const EVENTS_TO_READ: u32 = 100_000;
+    const READ_BATCH_SIZE: u32 = 5000;
     const WRITER_COUNT: usize = 4;
     const WRITER_EVENTS_PER_APPEND: usize = 1; // small continuous appends
 
     // Initialize DB and server with some events
-    let (_tmp_dir, db_path) = init_db_with_events(TOTAL_EVENTS as usize);
+    let (_tmp_dir, db_path) = init_db_with_events(EVENTS_IN_DB as usize);
 
     // Find a free localhost port
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind to ephemeral port");
@@ -163,7 +164,7 @@ pub fn grpc_read_with_writers_benchmark(c: &mut Criterion) {
     for &threads in &thread_counts {
         // Report throughput as the total across all runtime worker threads
         group.throughput(Throughput::Elements(
-            (TOTAL_EVENTS as u64) * (threads as u64),
+            (EVENTS_TO_READ as u64) * (threads as u64),
         ));
 
         // Build a Tokio runtime and multiple persistent clients (one per concurrent reader)
@@ -196,7 +197,7 @@ pub fn grpc_read_with_writers_benchmark(c: &mut Criterion) {
                         let client = clients[i].clone();
                         async move {
                             let mut resp = client
-                                .read(None, None, false, Some(TOTAL_EVENTS), false)
+                                .read(None, None, false, Some(EVENTS_TO_READ), false)
                                 .await
                                 .expect("start read response");
                             let mut count = 0usize;
@@ -211,7 +212,7 @@ pub fn grpc_read_with_writers_benchmark(c: &mut Criterion) {
                                 }
                             }
                             assert_eq!(
-                                count, TOTAL_EVENTS as usize,
+                                count, EVENTS_TO_READ as usize,
                                 "expected to read all preloaded events"
                             );
                         }

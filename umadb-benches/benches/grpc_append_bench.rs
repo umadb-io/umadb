@@ -60,7 +60,7 @@ pub fn grpc_append_benchmark(c: &mut Criterion) {
     let events_per_request = get_events_per_request();
     let group_name = format!("grpc_append_{}_per_request", events_per_request);
     let mut group = c.benchmark_group(&group_name);
-    group.sample_size(200);
+    group.sample_size(50);
     group.measurement_time(Duration::from_secs(20));
 
     let all_threads = [1usize, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024];
@@ -73,7 +73,7 @@ pub fn grpc_append_benchmark(c: &mut Criterion) {
 
     for &threads in &thread_counts {
         // Initialize DB and server with 10_000 events (as requested)
-        let initial_events = 10_000usize;
+        let initial_events = 1_000_000usize;
         let (_tmp_dir, db_path) = init_db_with_events(initial_events);
 
         // Find a free localhost port

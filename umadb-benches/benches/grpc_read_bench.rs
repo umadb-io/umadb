@@ -4,7 +4,7 @@ use std::hint::black_box;
 use std::net::TcpListener;
 use std::sync::Arc;
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tempfile::tempdir;
 use tokio::runtime::Builder as RtBuilder;
 use tokio::sync::oneshot;
@@ -56,12 +56,13 @@ fn init_db_with_events(num_events: usize) -> (tempfile::TempDir, String) {
 }
 
 pub fn grpc_read_benchmark(c: &mut Criterion) {
-    const TOTAL_EVENTS: u32 = 10_000;
-    const READ_BATCH_SIZE: u32 = 1000;
+    const EVENTS_IN_DB: u32 = 1_000_000;
+    const EVENTS_TO_READ: u32 = 100_000;
+    const READ_BATCH_SIZE: u32 = 5000;
     let throttled = is_throttled();
 
     // Initialize DB and server with some events
-    let (_tmp_dir, db_path) = init_db_with_events(TOTAL_EVENTS as usize);
+    let (_tmp_dir, db_path) = init_db_with_events(EVENTS_IN_DB as usize);
 
     // Find a free localhost port
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind to ephemeral port");
@@ -127,7 +128,7 @@ pub fn grpc_read_benchmark(c: &mut Criterion) {
     for &threads in &thread_counts {
         // Report throughput as the total across all runtime worker threads
         group.throughput(Throughput::Elements(
-            (TOTAL_EVENTS as u64) * (threads as u64),
+            (EVENTS_TO_READ as u64) * (threads as u64),
         ));
 
         // Build a Tokio runtime and multiple persistent clients (one per concurrent reader)
@@ -160,10 +161,11 @@ pub fn grpc_read_benchmark(c: &mut Criterion) {
                         let client = clients[i].clone();
                         async move {
                             let mut resp = client
-                                .read(None, None, false, Some(TOTAL_EVENTS), false)
+                                .read(None, None, false, Some(EVENTS_TO_READ), false)
                                 .await
                                 .expect("start read response");
                             let mut count = 0usize;
+                            let loop_start = Instant::now();
                             loop {
                                 let batch = resp.next_batch().await.expect("next_batch ok");
                                 if batch.is_empty() {
@@ -173,12 +175,19 @@ pub fn grpc_read_benchmark(c: &mut Criterion) {
                                     let _evt = black_box(item);
                                     count += 1;
                                 }
-                                if throttled && count % 1000 == 0 {
-                                    tokio::time::sleep(Duration::from_millis(90)).await;
+                                if throttled {
+                                    let target_rate_per_second: u64 = 10_010;
+                                    // Sleep only if we're ahead of the targeted total elapsed time for the
+                                    // number of items processed so far, avoiding per-iteration stalls.
+                                    let desired_elapsed = Duration::from_secs_f64((count as f64) / (target_rate_per_second as f64));
+                                    let elapsed = loop_start.elapsed();
+                                    if desired_elapsed > elapsed {
+                                        tokio::time::sleep(desired_elapsed - elapsed).await;
+                                    }
                                 }
                             }
                             assert_eq!(
-                                count, TOTAL_EVENTS as usize,
+                                count, EVENTS_TO_READ as usize,
                                 "expected to read all preloaded events"
                             );
                         }
