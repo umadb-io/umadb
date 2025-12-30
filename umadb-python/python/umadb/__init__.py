@@ -18,7 +18,7 @@ from umadb._umadb import (
     ReadResponse,
 )
 
-__version__ = "0.1.30"
+__version__ = "0.2.0"
 
 __all__ = [
     "Client",
