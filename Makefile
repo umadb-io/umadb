@@ -8,6 +8,7 @@ UVX ?= uvx@$(UV_VERSION)
 
 .PHONY: clean
 .PHONY: build
+.PHONY: build-umadb-bin-release
 .PHONY: build-workspace-exclude-python
 .PHONY: test
 .PHONY: test-workspace-exclude-python
@@ -58,6 +59,9 @@ build:
 
 build-workspace-exclude-python:
 	cargo build --workspace --exclude umadb-python
+
+build-umadb-bin-release:
+	cargo build --bin umadb --release
 
 test:
 	$(MAKE) test-workspace-exclude-python
