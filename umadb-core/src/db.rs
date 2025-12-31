@@ -4,15 +4,17 @@ use crate::common::{PageID, Position};
 use crate::events_tree::{EventIterator, event_tree_append, event_tree_lookup};
 use crate::events_tree_nodes::EventRecord;
 use crate::mvcc::{Mvcc, Writer};
+use crate::node::Node;
 use crate::page::Page;
 use crate::tags_tree::{TagsTreeIterator, tags_tree_insert};
 use crate::tags_tree_nodes::{TagHash, get_tag_key_width};
+use crate::tracking_tree_nodes::TrackingLeafNode;
 use itertools::Itertools;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
 use umadb_dcb::{
     DCBAppendCondition, DCBError, DCBEvent, DCBEventStoreSync, DCBQuery, DCBReadResponseSync,
-    DCBResult, DCBSequencedEvent,
+    DCBResult, DCBSequencedEvent, TrackingInfo,
 };
 use uuid::Uuid;
 
@@ -48,6 +50,23 @@ impl UmaDB {
         Self { mvcc }
     }
 
+    /// Returns the greatest recorded upstream position for a source, if any.
+    pub fn get_tracking_info(&self, source: &str) -> DCBResult<Option<u64>> {
+        let reader = self.mvcc.reader()?;
+        let root = reader.tracking_tree_root_id;
+        if root == PageID(0) {
+            return Ok(None);
+        }
+        let page = self.mvcc.read_page(root)?;
+        match page.node {
+            Node::TrackingLeaf(node) => Ok(node.get(source).map(|p| p.0)),
+            other => Err(DCBError::DatabaseCorrupted(format!(
+                "Invalid tracking node type: {}",
+                other.type_name()
+            ))),
+        }
+    }
+
     /// Appends a batch of (events, condition) using a single writer/transaction.
     /// For each item, behaves like append():
     /// - If condition is Some and matches any events (considering uncommitted writes), returns Err(IntegrityError) for that item and continues.
@@ -57,8 +76,11 @@ impl UmaDB {
     /// At the end, commits the writer once. If commit fails, returns the commit error and discards per-item results.
     pub fn append_batch(
         &self,
-        items: Vec<(Vec<DCBEvent>, Option<DCBAppendCondition>)>,
-        force_sequential_read: bool,
+        items: Vec<(
+            Vec<DCBEvent>,
+            Option<DCBAppendCondition>,
+            Option<TrackingInfo>,
+        )>,
     ) -> DCBResult<Vec<DCBResult<u64>>> {
         // println!("Processing batch of {} items", items.len());
 
@@ -66,17 +88,10 @@ impl UmaDB {
         let mut writer = mvcc.writer()?;
         let mut results: Vec<DCBResult<u64>> = Vec::with_capacity(items.len());
 
-        for (events, condition) in items.into_iter() {
-            if Self::process_append_request(
-                events,
-                condition,
-                force_sequential_read,
-                mvcc,
-                &mut writer,
-                &mut results,
-            ) {
-                continue;
-            }
+        for (events, condition, tracking) in items.into_iter() {
+            let result =
+                Self::process_append_request(events, condition, tracking, mvcc, &mut writer);
+            results.push(result);
         }
 
         // Single commit at the end of the batch
@@ -87,11 +102,10 @@ impl UmaDB {
     pub fn process_append_request(
         events: Vec<DCBEvent>,
         condition: Option<DCBAppendCondition>,
-        force_sequential_read: bool,
+        tracking_info: Option<TrackingInfo>,
         mvcc: &Arc<Mvcc>,
         writer: &mut Writer,
-        results: &mut Vec<DCBResult<u64>>,
-    ) -> bool {
+    ) -> DCBResult<u64> {
         // Check condition using read_conditional (limit 1), starting after the provided position
         if let Some(cond) = condition {
             let from = cond.after.map(|after| Position(after + 1));
@@ -104,14 +118,14 @@ impl UmaDB {
                 from,
                 false,
                 Some(1),
-                force_sequential_read,
+                false,
             );
             match read_result1 {
                 Ok(found_vec) => {
                     // Read didn't error...
                     if let Some(matched) = found_vec.first() {
                         // Found one event... consider if the request is idempotent...
-                        match is_request_idempotent(
+                        return match is_request_idempotent(
                             mvcc,
                             &writer.dirty,
                             writer.events_tree_root_id,
@@ -120,9 +134,7 @@ impl UmaDB {
                             cond.fail_if_events_match.clone(),
                             from,
                         ) {
-                            Ok(Some(last_recorded_position)) => {
-                                results.push(Ok(last_recorded_position));
-                            }
+                            Ok(Some(last_recorded_position)) => Ok(last_recorded_position),
                             Ok(None) => {
                                 // Propagate an integrity error for this item but continue with others
                                 let msg = format!(
@@ -130,38 +142,42 @@ impl UmaDB {
                                     cond.clone(),
                                     matched,
                                 );
-                                results.push(Err(DCBError::IntegrityError(msg)));
+                                Err(DCBError::IntegrityError(msg))
                             }
                             Err(err) => {
                                 // Propagate the error for this item but continue with others
-                                results.push(Err(err));
+                                Err(err)
                             }
-                        }
-                        return true;
+                        };
                     }
                 }
                 Err(e) => {
                     // Propagate the read error for this item but continue with others
-                    results.push(Err(e));
-                    return true;
+                    return Err(e);
                 }
             }
         }
 
-        if events.is_empty() {
-            results.push(Ok(0));
-            return true;
+        // If tracking is provided for this item, enforce monotonicity and update tracking leaf under same writer
+        if let Some(tracking_info) = tracking_info {
+            if let Err(e) = tracking_upsert(
+                mvcc,
+                writer,
+                &tracking_info.source,
+                Position(tracking_info.position),
+            ) {
+                return Err(e);
+            }
         }
 
         // Append unconditionally
-        match unconditional_append(mvcc, writer, events) {
-            Ok(last) => results.push(Ok(last)),
-            Err(e) => {
-                // Record error for this item and continue
-                results.push(Err(e));
-            }
+        if events.is_empty() {
+            return Ok(0);
         }
-        false
+        match unconditional_append(mvcc, writer, events) {
+            Ok(last) => Ok(last),
+            Err(e) => Err(e),
+        }
     }
 }
 
@@ -221,28 +237,90 @@ impl DCBEventStoreSync for UmaDB {
         if last == 0 { Ok(None) } else { Ok(Some(last)) }
     }
 
+    fn get_tracking_info(&self, source: &str) -> DCBResult<Option<u64>> {
+        UmaDB::get_tracking_info(self, source)
+    }
+
+    /// Append events with optional tracking enforcement and update.
+    /// If tracking is provided, ensures the supplied position is strictly greater than
+    /// any recorded for the given source, and atomically updates the tracking leaf.
     fn append(
         &self,
         events: Vec<DCBEvent>,
         condition: Option<DCBAppendCondition>,
+        tracking_info: Option<TrackingInfo>,
     ) -> DCBResult<u64> {
-        // Preserve existing fast-path: if no events, do nothing and return 0 (avoid opening/committing a writer)
         if events.is_empty() {
             return Ok(0);
         }
-        // Delegate to append_batch with a single item to reuse unified batching logic
-        let mut results = self.append_batch(vec![(events, condition)], false)?;
-        debug_assert_eq!(results.len(), 1);
-        match results.remove(0) {
-            Ok(pos) => Ok(pos),
-            Err(e) => Err(e),
-        }
+        let mvcc = &self.mvcc;
+        let mut writer = mvcc.writer()?;
+        let result =
+            Self::process_append_request(events, condition, tracking_info, mvcc, &mut writer);
+        mvcc.commit(&mut writer)?;
+        result
     }
 }
 
 struct ReadResponse {
     events: VecDeque<DCBSequencedEvent>,
     head: Option<u64>,
+}
+
+/// Ensure tracking constraint and update/insert the position into leaf without splitting.
+fn tracking_upsert(mvcc: &Mvcc, writer: &mut Writer, source: &str, pos: Position) -> DCBResult<()> {
+    let page_body_capacity = mvcc.max_node_size; // available bytes for node body (body excludes page header)
+
+    let root = writer.tracking_tree_root_id;
+    if root == PageID(0) {
+        // Create a new leaf with the entry
+        let mut node = TrackingLeafNode::new();
+        node.upsert_no_split(source, pos, page_body_capacity)?;
+        let new_root_id = writer.alloc_page_id();
+        let page = Page::new(new_root_id, Node::TrackingLeaf(node));
+        writer.insert_dirty(page)?;
+        writer.tracking_tree_root_id = new_root_id;
+        return Ok(());
+    }
+
+    // Have an existing leaf: read it and validate monotonicity
+    let page = writer.get_page_ref(mvcc, root)?;
+    let leaf = match &page.node {
+        Node::TrackingLeaf(n) => n.clone(),
+        other => {
+            return Err(DCBError::DatabaseCorrupted(format!(
+                "Invalid tracking node type at root: {}",
+                other.type_name()
+            )));
+        }
+    };
+
+    if let Some(existing) = leaf.get(source) {
+        if pos.0 <= existing.0 {
+            return Err(DCBError::IntegrityError(format!(
+                "non-increasing tracking position for source '{source}': {} <= {}",
+                pos.0, existing.0
+            )));
+        }
+    }
+
+    // Copy-on-write the root page
+    let new_root_id = writer.get_dirty_page_id(root)?;
+    let page_mut = writer.get_mut_dirty(new_root_id)?;
+    // Update the cloned leaf node with capacity check
+    if let Node::TrackingLeaf(ref mut node_mut) = page_mut.node {
+        node_mut.upsert_no_split(source, pos, page_body_capacity)?;
+    } else {
+        return Err(DCBError::DatabaseCorrupted(
+            "Dirty tracking page not a leaf".to_string(),
+        ));
+    }
+
+    // Update header root id if changed
+    if root != new_root_id {
+        writer.tracking_tree_root_id = new_root_id;
+    }
+    Ok(())
 }
 
 impl Iterator for ReadResponse {
@@ -279,6 +357,8 @@ pub fn unconditional_append(
     writer: &mut Writer,
     events: Vec<DCBEvent>,
 ) -> DCBResult<u64> {
+    // Note: when used with tracking, the caller must perform tracking checks and updates
+    // before this call within the same writer to ensure atomicity.
     let mut last_pos_u64: u64 = 0;
 
     for ev in events.into_iter() {
@@ -580,7 +660,7 @@ pub fn tag_to_hash_v5uuid(tag: &str) -> TagHash {
 
 #[inline(always)]
 pub fn tag_to_hash_crc64(tag: &str) -> TagHash {
-    // This is the legacy "schema version 0" tag hasher, which 
+    // This is the legacy "schema version 0" tag hasher, which
     // creates 64-bit hashes. This causes too many conflicts
     // when there are many millions of events in the database.
     // And so it was replaced with version 5 UUIDs of the tag.
@@ -690,6 +770,77 @@ mod tests {
         DCBAppendCondition, DCBError, DCBEvent, DCBEventStoreSync, DCBQuery, DCBQueryItem,
     };
     use uuid::Uuid;
+
+    #[test]
+    #[serial]
+    fn tracking_get_none_on_new_db() {
+        let temp_dir = tempdir().unwrap();
+        let db_path = temp_dir.path().join("tracking-none.db");
+        let uma = UmaDB::new(db_path).unwrap();
+        let pos = uma.get_tracking_info("source-A").unwrap();
+        assert!(pos.is_none());
+    }
+
+    #[test]
+    #[serial]
+    fn append_with_tracking_create_and_update_and_monotonic_enforced() {
+        let temp_dir = tempdir().unwrap();
+        let db_path = temp_dir.path().join("tracking-append.db");
+        let uma = UmaDB::new(db_path).unwrap();
+
+        // Prepare a simple event
+        let ev = DCBEvent::new()
+            .event_type("T1")
+            .data(vec![1, 2, 3])
+            .tags(["x", "y"]);
+
+        // First append with tracking position 5 should create tracking leaf
+        let last = uma
+            .append(
+                vec![ev.clone()],
+                None,
+                Some(TrackingInfo {
+                    source: "src1".into(),
+                    position: 5,
+                }),
+            )
+            .unwrap();
+        assert_eq!(1, last);
+        assert_eq!(Some(5), uma.get_tracking_info("src1").unwrap());
+
+        // Non-increasing should fail
+        let err = uma
+            .append(
+                vec![ev.clone()],
+                None,
+                Some(TrackingInfo {
+                    source: "src1".into(),
+                    position: 5,
+                }),
+            )
+            .err()
+            .expect("expected error");
+        match err {
+            DCBError::IntegrityError(msg) => {
+                assert!(msg.contains("non-increasing tracking position"))
+            }
+            other => panic!("unexpected error: {:?}", other),
+        }
+
+        // Increasing should succeed and update recorded position
+        let last2 = uma
+            .append(
+                vec![ev],
+                None,
+                Some(TrackingInfo {
+                    source: "src1".into(),
+                    position: 6,
+                }),
+            )
+            .unwrap();
+        assert_eq!(2, last2);
+        assert_eq!(Some(6), uma.get_tracking_info("src1").unwrap());
+    }
 
     // Backward-compatible wrapper for tests: call new read_conditional with an empty dirty map
     fn read_conditional(
@@ -1198,7 +1349,7 @@ mod tests {
                 uuid: None,
             },
         ];
-        let last = store.append(events.clone(), None).unwrap();
+        let last = store.append(events.clone(), None, None).unwrap();
         assert!(last > 0);
         assert_eq!(store.head().unwrap(), Some(last));
 
@@ -1257,6 +1408,7 @@ mod tests {
                     uuid: None,
                 }],
                 Some(cond_pass),
+                None,
             )
             .expect("append with passing condition should succeed");
         assert!(ok_last > last);
@@ -1281,6 +1433,7 @@ mod tests {
                 uuid: None,
             }],
             Some(cond_fail),
+            None,
         );
         match res {
             Err(DCBError::IntegrityError(_)) => {}
@@ -1316,13 +1469,14 @@ mod tests {
 
         // Batch: first succeeds, second fails due to condition matching any event, third succeeds (after high position)
         let items = vec![
-            (vec![e1.clone()], None),
+            (vec![e1.clone()], None, None),
             (
                 vec![e2.clone()],
                 Some(DCBAppendCondition {
                     fail_if_events_match: DCBQuery::default(),
                     after: None,
                 }),
+                None,
             ),
             (
                 vec![e3.clone()],
@@ -1330,10 +1484,11 @@ mod tests {
                     fail_if_events_match: DCBQuery::default(),
                     after: Some(10),
                 }),
+                None,
             ),
         ];
 
-        let results = store.append_batch(items, false).unwrap();
+        let results = store.append_batch(items).unwrap();
 
         assert_eq!(results.len(), 3);
         // First item should succeed with last position 1
@@ -1394,7 +1549,7 @@ mod tests {
 
         let items = vec![
             // 1) Append e1 (tag x)
-            (vec![e1.clone()], None),
+            (vec![e1.clone()], None, None),
             // 2) Attempt append e2, but fail if any events with tag x exist after None (i.e., from the start); should fail due to e1 in dirty pages
             (
                 vec![e2.clone()],
@@ -1402,6 +1557,7 @@ mod tests {
                     fail_if_events_match: query_tag_x.clone(),
                     after: None,
                 }),
+                None,
             ),
             // 3) Append e3 with condition that ignores position 1 by using after=Some(1); should pass
             (
@@ -1410,10 +1566,11 @@ mod tests {
                     fail_if_events_match: query_tag_x.clone(),
                     after: Some(1),
                 }),
+                None,
             ),
         ];
 
-        let results = store.append_batch(items, false).unwrap();
+        let results = store.append_batch(items).unwrap();
 
         assert_eq!(results.len(), 3);
         match &results[0] {
@@ -1499,7 +1656,7 @@ mod tests {
 
         let items = vec![
             // 1) Append small S
-            (vec![small.clone()], None),
+            (vec![small.clone()], None, None),
             // 2) Should fail because type S exists in dirty pages (after None)
             (
                 vec![filler1.clone()],
@@ -1507,9 +1664,10 @@ mod tests {
                     fail_if_events_match: q_type_s.clone(),
                     after: None,
                 }),
+                None,
             ),
             // 3) Append big B (overflow)
-            (vec![big.clone()], None),
+            (vec![big.clone()], None, None),
             // 4) Should fail because type B exists in dirty pages (after None)
             (
                 vec![filler2.clone()],
@@ -1517,6 +1675,7 @@ mod tests {
                     fail_if_events_match: q_type_b.clone(),
                     after: None,
                 }),
+                None,
             ),
             // 5) Should succeed because after=Some(2) ignores positions <= 2 (small at 1, big at 2)
             (
@@ -1525,10 +1684,11 @@ mod tests {
                     fail_if_events_match: q_type_b.clone(),
                     after: Some(2),
                 }),
+                None,
             ),
         ];
 
-        let results = store.append_batch(items, false).unwrap();
+        let results = store.append_batch(items).unwrap();
         assert_eq!(results.len(), 5);
         match &results[0] {
             Ok(pos) => assert_eq!(*pos, 1),
@@ -1536,7 +1696,9 @@ mod tests {
         }
         match &results[1] {
             Err(DCBError::IntegrityError(_)) => {}
-            other => panic!("expected IntegrityError for item1, got {:?}", other),
+            other => {
+                panic!("expected IntegrityError for item1, got {:?}", other)
+            }
         }
         match &results[2] {
             Ok(pos) => assert_eq!(*pos, 2),
@@ -1544,7 +1706,9 @@ mod tests {
         }
         match &results[3] {
             Err(DCBError::IntegrityError(_)) => {}
-            other => panic!("expected IntegrityError for item3, got {:?}", other),
+            other => {
+                panic!("expected IntegrityError for item3, got {:?}", other)
+            }
         }
         match &results[4] {
             Ok(pos) => assert_eq!(*pos, 3),
@@ -1631,7 +1795,7 @@ mod tests {
 
         let items = vec![
             // 1) Append small S@x
-            (vec![small.clone()], None),
+            (vec![small.clone()], None, None),
             // 2) Should fail because S@x exists in dirty pages (tags path + type filter)
             (
                 vec![filler1.clone()],
@@ -1639,9 +1803,10 @@ mod tests {
                     fail_if_events_match: q_s_and_x.clone(),
                     after: None,
                 }),
+                None,
             ),
             // 3) Append big B@y (overflow)
-            (vec![big.clone()], None),
+            (vec![big.clone()], None, None),
             // 4) Should fail because B@y exists in dirty pages (tags path + type filter and overflow read)
             (
                 vec![filler2.clone()],
@@ -1649,6 +1814,7 @@ mod tests {
                     fail_if_events_match: q_b_and_y.clone(),
                     after: None,
                 }),
+                None,
             ),
             // 5) Should succeed because after=Some(2) ignores positions <= 2 (small at 1, big at 2)
             (
@@ -1657,10 +1823,11 @@ mod tests {
                     fail_if_events_match: q_b_and_y.clone(),
                     after: Some(2),
                 }),
+                None,
             ),
         ];
 
-        let results = store.append_batch(items, false).unwrap();
+        let results = store.append_batch(items).unwrap();
         assert_eq!(results.len(), 5);
         match &results[0] {
             Ok(pos) => assert_eq!(*pos, 1),
@@ -1668,7 +1835,9 @@ mod tests {
         }
         match &results[1] {
             Err(DCBError::IntegrityError(_)) => {}
-            other => panic!("expected IntegrityError for item1, got {:?}", other),
+            other => {
+                panic!("expected IntegrityError for item1, got {:?}", other)
+            }
         }
         match &results[2] {
             Ok(pos) => assert_eq!(*pos, 2),
@@ -1676,7 +1845,9 @@ mod tests {
         }
         match &results[3] {
             Err(DCBError::IntegrityError(_)) => {}
-            other => panic!("expected IntegrityError for item3, got {:?}", other),
+            other => {
+                panic!("expected IntegrityError for item3, got {:?}", other)
+            }
         }
         match &results[4] {
             Ok(pos) => assert_eq!(*pos, 3),
@@ -1727,7 +1898,7 @@ mod tests {
         };
 
         let mut commit_position1 = store
-            .append(vec![event1.clone()], condition1.clone())
+            .append(vec![event1.clone()], condition1.clone(), None)
             .unwrap();
         assert_eq!(1, commit_position1);
 
@@ -1738,7 +1909,7 @@ mod tests {
 
         // Test idempotency - retry the same append operation.
         commit_position1 = store
-            .append(vec![event1.clone()], condition1.clone())
+            .append(vec![event1.clone()], condition1.clone(), None)
             .unwrap();
 
         // Check the response is the same as before.
@@ -1758,7 +1929,7 @@ mod tests {
             uuid: Some(Uuid::new_v4()),
         };
 
-        let mut commit_position2 = store.append(vec![event2.clone()], None).unwrap();
+        let mut commit_position2 = store.append(vec![event2.clone()], None, None).unwrap();
         assert_eq!(2, commit_position2);
 
         // Check we have two sequenced events.
@@ -1770,7 +1941,7 @@ mod tests {
 
         // Test idempotency - retry the same append operation.
         commit_position1 = store
-            .append(vec![event1.clone()], condition1.clone())
+            .append(vec![event1.clone()], condition1.clone(), None)
             .unwrap();
 
         // Check the response is the same as before.
@@ -1778,7 +1949,11 @@ mod tests {
 
         // Test idempotency - try an operation with event1 and event2.
         commit_position2 = store
-            .append(vec![event1.clone(), event2.clone()], condition1.clone())
+            .append(
+                vec![event1.clone(), event2.clone()],
+                condition1.clone(),
+                None,
+            )
             .unwrap();
 
         // Check the response is the same as before.
@@ -1792,11 +1967,15 @@ mod tests {
         assert_eq!(event2.uuid, result[1].event.uuid);
 
         // Try with event2 and condition1 - should get an error.
-        let result = store.append(vec![event2.clone()], condition1.clone());
+        let result = store.append(vec![event2.clone()], condition1.clone(), None);
         assert!(matches!(result, Err(DCBError::IntegrityError(_))));
 
         // Try with two events in different order - should get an error.
-        let result = store.append(vec![event2.clone(), event1.clone()], condition1.clone());
+        let result = store.append(
+            vec![event2.clone(), event1.clone()],
+            condition1.clone(),
+            None,
+        );
         assert!(matches!(result, Err(DCBError::IntegrityError(_))));
     }
 

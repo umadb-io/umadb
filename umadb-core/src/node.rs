@@ -4,6 +4,7 @@ use crate::free_lists_tree_nodes::{
 };
 use crate::header_node::HeaderNode;
 use crate::tags_tree_nodes::{TagInternalNode, TagLeafNode, TagsInternalNode, TagsLeafNode};
+use crate::tracking_tree_nodes::TrackingLeafNode;
 use umadb_dcb::{DCBError, DCBResult};
 
 // Constants for serialization
@@ -19,6 +20,7 @@ const PAGE_TYPE_TAG_INTERNAL: u8 = b'9';
 const PAGE_TYPE_EVENT_OVERFLOW: u8 = b'a';
 const PAGE_TYPE_FREELIST_TSN_LEAF: u8 = b'b';
 const PAGE_TYPE_FREELIST_TSN_INTERNAL: u8 = b'c';
+const PAGE_TYPE_TRACKING_LEAF: u8 = b'd';
 
 // Enum to represent different node types
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -35,6 +37,7 @@ pub enum Node {
     TagInternal(TagInternalNode),
     FreeListTsnLeaf(FreeListTsnLeafNode),
     FreeListTsnInternal(FreeListTsnInternalNode),
+    TrackingLeaf(TrackingLeafNode),
 }
 
 impl Node {
@@ -52,6 +55,7 @@ impl Node {
             Node::TagInternal(_) => PAGE_TYPE_TAG_INTERNAL,
             Node::FreeListTsnLeaf(_) => PAGE_TYPE_FREELIST_TSN_LEAF,
             Node::FreeListTsnInternal(_) => PAGE_TYPE_FREELIST_TSN_INTERNAL,
+            Node::TrackingLeaf(_) => PAGE_TYPE_TRACKING_LEAF,
         }
     }
 
@@ -69,13 +73,13 @@ impl Node {
             Node::TagInternal(_) => "TagInternal",
             Node::FreeListTsnLeaf(_) => "FreeListTsnLeaf",
             Node::FreeListTsnInternal(_) => "FreeListTsnInternal",
+            Node::TrackingLeaf(_) => "TrackingLeaf",
         }
     }
 
     pub fn calc_serialized_size(&self) -> usize {
         match self {
-            // HeaderNode now has a fixed size of 52 bytes (legacy 48 + 4 bytes schema_version)
-            Node::Header(_) => 52,
+            Node::Header(node) => node.calc_serialized_size(),
             Node::FreeListLeaf(node) => node.calc_serialized_size(),
             Node::FreeListInternal(node) => node.calc_serialized_size(),
             Node::EventLeaf(node) => node.calc_serialized_size(),
@@ -87,6 +91,7 @@ impl Node {
             Node::TagInternal(node) => node.calc_serialized_size(),
             Node::FreeListTsnLeaf(node) => node.calc_serialized_size(),
             Node::FreeListTsnInternal(node) => node.calc_serialized_size(),
+            Node::TrackingLeaf(node) => node.calc_serialized_size(),
         }
     }
 
@@ -143,6 +148,10 @@ impl Node {
                 let n = node.serialize_into(buf);
                 Ok(n)
             }
+            Node::TrackingLeaf(node) => {
+                let n = node.serialize_into(buf);
+                Ok(n)
+            }
         }
     }
 
@@ -195,6 +204,10 @@ impl Node {
             PAGE_TYPE_FREELIST_TSN_INTERNAL => {
                 let node = FreeListTsnInternalNode::from_slice(data)?;
                 Ok(Node::FreeListTsnInternal(node))
+            }
+            PAGE_TYPE_TRACKING_LEAF => {
+                let node = TrackingLeafNode::from_slice(data)?;
+                Ok(Node::TrackingLeaf(node))
             }
             _ => Err(DCBError::DatabaseCorrupted(format!(
                 "Invalid node type: {node_type}"

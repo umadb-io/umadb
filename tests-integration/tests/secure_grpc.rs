@@ -98,7 +98,7 @@ async fn secure_grpc_end_to_end_append_and_read() {
             uuid: None,
         })
         .collect();
-    let last_pos = client.append(events, None).await.expect("append");
+    let last_pos = client.append(events, None, None).await.expect("append");
     assert!(last_pos >= 25);
 
     // Read them back (no query means everything)

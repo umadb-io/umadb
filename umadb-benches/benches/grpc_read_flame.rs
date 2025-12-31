@@ -39,7 +39,7 @@ fn main() -> std::io::Result<()> {
                 };
                 events.push(ev);
             }
-            store.append(events, None).expect("append to store");
+            store.append(events, None, None).expect("append to store");
             remaining -= current;
         }
 

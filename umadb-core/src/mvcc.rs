@@ -10,7 +10,6 @@ use crate::page::{PAGE_HEADER_SIZE, Page, serialize_page_into};
 use crate::pager::Pager;
 use crate::tags_tree_nodes::TagsLeafNode;
 use crate::tags_tree_nodes::set_tag_key_width;
-use umadb_dcb::{DCBError, DCBResult};
 use dashmap::DashMap;
 use std::collections::HashMap;
 use std::collections::VecDeque;
@@ -19,6 +18,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::sleep;
 use std::time::Duration;
+use umadb_dcb::{DCBError, DCBResult};
 
 const GET_LATEST_HEADER_RETRIES: usize = 5;
 const GET_LATEST_HEADER_DELAY: Duration = Duration::from_millis(10);
@@ -85,6 +85,7 @@ impl Mvcc {
                 initial_free_lists_tree_root_id,
                 initial_events_tree_root_id,
                 initial_tags_tree_root_id,
+                PageID(0),
                 initial_next_page_id,
                 initial_next_position,
             )?;
@@ -94,6 +95,7 @@ impl Mvcc {
                 initial_free_lists_tree_root_id,
                 initial_events_tree_root_id,
                 initial_tags_tree_root_id,
+                PageID(0),
                 initial_next_page_id,
                 initial_next_position,
             )?;
@@ -131,7 +133,7 @@ impl Mvcc {
             // Existing DB: detect schema from latest header and set tag key width accordingly
             if let Ok((_hid, header)) = mvcc.get_latest_header() {
                 if header.schema_version == 0 {
-                    set_tag_key_width(8);  // For 64-bit CRC tag hash.
+                    set_tag_key_width(8); // For 64-bit CRC tag hash.
                 } else {
                     set_tag_key_width(crate::tags_tree_nodes::TAG_HASH_LEN);
                 }
@@ -205,6 +207,7 @@ impl Mvcc {
         free_lists_tree_root_id: PageID,
         events_tree_root_id: PageID,
         tags_tree_root_id: PageID,
+        tracking_tree_root_id: PageID,
         next_page_id: PageID,
         next_position: Position,
     ) -> DCBResult<()> {
@@ -220,6 +223,7 @@ impl Mvcc {
                 node.tags_tree_root_id = tags_tree_root_id;
                 node.next_page_id = next_page_id;
                 node.next_position = next_position;
+                node.tracking_root_page_id = tracking_tree_root_id;
 
                 // Write node using pre-allocated buffer.
                 let mut buf = self.page_buf.lock().unwrap();
@@ -260,6 +264,7 @@ impl Mvcc {
             events_tree_root_id: header_node.events_tree_root_id,
             tags_tree_root_id: header_node.tags_tree_root_id,
             next_position: header_node.next_position,
+            tracking_tree_root_id: header_node.tracking_root_page_id,
             reader_id,
             reader_tsns: Arc::clone(&self.reader_tsns),
         };
@@ -284,6 +289,7 @@ impl Mvcc {
             header_node.free_lists_tree_root_id,
             header_node.events_tree_root_id,
             header_node.tags_tree_root_id,
+            header_node.tracking_root_page_id,
             header_node.next_position,
             self.verbose,
         );
@@ -409,6 +415,7 @@ impl Mvcc {
             writer.free_lists_tree_root_id,
             writer.events_tree_root_id,
             writer.tags_tree_root_id,
+            writer.tracking_tree_root_id,
             writer.next_page_id,
             writer.next_position,
         )?;
@@ -432,6 +439,7 @@ pub struct Writer {
     pub free_lists_tree_root_id: PageID,
     pub events_tree_root_id: PageID,
     pub tags_tree_root_id: PageID,
+    pub tracking_tree_root_id: PageID,
     pub next_position: Position,
     pub reusable_page_ids: VecDeque<(PageID, Tsn)>,
     pub freed_page_ids: VecDeque<PageID>,
@@ -449,6 +457,7 @@ impl Writer {
         free_lists_tree_root_id: PageID,
         events_tree_root_id: PageID,
         tags_tree_root_id: PageID,
+        tracking_tree_root_id: PageID,
         next_position: Position,
         verbose: bool,
     ) -> Self {
@@ -459,6 +468,7 @@ impl Writer {
             free_lists_tree_root_id,
             events_tree_root_id,
             tags_tree_root_id,
+            tracking_tree_root_id,
             next_position,
             reusable_page_ids: VecDeque::new(),
             freed_page_ids: VecDeque::new(),
@@ -1769,6 +1779,7 @@ pub struct Reader {
     pub events_tree_root_id: PageID,
     pub tags_tree_root_id: PageID,
     pub next_position: Position,
+    pub tracking_tree_root_id: PageID,
     reader_id: usize,
     reader_tsns: Arc<DashMap<usize, Tsn>>,
 }
@@ -2599,6 +2610,7 @@ mod tests {
                 header_node.free_lists_tree_root_id,
                 header_node.events_tree_root_id,
                 header_node.tags_tree_root_id,
+                header_node.tracking_root_page_id,
                 header_node.next_position,
                 VERBOSE,
             );
@@ -2745,6 +2757,7 @@ mod tests {
                 header_node.free_lists_tree_root_id,
                 header_node.events_tree_root_id,
                 header_node.tags_tree_root_id,
+                header_node.tracking_root_page_id,
                 header_node.next_position,
                 VERBOSE,
             );
@@ -3063,6 +3076,7 @@ mod tests {
                     header_node.free_lists_tree_root_id,
                     header_node.events_tree_root_id,
                     header_node.tags_tree_root_id,
+                    header_node.tracking_root_page_id,
                     header_node.next_position,
                     VERBOSE,
                 );
@@ -3165,6 +3179,7 @@ mod tests {
                 header_node.free_lists_tree_root_id,
                 header_node.events_tree_root_id,
                 header_node.tags_tree_root_id,
+                header_node.tracking_root_page_id,
                 header_node.next_position,
                 VERBOSE,
             );
@@ -3384,6 +3399,7 @@ mod tests {
                     header_node.free_lists_tree_root_id,
                     header_node.events_tree_root_id,
                     header_node.tags_tree_root_id,
+                    header_node.tracking_root_page_id,
                     header_node.next_position,
                     VERBOSE,
                 );

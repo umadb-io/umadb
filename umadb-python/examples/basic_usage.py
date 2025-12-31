@@ -12,7 +12,15 @@ This example demonstrates:
 import os
 import uuid
 
-from umadb import Client, Event, Query, QueryItem, AppendCondition, IntegrityError
+from umadb import (
+    AppendCondition,
+    Client,
+    Event,
+    IntegrityError,
+    Query,
+    QueryItem,
+    TrackingInfo,
+)
 
 
 def main() -> None:
@@ -58,7 +66,9 @@ def main() -> None:
     all_events = client.read()
     print(f"  - read response head is now: {all_events.head()}")
     for seq_event in all_events:
-        print(f"  Position {seq_event.position}: {seq_event.event.event_type} - tags: {seq_event.event.tags}")
+        print(
+            f"  Position {seq_event.position}: {seq_event.event.event_type} - tags: {seq_event.event.tags}"
+        )
         print(f"  - read response head is now: {all_events.head()}")
     print(f"  Last known position is: {all_events.head()}")
 
@@ -75,10 +85,12 @@ def main() -> None:
 
     # Read with multiple filters (OR logic)
     print("\nReading UserCreated OR OrderCreated events...")
-    query = Query(items=[
-        QueryItem(types=["UserCreated"]),
-        QueryItem(types=["OrderCreated"]),
-    ])
+    query = Query(
+        items=[
+            QueryItem(types=["UserCreated"]),
+            QueryItem(types=["OrderCreated"]),
+        ]
+    )
     filtered_events = client.read(query=query)
     print(f"  - read response head is now: {filtered_events.head()}")
     for seq_event in filtered_events:
@@ -124,9 +136,7 @@ def main() -> None:
 
     # Try conditional append (preventing duplicate UserCreated for user:123)
     print("\nTrying conditional append (should fail)...")
-    fail_query = Query(items=[
-        QueryItem(types=["UserCreated"], tags=["user:123"])
-    ])
+    fail_query = Query(items=[QueryItem(types=["UserCreated"], tags=["user:123"])])
     condition = AppendCondition(fail_if_events_match=fail_query)
 
     duplicate_event = Event(
@@ -149,9 +159,7 @@ def main() -> None:
         data=b'{"user_id": "456", "name": "Bob"}',
         tags=["user", new_user_id],
     )
-    fail_query = Query(items=[
-        QueryItem(types=["UserCreated"], tags=[new_user_id])
-    ])
+    fail_query = Query(items=[QueryItem(types=["UserCreated"], tags=[new_user_id])])
     condition = AppendCondition(fail_if_events_match=fail_query)
 
     try:
@@ -159,6 +167,39 @@ def main() -> None:
         print(f"  Success: event appended at position {position}")
     except ValueError as e:
         print(f"  Failed: {e}")
+
+    # Demonstrate tracking positions
+    print("\nDemonstrating tracking positions...")
+    assert (
+        client.get_tracking_info("not-a-source") is None
+    ), "Expected no tracking position"
+
+    tracking_source = "example-source"
+    pos_before = client.get_tracking_info(tracking_source)
+    print(f"  tracking('{tracking_source}') before append: {pos_before}")
+
+    # Increment position
+    tracking_info = TrackingInfo(tracking_source, (pos_before or 0) + 1)
+    events = [
+        Event(
+            event_type="UpstreamCommitted",
+            data=b"{}",
+            tags=["tracking-demo"],
+        )
+    ]
+    last = client.append(events, tracking_info=tracking_info)
+    print(f"  Appended with tracking info {tracking_info}, recorded position: {last}")
+
+    pos_after = client.get_tracking_info(tracking_source)
+    print(f"  tracking('{tracking_source}') after append: {pos_after}")
+    assert pos_after == tracking_info.position
+
+    print("  Attempting append again with SAME tracking position (should fail)...")
+    try:
+        client.append(events, tracking_info=tracking_info)
+        print("    Unexpected: append with same tracking succeeded")
+    except IntegrityError as ie:
+        print(f"    Expected failure: {ie}")
 
     # Final head position
     final_head = client.head()

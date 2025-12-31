@@ -2,6 +2,7 @@ use futures::StreamExt;
 use umadb_client::UmaDBClient;
 use umadb_dcb::{
     DCBAppendCondition, DCBError, DCBEvent, DCBEventStoreAsync, DCBQuery, DCBQueryItem,
+    TrackingInfo,
 };
 use uuid::Uuid;
 
@@ -61,9 +62,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 fail_if_events_match: cb.clone(),
                 after: last_known_position,
             }),
+            None,
         )
         .await?;
-
     println!("Appended event at position: {}", commit_position1);
 
     // Append conflicting event - expect an error
@@ -73,7 +74,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         data: b"Hello, world!".to_vec(),
         uuid: Some(Uuid::new_v4()), // different UUID
     };
-
     let conflicting_result = client
         .append(
             vec![conflicting_event.clone()],
@@ -81,6 +81,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 fail_if_events_match: cb.clone(),
                 after: last_known_position,
             }),
+            None,
         )
         .await;
 
@@ -92,7 +93,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         other => panic!("Expected IntegrityError, got {:?}", other),
     }
 
-    // Appending with identical events IDs and append conditions is idempotent.
+    // Conditional appends with event UUIDs are idempotent.
     println!(
         "Retrying to append event at position: {:?}",
         last_known_position
@@ -104,6 +105,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 fail_if_events_match: cb.clone(),
                 after: last_known_position,
             }),
+            None,
         )
         .await?;
 
@@ -132,5 +134,49 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             Err(status) => panic!("gRPC stream error: {}", status),
         }
     }
+
+    // Track an upstream position
+    let upstream_position = client.get_tracking_info("upstream").await?;
+    let next_upstream_position = upstream_position.unwrap_or(0) + 1;
+    println!("Next upstream position: {next_upstream_position}");
+    client
+        .append(
+            vec![],
+            None,
+            Some(TrackingInfo {
+                source: "upstream".to_string(),
+                position: next_upstream_position,
+            }),
+        )
+        .await?;
+    assert_eq!(
+        next_upstream_position,
+        client.get_tracking_info("upstream").await?.unwrap()
+    );
+    println!("Upstream position tracked okay!");
+
+    // Try recording the same upstream position
+    let conflicting_result = client
+        .append(
+            vec![],
+            None,
+            Some(TrackingInfo {
+                source: "upstream".to_string(),
+                position: next_upstream_position,
+            }),
+        )
+        .await;
+
+    // Expect an integrity error
+    match conflicting_result {
+        Err(DCBError::IntegrityError(integrity_error)) => {
+            println!(
+                "Conflicting upstream position was rejected: {:?}",
+                integrity_error
+            );
+        }
+        other => panic!("Expected IntegrityError, got {:?}", other),
+    }
+
     Ok(())
 }

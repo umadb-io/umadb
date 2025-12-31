@@ -91,7 +91,7 @@ async fn api_key_success_over_tls() {
             uuid: None,
         })
         .collect();
-    let last_pos = client.append(events, None).await.expect("append");
+    let last_pos = client.append(events, None, None).await.expect("append");
     assert!(last_pos >= 3);
 
     let head = client.head().await.expect("head");

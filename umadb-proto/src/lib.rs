@@ -3,6 +3,7 @@ use prost::bytes::Bytes;
 use tonic::{Code, Status};
 use umadb_dcb::{
     DCBAppendCondition, DCBError, DCBEvent, DCBQuery, DCBQueryItem, DCBResult, DCBSequencedEvent,
+    TrackingInfo,
 };
 use uuid::Uuid;
 
@@ -12,6 +13,25 @@ pub mod v1 {
 }
 
 // Conversion functions between proto and API types
+
+impl From<v1::TrackingInfo> for TrackingInfo {
+    fn from(t: v1::TrackingInfo) -> Self {
+        TrackingInfo {
+            source: t.source,
+            position: t.position,
+        }
+    }
+}
+
+impl From<TrackingInfo> for v1::TrackingInfo {
+    fn from(t: TrackingInfo) -> Self {
+        v1::TrackingInfo {
+            source: t.source,
+            position: t.position,
+        }
+    }
+}
+
 impl TryFrom<v1::Event> for DCBEvent {
     type Error = DCBError;
 

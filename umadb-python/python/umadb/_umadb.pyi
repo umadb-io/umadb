@@ -52,16 +52,27 @@ class Client:
         Returns:
             Optional position (None if store is empty)
         """
-    def append(self, events: typing.Sequence[Event], condition: typing.Optional[AppendCondition] = None) -> builtins.int:
+    def append(self, events: typing.Sequence[Event], condition: typing.Optional[AppendCondition] = None, tracking_info: typing.Optional[TrackingInfo] = None) -> builtins.int:
         r"""
         Append events to the event store
         
         Args:
             events: List of Event objects to append
             condition: Optional AppendCondition
+            tracking_info: Optional TrackingInfo
         
         Returns:
             Position of the last appended event
+        """
+    def get_tracking_info(self, source: builtins.str) -> typing.Optional[builtins.int]:
+        r"""
+        Get the recorded tracking position for a source
+        
+        Args:
+            source: The tracking source identifier
+        
+        Returns:
+            Optional position last recorded for this source (None if not set)
         """
     def __repr__(self) -> builtins.str: ...
 
@@ -126,6 +137,15 @@ class SequencedEvent:
     def event(self) -> Event: ...
     @property
     def position(self) -> builtins.int: ...
+    def __repr__(self) -> builtins.str: ...
+
+@typing.final
+class TrackingInfo:
+    @property
+    def source(self) -> builtins.str: ...
+    @property
+    def position(self) -> builtins.int: ...
+    def __new__(cls, source: builtins.str, position: builtins.int) -> TrackingInfo: ...
     def __repr__(self) -> builtins.str: ...
 
 

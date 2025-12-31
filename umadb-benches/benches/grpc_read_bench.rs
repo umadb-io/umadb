@@ -48,7 +48,7 @@ fn init_db_with_events(num_events: usize) -> (tempfile::TempDir, String) {
             };
             events.push(ev);
         }
-        store.append(events, None).expect("append to store");
+        store.append(events, None, None).expect("append to store");
         remaining -= current;
     }
 
@@ -179,7 +179,9 @@ pub fn grpc_read_benchmark(c: &mut Criterion) {
                                     let target_rate_per_second: u64 = 10_010;
                                     // Sleep only if we're ahead of the targeted total elapsed time for the
                                     // number of items processed so far, avoiding per-iteration stalls.
-                                    let desired_elapsed = Duration::from_secs_f64((count as f64) / (target_rate_per_second as f64));
+                                    let desired_elapsed = Duration::from_secs_f64(
+                                        (count as f64) / (target_rate_per_second as f64),
+                                    );
                                     let elapsed = loop_start.elapsed();
                                     if desired_elapsed > elapsed {
                                         tokio::time::sleep(desired_elapsed - elapsed).await;

@@ -119,9 +119,9 @@ fn client_sync_covers_all_methods() {
     let e3 = mk_event(3);
 
     // Append events unconditionally
-    let p1 = client.append(vec![e1.clone()], None).unwrap();
-    let p2 = client.append(vec![e2.clone()], None).unwrap();
-    let p3 = client.append(vec![e3.clone()], None).unwrap();
+    let p1 = client.append(vec![e1.clone()], None, None).unwrap();
+    let p2 = client.append(vec![e2.clone()], None, None).unwrap();
+    let p3 = client.append(vec![e3.clone()], None, None).unwrap();
     assert!(p1 < p2 && p2 < p3);
 
     // Exercise: iterate over all events, then retrieve head()
@@ -169,7 +169,7 @@ fn client_sync_covers_all_methods() {
     // Now try conditional append using last-known head
     let cond = DCBAppendCondition::new(boundary).after(head3);
     let e4 = mk_event(4);
-    let p4 = client.append(vec![e4.clone()], Some(cond)).unwrap();
+    let p4 = client.append(vec![e4.clone()], Some(cond), None).unwrap();
     assert!(p4 > p3);
 
     // Shutdown server
@@ -223,9 +223,9 @@ async fn client_async_covers_all_methods() {
     let e3 = mk_event(3);
 
     // Append a few events
-    let p1 = client.append(vec![e1.clone()], None).await.unwrap();
-    let p2 = client.append(vec![e2.clone()], None).await.unwrap();
-    let p3 = client.append(vec![e3.clone()], None).await.unwrap();
+    let p1 = client.append(vec![e1.clone()], None, None).await.unwrap();
+    let p2 = client.append(vec![e2.clone()], None, None).await.unwrap();
+    let p3 = client.append(vec![e3.clone()], None, None).await.unwrap();
     assert!(p1 < p2 && p2 < p3);
 
     // Exercise: iterate over stream, then get head()
@@ -270,7 +270,10 @@ async fn client_async_covers_all_methods() {
     assert_eq!(head3, Some(p3));
 
     let cond = DCBAppendCondition::new(boundary).after(head3);
-    let p4 = client.append(vec![mk_event(4)], Some(cond)).await.unwrap();
+    let p4 = client
+        .append(vec![mk_event(4)], Some(cond), None)
+        .await
+        .unwrap();
     assert!(p4 > p3);
 
     // Cleanup

@@ -32,7 +32,9 @@ pub fn dcb_event_store_test<T: DCBEventStoreSync>(event_store: &T) {
         tags: vec!["tagX".to_string()],
         uuid: None,
     };
-    let position = event_store.append(vec![event1.clone()], None).unwrap();
+    let position = event_store
+        .append(vec![event1.clone()], None, None)
+        .unwrap();
 
     // Check the returned position is 1.
     assert_eq!(1, position);
@@ -268,7 +270,7 @@ pub fn dcb_event_store_test<T: DCBEventStoreSync>(event_store: &T) {
         uuid: None,
     };
     let position = event_store
-        .append(vec![event2.clone(), event3.clone()], None)
+        .append(vec![event2.clone(), event3.clone()], None, None)
         .unwrap();
 
     // Check the returned position is 3
@@ -680,7 +682,7 @@ pub fn dcb_event_store_test<T: DCBEventStoreSync>(event_store: &T) {
 
     // Fail because condition matches all.
     let new = vec![event4.clone()];
-    let result = event_store.append(new.clone(), Some(DCBAppendCondition::default()));
+    let result = event_store.append(new.clone(), Some(DCBAppendCondition::default()), None);
     assert!(matches!(result, Err(DCBError::IntegrityError(_))));
 
     // Fail because condition matches all after 1.
@@ -690,6 +692,7 @@ pub fn dcb_event_store_test<T: DCBEventStoreSync>(event_store: &T) {
             fail_if_events_match: DCBQuery::default(),
             after: Some(1),
         }),
+        None,
     );
     assert!(matches!(result, Err(DCBError::IntegrityError(_))));
 
@@ -700,6 +703,7 @@ pub fn dcb_event_store_test<T: DCBEventStoreSync>(event_store: &T) {
             fail_if_events_match: query_type1.clone(),
             after: None,
         }),
+        None,
     );
     assert!(matches!(result, Err(DCBError::IntegrityError(_))));
 
@@ -710,6 +714,7 @@ pub fn dcb_event_store_test<T: DCBEventStoreSync>(event_store: &T) {
             fail_if_events_match: query_type2.clone(),
             after: Some(1),
         }),
+        None,
     );
     assert!(matches!(result, Err(DCBError::IntegrityError(_))));
 
@@ -720,6 +725,7 @@ pub fn dcb_event_store_test<T: DCBEventStoreSync>(event_store: &T) {
             fail_if_events_match: query_tag_x.clone(),
             after: None,
         }),
+        None,
     );
     assert!(matches!(result, Err(DCBError::IntegrityError(_))));
 
@@ -730,6 +736,7 @@ pub fn dcb_event_store_test<T: DCBEventStoreSync>(event_store: &T) {
             fail_if_events_match: query_tag_a.clone(),
             after: Some(1),
         }),
+        None,
     );
     assert!(matches!(result, Err(DCBError::IntegrityError(_))));
 
@@ -740,6 +747,7 @@ pub fn dcb_event_store_test<T: DCBEventStoreSync>(event_store: &T) {
             fail_if_events_match: query_type1_tag_x.clone(),
             after: None,
         }),
+        None,
     );
     assert!(matches!(result, Err(DCBError::IntegrityError(_))));
 
@@ -750,6 +758,7 @@ pub fn dcb_event_store_test<T: DCBEventStoreSync>(event_store: &T) {
             fail_if_events_match: query_type2_tag_a.clone(),
             after: Some(1),
         }),
+        None,
     );
     assert!(matches!(result, Err(DCBError::IntegrityError(_))));
 
@@ -760,6 +769,7 @@ pub fn dcb_event_store_test<T: DCBEventStoreSync>(event_store: &T) {
             fail_if_events_match: query_tag_a_and_b.clone(),
             after: None,
         }),
+        None,
     );
     assert!(matches!(result, Err(DCBError::IntegrityError(_))));
 
@@ -770,6 +780,7 @@ pub fn dcb_event_store_test<T: DCBEventStoreSync>(event_store: &T) {
             fail_if_events_match: query_tag_b_or_c.clone(),
             after: None,
         }),
+        None,
     );
     assert!(matches!(result, Err(DCBError::IntegrityError(_))));
 
@@ -780,6 +791,7 @@ pub fn dcb_event_store_test<T: DCBEventStoreSync>(event_store: &T) {
             fail_if_events_match: query_tag_x_or_y.clone(),
             after: None,
         }),
+        None,
     );
     assert!(matches!(result, Err(DCBError::IntegrityError(_))));
 
@@ -790,11 +802,12 @@ pub fn dcb_event_store_test<T: DCBEventStoreSync>(event_store: &T) {
             fail_if_events_match: query_type2_tag_b_or_type3_tagc.clone(),
             after: None,
         }),
+        None,
     );
     assert!(matches!(result, Err(DCBError::IntegrityError(_))));
 
     // Can append after 3.
-    let position = event_store.append(new.clone(), None).unwrap();
+    let position = event_store.append(new.clone(), None, None).unwrap();
     assert_eq!(4, position);
 
     // Can append match type_n.
@@ -811,6 +824,7 @@ pub fn dcb_event_store_test<T: DCBEventStoreSync>(event_store: &T) {
                 fail_if_events_match: query_type_n,
                 after: None,
             }),
+            None,
         )
         .unwrap();
     assert_eq!(5, position);
@@ -823,6 +837,7 @@ pub fn dcb_event_store_test<T: DCBEventStoreSync>(event_store: &T) {
                 fail_if_events_match: query_tag_y.clone(),
                 after: None,
             }),
+            None,
         )
         .unwrap();
     assert_eq!(6, position);
@@ -835,6 +850,7 @@ pub fn dcb_event_store_test<T: DCBEventStoreSync>(event_store: &T) {
                 fail_if_events_match: query_type1.clone(),
                 after: Some(1),
             }),
+            None,
         )
         .unwrap();
     assert_eq!(7, position);
@@ -847,6 +863,7 @@ pub fn dcb_event_store_test<T: DCBEventStoreSync>(event_store: &T) {
                 fail_if_events_match: query_tag_x.clone(),
                 after: Some(1),
             }),
+            None,
         )
         .unwrap();
     assert_eq!(8, position);
@@ -859,6 +876,7 @@ pub fn dcb_event_store_test<T: DCBEventStoreSync>(event_store: &T) {
                 fail_if_events_match: query_type1_tag_x.clone(),
                 after: Some(1),
             }),
+            None,
         )
         .unwrap();
     assert_eq!(9, position);
@@ -871,6 +889,7 @@ pub fn dcb_event_store_test<T: DCBEventStoreSync>(event_store: &T) {
                 fail_if_events_match: query_tag_x.clone(),
                 after: Some(1),
             }),
+            None,
         )
         .unwrap();
     assert_eq!(10, position);
@@ -915,6 +934,7 @@ pub fn dcb_event_store_test<T: DCBEventStoreSync>(event_store: &T) {
                 },
                 after: Some(3),
             }),
+            None,
         )
         .unwrap();
 
@@ -930,6 +950,7 @@ pub fn dcb_event_store_test<T: DCBEventStoreSync>(event_store: &T) {
                 },
                 after: Some(3),
             }),
+            None,
         )
         .unwrap();
 
@@ -945,6 +966,7 @@ pub fn dcb_event_store_test<T: DCBEventStoreSync>(event_store: &T) {
                 },
                 after: Some(3),
             }),
+            None,
         )
         .unwrap();
 
@@ -1352,6 +1374,7 @@ pub fn dcb_event_store_test<T: DCBEventStoreSync>(event_store: &T) {
                 },
                 after: Some(13),
             }),
+            None,
         )
         .unwrap();
 
@@ -1386,6 +1409,7 @@ pub fn dcb_event_store_test<T: DCBEventStoreSync>(event_store: &T) {
                 },
                 after: Some(13),
             }),
+            None,
         )
         .unwrap();
 
@@ -1490,8 +1514,8 @@ fn test_tag_hash_collision() {
         uuid: None,
     };
 
-    let _ = store.append(vec![ev_student.clone()], None).unwrap();
-    let _ = store.append(vec![ev_course.clone()], None).unwrap();
+    let _ = store.append(vec![ev_student.clone()], None, None).unwrap();
+    let _ = store.append(vec![ev_course.clone()], None, None).unwrap();
 
     // Query by student tag: should return only the student event
     let (result, _head) = store

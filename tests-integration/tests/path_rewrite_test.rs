@@ -93,7 +93,7 @@ fn test_path_rewrite_umadbservice_to_dcb() {
         },
     ];
     let append_position = client
-        .append(events, None)
+        .append(events, None, None)
         .expect("Failed to append events");
 
     // Get the head position using the normal client

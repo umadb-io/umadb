@@ -32,7 +32,7 @@ async fn grpc_async_streams_large_reads_total_count() {
         })
         .collect();
     let last_pos = client
-        .append(events, None)
+        .append(events, None, None)
         .await
         .expect("append 1000 events");
     assert!(last_pos >= 1000);
@@ -87,7 +87,7 @@ async fn grpc_async_does_not_stream_past_starting_head() {
         })
         .collect();
     let _ = client
-        .append(initial_events, None)
+        .append(initial_events, None, None)
         .await
         .expect("append initial events");
 
@@ -107,7 +107,7 @@ async fn grpc_async_does_not_stream_past_starting_head() {
         })
         .collect();
     let _ = client
-        .append(new_events, None)
+        .append(new_events, None, None)
         .await
         .expect("append new events during read");
 
@@ -157,7 +157,7 @@ async fn grpc_async_subscription_catch_up_and_continue() {
         })
         .collect();
     let _ = client
-        .append(initial_events, None)
+        .append(initial_events, None, None)
         .await
         .expect("append initial events");
 
@@ -197,7 +197,7 @@ async fn grpc_async_subscription_catch_up_and_continue() {
         })
         .collect();
     let _ = client
-        .append(new_events, None)
+        .append(new_events, None, None)
         .await
         .expect("append new events during subscription");
 
@@ -253,7 +253,7 @@ async fn grpc_async_stream_catch_up_and_continue() {
         })
         .collect();
     let _ = client
-        .append(initial_events, None)
+        .append(initial_events, None, None)
         .await
         .expect("append initial events");
 
@@ -288,7 +288,7 @@ async fn grpc_async_stream_catch_up_and_continue() {
         })
         .collect();
     let _ = client
-        .append(new_events, None)
+        .append(new_events, None, None)
         .await
         .expect("append new events");
 

@@ -51,7 +51,7 @@ fn init_db_with_events(num_events: usize) -> (tempfile::TempDir, String, u64) {
             };
             events.push(ev);
         }
-        last_position = store.append(events, None).expect("append to store");
+        last_position = store.append(events, None, None).expect("append to store");
         remaining -= current;
     }
 
@@ -178,7 +178,7 @@ pub fn grpc_append_cond_benchmark(c: &mut Criterion) {
 
                             let _ = black_box(
                                 client
-                                    .append(black_box(evs), Some(condition))
+                                    .append(black_box(evs), Some(condition), None)
                                     .await
                                     .expect("append events"),
                             );

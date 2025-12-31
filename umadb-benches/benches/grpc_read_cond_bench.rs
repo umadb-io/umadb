@@ -41,7 +41,7 @@ fn init_db_with_events() -> (tempfile::TempDir, String) {
             };
             events.push(ev);
         }
-        store.append(events, None).expect("append to store");
+        store.append(events, None, None).expect("append to store");
     }
 
     (dir, path)

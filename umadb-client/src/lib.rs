@@ -14,7 +14,7 @@ use tonic::transport::{Certificate, Channel, ClientTlsConfig, Endpoint};
 use tokio::runtime::{Handle, Runtime};
 use umadb_dcb::{
     DCBAppendCondition, DCBError, DCBEvent, DCBEventStoreAsync, DCBEventStoreSync, DCBQuery,
-    DCBReadResponseAsync, DCBReadResponseSync, DCBResult, DCBSequencedEvent,
+    DCBReadResponseAsync, DCBReadResponseSync, DCBResult, DCBSequencedEvent, TrackingInfo,
 };
 
 use std::sync::{Once, OnceLock};
@@ -205,7 +205,7 @@ impl DCBEventStoreSync for SyncUmaDBClient {
         backwards: bool,
         limit: Option<u32>,
         subscribe: bool,
-    ) -> Result<Box<dyn DCBReadResponseSync + Send + 'static>, DCBError> {
+    ) -> DCBResult<Box<dyn DCBReadResponseSync + Send + 'static>> {
         let async_read_response = self.handle.block_on(
             self.async_client
                 .read(query, start, backwards, limit, subscribe),
@@ -218,17 +218,23 @@ impl DCBEventStoreSync for SyncUmaDBClient {
         }))
     }
 
-    fn head(&self) -> Result<Option<u64>, DCBError> {
+    fn head(&self) -> DCBResult<Option<u64>> {
         self.handle.block_on(self.async_client.head())
+    }
+
+    fn get_tracking_info(&self, source: &str) -> DCBResult<Option<u64>> {
+        self.handle
+            .block_on(self.async_client.get_tracking_info(source))
     }
 
     fn append(
         &self,
         events: Vec<DCBEvent>,
         condition: Option<DCBAppendCondition>,
-    ) -> Result<u64, DCBError> {
+        tracking_info: Option<TrackingInfo>,
+    ) -> DCBResult<u64> {
         self.handle
-            .block_on(self.async_client.append(events, condition))
+            .block_on(self.async_client.append(events, condition, tracking_info))
     }
 }
 
@@ -241,7 +247,7 @@ pub struct SyncClientReadResponse {
 
 impl SyncClientReadResponse {
     /// Fetch the next batch from the async response, filling the buffer
-    fn fetch_next_batch(&mut self) -> Result<(), DCBError> {
+    fn fetch_next_batch(&mut self) -> DCBResult<()> {
         if self.finished {
             return Ok(());
         }
@@ -257,7 +263,7 @@ impl SyncClientReadResponse {
 }
 
 impl Iterator for SyncClientReadResponse {
-    type Item = Result<DCBSequencedEvent, DCBError>;
+    type Item = DCBResult<DCBSequencedEvent>;
 
     fn next(&mut self) -> Option<Self::Item> {
         // Fetch the next batch if the buffer is empty.
@@ -284,7 +290,7 @@ impl DCBReadResponseSync for SyncClientReadResponse {
         Ok((out, self.head()?))
     }
 
-    fn next_batch(&mut self) -> Result<Vec<DCBSequencedEvent>, DCBError> {
+    fn next_batch(&mut self) -> DCBResult<Vec<DCBSequencedEvent>> {
         // If there are remaining events in the buffer, drain them
         if !self.buffer.is_empty() {
             return Ok(self.buffer.drain(..).collect());
@@ -411,10 +417,22 @@ impl DCBEventStoreAsync for AsyncUmaDBClient {
         }
     }
 
+    async fn get_tracking_info(&self, source: &str) -> DCBResult<Option<u64>> {
+        let mut client = self.client.clone();
+        let req = self.add_auth(Request::new(umadb_proto::v1::TrackingRequest {
+            source: source.to_string(),
+        }))?;
+        match client.get_tracking_info(req).await {
+            Ok(response) => Ok(response.into_inner().position),
+            Err(status) => Err(umadb_proto::dcb_error_from_status(status)),
+        }
+    }
+
     async fn append(
         &self,
         events: Vec<DCBEvent>,
         condition: Option<DCBAppendCondition>,
+        tracking_info: Option<TrackingInfo>,
     ) -> DCBResult<u64> {
         let events_proto: Vec<umadb_proto::v1::Event> = events
             .into_iter()
@@ -424,9 +442,14 @@ impl DCBEventStoreAsync for AsyncUmaDBClient {
             fail_if_events_match: Some(c.fail_if_events_match.into()),
             after: c.after,
         });
+        let tracking_info_proto = tracking_info.map(|t| umadb_proto::v1::TrackingInfo {
+            source: t.source,
+            position: t.position,
+        });
         let body = umadb_proto::v1::AppendRequest {
             events: events_proto,
             condition: condition_proto,
+            tracking_info: tracking_info_proto,
         };
         let mut client = self.client.clone();
         let req = self.add_auth(Request::new(body))?;

@@ -74,14 +74,14 @@ impl Page {
     }
 }
 
-pub fn serialize_page_into(buf: &mut [u8], node_ref: &Node) -> Result<(), DCBError> {
+pub fn serialize_page_into(buf: &mut [u8], node_ref: &Node) -> DCBResult<()> {
     let body_len = serialize_page_node_into(buf, node_ref)?;
     serialize_page_header_into(buf, body_len, node_ref.get_type_byte());
     Ok(())
 }
 
 #[inline(always)]
-fn serialize_page_node_into(buf: &mut [u8], node_ref: &Node) -> Result<usize, DCBError> {
+fn serialize_page_node_into(buf: &mut [u8], node_ref: &Node) -> DCBResult<usize> {
     // Serialize body into the front of the body region using the space after header
     let body_len = {
         let body_slice = &mut buf[PAGE_HEADER_SIZE..];
@@ -131,6 +131,7 @@ mod tests {
             tags_tree_root_id: PageID(1011),
             next_position: Position(1234),
             schema_version: crate::db::DB_SCHEMA_VERSION,
+            tracking_root_page_id: PageID(0),
         });
 
         // Create a Page with the node

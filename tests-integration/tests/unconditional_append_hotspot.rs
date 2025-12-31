@@ -92,7 +92,7 @@ fn profile_event_store_append() {
 
         last = black_box(
             store
-                .append(black_box(events), black_box(Some(condition)))
+                .append(black_box(events), black_box(Some(condition)), None)
                 .expect("append ok"),
         );
         appended_calls += 1;

@@ -1462,7 +1462,9 @@ mod tests {
                             other => panic!("Expected left/right TagLeaf nodes, got {:?}", other),
                         }
                     }
-                    other => panic!("Expected TagInternal node, got {:?}", other),
+                    other => {
+                        panic!("Expected TagInternal node, got {:?}", other)
+                    }
                 }
             }
             other => panic!("Expected TagsLeaf root, got {:?}", other),
@@ -1537,7 +1539,9 @@ mod tests {
                             other => panic!("Expected left/right TagLeaf nodes, got {:?}", other),
                         }
                     }
-                    other => panic!("Expected TagInternal node, got {:?}", other),
+                    other => {
+                        panic!("Expected TagInternal node, got {:?}", other)
+                    }
                 }
             }
             other => panic!("Expected TagsLeaf root, got {:?}", other),

@@ -44,7 +44,7 @@ fn init_db_with_events(num_events: usize) -> (tempfile::TempDir, String) {
             };
             events.push(ev);
         }
-        store.append(events, None).expect("append to store");
+        store.append(events, None, None).expect("append to store");
         remaining -= current;
     }
 
@@ -141,7 +141,7 @@ pub fn grpc_read_with_writers_benchmark(c: &mut Criterion) {
         let handle = writers_rt.spawn(async move {
             while running.load(Ordering::Relaxed) {
                 // ignore result intentionally; if an error occurs, just break
-                let _ = client.append(batch.as_ref().clone(), None).await;
+                let _ = client.append(batch.as_ref().clone(), None, None).await;
                 // Yield a bit to avoid starving the system
                 tokio::task::yield_now().await;
             }

@@ -48,7 +48,7 @@ fn init_db_with_events(num_events: usize) -> (tempfile::TempDir, String) {
             };
             events.push(ev);
         }
-        store.append(events, None).expect("append to store");
+        store.append(events, None, None).expect("append to store");
         remaining -= current;
     }
 
@@ -164,7 +164,7 @@ pub fn grpc_append_benchmark(c: &mut Criterion) {
                         async move {
                             let _ = black_box(
                                 client
-                                    .append(black_box(evs), None)
+                                    .append(black_box(evs), None, None)
                                     .await
                                     .expect("append events"),
                             );

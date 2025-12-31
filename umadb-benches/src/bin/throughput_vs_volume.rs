@@ -90,7 +90,7 @@ async fn do_some_work(
             .collect();
 
         client
-            .append(events, None)
+            .append(events, None, None)
             .await
             .expect("Failed to append batch");
 
@@ -109,7 +109,7 @@ async fn do_some_work(
         };
 
         client
-            .append(vec![event], None)
+            .append(vec![event], None, None)
             .await
             .expect("Failed to append individual event");
     }

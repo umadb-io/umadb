@@ -1,7 +1,7 @@
 use crate::common::{PageID, Position};
 use byteorder::{ByteOrder, LittleEndian};
-use umadb_dcb::{DCBError, DCBResult};
 use std::sync::atomic::{AtomicUsize, Ordering};
+use umadb_dcb::{DCBError, DCBResult};
 
 /// Length in bytes of the hashed tag key used in-memory for TagHash
 pub const TAG_HASH_LEN: usize = 16;
@@ -465,8 +465,12 @@ mod tests {
         let mut k2 = [0u8; TAG_HASH_LEN];
         let mut k3 = [0u8; TAG_HASH_LEN];
         k1.copy_from_slice(&[1, 2, 3, 4, 5, 6, 7, 8, 1, 2, 3, 4, 5, 6, 7, 8]);
-        k2.copy_from_slice(&[10, 20, 30, 40, 50, 60, 70, 80, 10, 20, 30, 40, 50, 60, 70, 80]);
-        k3.copy_from_slice(&[11, 22, 33, 44, 55, 66, 77, 88, 11, 22, 33, 44, 55, 66, 77, 88]);
+        k2.copy_from_slice(&[
+            10, 20, 30, 40, 50, 60, 70, 80, 10, 20, 30, 40, 50, 60, 70, 80,
+        ]);
+        k3.copy_from_slice(&[
+            11, 22, 33, 44, 55, 66, 77, 88, 11, 22, 33, 44, 55, 66, 77, 88,
+        ]);
 
         let leaf = TagsLeafNode {
             keys: vec![k1, k2, k3],
@@ -498,8 +502,12 @@ mod tests {
         let mut k2 = [0u8; TAG_HASH_LEN];
         let mut k3 = [0u8; TAG_HASH_LEN];
         k1.copy_from_slice(&[1, 2, 3, 4, 5, 6, 7, 8, 1, 2, 3, 4, 5, 6, 7, 8]);
-        k2.copy_from_slice(&[10, 20, 30, 40, 50, 60, 70, 80, 10, 20, 30, 40, 50, 60, 70, 80]);
-        k3.copy_from_slice(&[11, 22, 33, 44, 55, 66, 77, 88, 11, 22, 33, 44, 55, 66, 77, 88]);
+        k2.copy_from_slice(&[
+            10, 20, 30, 40, 50, 60, 70, 80, 10, 20, 30, 40, 50, 60, 70, 80,
+        ]);
+        k3.copy_from_slice(&[
+            11, 22, 33, 44, 55, 66, 77, 88, 11, 22, 33, 44, 55, 66, 77, 88,
+        ]);
 
         let node = TagsInternalNode {
             keys: vec![k1, k2, k3],

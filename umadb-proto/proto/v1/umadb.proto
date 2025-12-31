@@ -42,9 +42,15 @@ message ReadResponse {
   optional uint64 head = 2;
 }
 
+message TrackingInfo {
+  string source = 1;
+  uint64 position = 2;
+}
+
 message AppendRequest {
   repeated Event events = 1;
   optional AppendCondition condition = 2;
+  optional TrackingInfo tracking_info = 3;
 }
 
 message AppendResponse {
@@ -55,6 +61,14 @@ message HeadRequest {
 }
 
 message HeadResponse {
+  optional uint64 position = 1;
+}
+
+message TrackingRequest {
+  string source = 1;
+}
+
+message TrackingResponse {
   optional uint64 position = 1;
 }
 
@@ -76,4 +90,5 @@ service DCB {
   rpc Read(ReadRequest) returns (stream ReadResponse);
   rpc Append(AppendRequest) returns (AppendResponse);
   rpc Head(HeadRequest) returns (HeadResponse);
+  rpc GetTrackingInfo(TrackingRequest) returns (TrackingResponse);
 }

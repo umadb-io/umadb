@@ -40,14 +40,18 @@ fn schema_version_0_roundtrip_read_write_and_tags() -> Result<(), Box<dyn std::e
     let db = UmaDB::new(&db_path)?;
 
     // The MVCC should have detected legacy schema and set key width to 4
-    assert_eq!(8, get_tag_key_width(), "Legacy DB should use 64-bit (8-byte) tag keys on disk");
+    assert_eq!(
+        8,
+        get_tag_key_width(),
+        "Legacy DB should use 64-bit (8-byte) tag keys on disk"
+    );
 
     // Read all events; collect tags and remember head
     let (all_events, head) = db.read_with_head(None, None, false, None)?;
     assert!(head.is_some(), "Expected head for non-empty legacy DB");
 
     // Collect all tags present in the DB
-    use std::collections::{BTreeSet};
+    use std::collections::BTreeSet;
     let mut existing_tags: BTreeSet<String> = BTreeSet::new();
     let original_count = all_events.len();
     for se in &all_events {
@@ -94,7 +98,7 @@ fn schema_version_0_roundtrip_read_write_and_tags() -> Result<(), Box<dyn std::e
             tags: vec![nt.to_string()],
             uuid: None,
         };
-        let _pos = db.append(vec![ev], None)?;
+        let _pos = db.append(vec![ev], None, None)?;
     }
 
     // Re-read all events; ensure count increased by number of new events

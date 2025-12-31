@@ -1487,7 +1487,9 @@ mod tests {
                 }
             }
             Node::EventLeaf(leaf) => match &leaf.values[0] {
-                EventValue::Overflow { data_len, .. } => assert_eq!(*data_len as usize, data.len()),
+                EventValue::Overflow { data_len, .. } => {
+                    assert_eq!(*data_len as usize, data.len())
+                }
                 _ => panic!("Expected Overflow for large event"),
             },
             _ => panic!("Unexpected root node type"),
@@ -1520,7 +1522,9 @@ mod tests {
         let (_hdr_id, header) = db.get_latest_header().unwrap();
         let root = db.read_page(header.events_tree_root_id).unwrap();
         let check_leaf = |leaf: &EventLeafNode| match &leaf.values[0] {
-            EventValue::Overflow { data_len, .. } => assert_eq!(*data_len as usize, data.len()),
+            EventValue::Overflow { data_len, .. } => {
+                assert_eq!(*data_len as usize, data.len())
+            }
             _ => panic!("Expected Overflow for very large event"),
         };
         match root.node {

@@ -12,6 +12,7 @@ static HEADER: HeaderNode = HeaderNode {
     tags_tree_root_id: PageID(321),
     next_position: Position(9876543210),
     schema_version: umadb_core::db::DB_SCHEMA_VERSION,
+    tracking_root_page_id: PageID(923),
 };
 
 pub fn header_node_benchmarks(c: &mut Criterion) {

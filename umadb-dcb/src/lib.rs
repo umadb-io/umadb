@@ -45,6 +45,9 @@ pub trait DCBEventStoreSync {
     /// Returns the value of last_committed_position, or None if last_committed_position is zero
     fn head(&self) -> DCBResult<Option<u64>>;
 
+    /// Returns the greatest recorded upstream position for a tracking source, if any
+    fn get_tracking_info(&self, source: &str) -> DCBResult<Option<u64>>;
+
     /// Appends given events to the event store, unless the condition fails
     ///
     /// Returns the position of the last appended event
@@ -52,11 +55,12 @@ pub trait DCBEventStoreSync {
         &self,
         events: Vec<DCBEvent>,
         condition: Option<DCBAppendCondition>,
+        tracking_info: Option<TrackingInfo>,
     ) -> DCBResult<u64>;
 }
 
 /// Response from a read operation, providing an iterator over sequenced events
-pub trait DCBReadResponseSync: Iterator<Item = Result<DCBSequencedEvent, DCBError>> + Send {
+pub trait DCBReadResponseSync: Iterator<Item = DCBResult<DCBSequencedEvent>> + Send {
     /// Returns the current head position of the event store, or None if empty
     fn head(&mut self) -> DCBResult<Option<u64>>;
     /// Returns a vector of events with head
@@ -104,6 +108,9 @@ pub trait DCBEventStoreAsync: Send + Sync {
     /// Returns the value of last_committed_position, or None if last_committed_position is zero
     async fn head(&self) -> DCBResult<Option<u64>>;
 
+    /// Returns the greatest recorded upstream position for a tracking source, if any
+    async fn get_tracking_info(&self, source: &str) -> DCBResult<Option<u64>>;
+
     /// Appends given events to the event store, unless the condition fails
     ///
     /// Returns the position of the last appended event
@@ -111,6 +118,7 @@ pub trait DCBEventStoreAsync: Send + Sync {
         &self,
         events: Vec<DCBEvent>,
         condition: Option<DCBAppendCondition>,
+        tracking_info: Option<TrackingInfo>,
     ) -> DCBResult<u64>;
 }
 
@@ -293,6 +301,12 @@ impl DCBEvent {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct TrackingInfo {
+    pub source: String,
+    pub position: u64,
+}
+
 /// An event with its position in the event sequence
 #[derive(Debug, Clone)]
 pub struct DCBSequencedEvent {
@@ -370,7 +384,7 @@ mod tests {
     }
 
     impl Iterator for TestReadResponse {
-        type Item = Result<DCBSequencedEvent, DCBError>;
+        type Item = DCBResult<DCBSequencedEvent>;
 
         fn next(&mut self) -> Option<Self::Item> {
             if self.current_index < self.events.len() {

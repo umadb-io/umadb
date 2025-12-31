@@ -14,7 +14,9 @@ use umadb_core::db::{
     DEFAULT_DB_FILENAME, DEFAULT_PAGE_SIZE, UmaDB, is_request_idempotent, read_conditional,
 };
 use umadb_core::mvcc::Mvcc;
-use umadb_dcb::{DCBAppendCondition, DCBError, DCBEvent, DCBQuery, DCBResult, DCBSequencedEvent};
+use umadb_dcb::{
+    DCBAppendCondition, DCBError, DCBEvent, DCBQuery, DCBResult, DCBSequencedEvent, TrackingInfo,
+};
 
 use tokio::runtime::Runtime;
 use tonic::codegen::http;
@@ -627,7 +629,18 @@ impl umadb_proto::v1::dcb_server::Dcb for DCBServer {
         let condition = req.condition.map(|c| c.into());
 
         // Call the event store append method
-        match self.request_handler.append(events, condition).await {
+        match self
+            .request_handler
+            .append(
+                events,
+                condition,
+                req.tracking_info.map(|t| TrackingInfo {
+                    source: t.source,
+                    position: t.position,
+                }),
+            )
+            .await
+        {
             Ok(position) => Ok(Response::new(umadb_proto::v1::AppendResponse { position })),
             Err(e) => Err(status_from_dcb_error(e)),
         }
@@ -660,6 +673,33 @@ impl umadb_proto::v1::dcb_server::Dcb for DCBServer {
             Err(e) => Err(status_from_dcb_error(e)),
         }
     }
+
+    async fn get_tracking_info(
+        &self,
+        request: Request<umadb_proto::v1::TrackingRequest>,
+    ) -> Result<Response<umadb_proto::v1::TrackingResponse>, Status> {
+        // Enforce API key if configured
+        if let Some(expected) = &self.api_key {
+            let auth = request.metadata().get("authorization");
+            let expected_val = format!("Bearer {}", expected);
+            let ok = auth
+                .and_then(|m| m.to_str().ok())
+                .map(|s| s == expected_val)
+                .unwrap_or(false);
+            if !ok {
+                return Err(status_from_dcb_error(DCBError::AuthenticationError(
+                    "missing or invalid API key".to_string(),
+                )));
+            }
+        }
+        let req = request.into_inner();
+        match self.request_handler.get_tracking_info(req.source).await {
+            Ok(position) => Ok(Response::new(umadb_proto::v1::TrackingResponse {
+                position,
+            })),
+            Err(e) => Err(status_from_dcb_error(e)),
+        }
+    }
 }
 
 // Message types for communication between the gRPC server and the request handler's writer thread
@@ -667,6 +707,7 @@ enum WriterRequest {
     Append {
         events: Vec<DCBEvent>,
         condition: Option<DCBAppendCondition>,
+        tracking_info: Option<TrackingInfo>,
         response_tx: oneshot::Sender<DCBResult<u64>>,
     },
     Shutdown,
@@ -717,12 +758,12 @@ impl RequestHandler {
                         WriterRequest::Append {
                             events,
                             condition,
+                            tracking_info,
                             response_tx,
                         } => {
                             // Batch processing: drain any immediately available requests
                             // let mut items: Vec<(Vec<DCBEvent>, Option<DCBAppendCondition>)> =
                             //     Vec::new();
-                            let mut responders: Vec<oneshot::Sender<DCBResult<u64>>> = Vec::new();
 
                             let mut total_events = 0;
                             total_events += events.len();
@@ -736,18 +777,19 @@ impl RequestHandler {
                                     continue;
                                 }
                             };
-                            responders.push(response_tx);
 
+                            let mut responders: Vec<oneshot::Sender<DCBResult<u64>>> = Vec::new();
                             let mut results: Vec<DCBResult<u64>> = Vec::new();
 
-                            UmaDB::process_append_request(
+                            responders.push(response_tx);
+                            let mut result = UmaDB::process_append_request(
                                 events,
                                 condition,
-                                false,
+                                tracking_info,
                                 mvcc,
                                 &mut writer,
-                                &mut results,
                             );
+                            results.push(result);
 
                             // Drain the channel for more pending writer requests without awaiting.
                             // Important: do not drop a popped request when hitting the batch limit.
@@ -760,18 +802,19 @@ impl RequestHandler {
                                     Ok(WriterRequest::Append {
                                         events,
                                         condition,
+                                        tracking_info,
                                         response_tx,
                                     }) => {
                                         let ev_len = events.len();
-                                        UmaDB::process_append_request(
+                                        responders.push(response_tx);
+                                        result = UmaDB::process_append_request(
                                             events,
                                             condition,
-                                            false,
+                                            tracking_info,
                                             mvcc,
                                             &mut writer,
-                                            &mut results,
                                         );
-                                        responders.push(response_tx);
+                                        results.push(result);
                                         total_events += ev_len;
                                     }
                                     Ok(WriterRequest::Shutdown) => {
@@ -781,12 +824,13 @@ impl RequestHandler {
                                         // the next iteration when the channel is empty.
                                         break;
                                     }
-                                    Err(mpsc::error::TryRecvError::Empty) => break,
+                                    Err(mpsc::error::TryRecvError::Empty) => {
+                                        break;
+                                    }
                                     Err(mpsc::error::TryRecvError::Disconnected) => break,
                                 }
                             }
                             // println!("Total events: {total_events}");
-                            // Execute a single batched append operation.
 
                             // Single commit at the end of the batch
                             let batch_result = match mvcc.commit(&mut writer) {
@@ -794,7 +838,6 @@ impl RequestHandler {
                                 Err(err) => Err(err),
                             };
 
-                            // let batch_result = db.append_batch(items, false);
                             match batch_result {
                                 Ok(results) => {
                                     // Send individual results back to requesters
@@ -888,10 +931,17 @@ impl RequestHandler {
         let last = header.next_position.0.saturating_sub(1);
         if last == 0 { Ok(None) } else { Ok(Some(last)) }
     }
+
+    async fn get_tracking_info(&self, source: String) -> DCBResult<Option<u64>> {
+        let db = UmaDB::from_arc(self.mvcc.clone());
+        db.get_tracking_info(&source)
+    }
+
     pub async fn append(
         &self,
         events: Vec<DCBEvent>,
         condition: Option<DCBAppendCondition>,
+        tracking_info: Option<TrackingInfo>,
     ) -> DCBResult<u64> {
         // Concurrent pre-check of the given condition using a reader in a blocking thread.
         let pre_append_decision = if let Some(mut given_condition) = condition {
@@ -974,6 +1024,7 @@ impl RequestHandler {
                     .send(WriterRequest::Append {
                         events,
                         condition: adjusted_condition,
+                        tracking_info: tracking_info,
                         response_tx,
                     })
                     .await

@@ -1,4 +1,6 @@
-use pyo3::exceptions::{PyException, PyKeyboardInterrupt, PyRuntimeError, PyValueError};
+use pyo3::exceptions::{
+    PyException, PyKeyboardInterrupt, PyPermissionError, PyRuntimeError, PyValueError,
+};
 use pyo3::prelude::*;
 use pyo3::types::PyBytes;
 use pyo3::wrap_pyfunction;
@@ -8,7 +10,7 @@ use std::sync::{Arc, Mutex};
 use umadb_client::{SyncUmaDBClient, UmaDBClient, trigger_cancel};
 use umadb_dcb::{
     DCBAppendCondition, DCBError, DCBEvent, DCBEventStoreSync, DCBQuery, DCBQueryItem,
-    DCBSequencedEvent,
+    DCBSequencedEvent, TrackingInfo,
 };
 use uuid::Uuid;
 
@@ -17,7 +19,7 @@ use pyo3::create_exception;
 create_exception!(umadb, IntegrityError, PyValueError);
 create_exception!(umadb, TransportError, PyRuntimeError);
 create_exception!(umadb, CorruptionError, PyRuntimeError);
-create_exception!(umadb, AuthenticationError, PyRuntimeError);
+create_exception!(umadb, AuthenticationError, PyPermissionError);
 
 /// Convert DCBError to Python exception
 fn dcb_error_to_py_err(err: DCBError) -> PyErr {
@@ -105,6 +107,41 @@ impl PyEvent {
 #[pyclass(name = "SequencedEvent")]
 pub struct PySequencedEvent {
     inner: DCBSequencedEvent,
+}
+
+#[gen_stub_pyclass]
+#[pyclass(name = "TrackingInfo")]
+#[derive(Clone)]
+pub struct PyTrackingInfo {
+    inner: TrackingInfo,
+}
+
+#[gen_stub_pymethods]
+#[pymethods]
+impl PyTrackingInfo {
+    #[new]
+    fn new(source: String, position: u64) -> Self {
+        PyTrackingInfo {
+            inner: TrackingInfo { source, position },
+        }
+    }
+
+    #[getter]
+    fn source(&self) -> String {
+        self.inner.source.clone()
+    }
+
+    #[getter]
+    fn position(&self) -> u64 {
+        self.inner.position
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "Tracking(source='{}', position={})",
+            self.inner.source, self.inner.position
+        )
+    }
 }
 
 #[gen_stub_pymethods]
@@ -391,20 +428,36 @@ impl PyUmaDBClient {
     /// Args:
     ///     events: List of Event objects to append
     ///     condition: Optional AppendCondition
+    ///     tracking_info: Optional TrackingInfo
     ///
     /// Returns:
     ///     Position of the last appended event
-    #[pyo3(signature = (events, condition=None))]
+    #[pyo3(signature = (events, condition=None, tracking_info=None))]
     fn append(
         &self,
         py: Python<'_>,
         events: Vec<PyEvent>,
         condition: Option<PyAppendCondition>,
+        tracking_info: Option<PyTrackingInfo>,
     ) -> PyResult<u64> {
         let dcb_events: Vec<DCBEvent> = events.into_iter().map(|e| e.inner).collect();
         let dcb_condition = condition.map(|c| c.inner);
+        let dcb_tracking_info = tracking_info.map(|t| t.inner);
         let inner = self.inner.clone();
-        py.detach(move || inner.append(dcb_events, dcb_condition))
+        py.detach(move || inner.append(dcb_events, dcb_condition, dcb_tracking_info))
+            .map_err(dcb_error_to_py_err)
+    }
+
+    /// Get the recorded tracking position for a source
+    ///
+    /// Args:
+    ///     source: The tracking source identifier
+    ///
+    /// Returns:
+    ///     Optional position last recorded for this source (None if not set)
+    fn get_tracking_info(&self, py: Python<'_>, source: String) -> PyResult<Option<u64>> {
+        let inner = self.inner.clone();
+        py.detach(move || inner.get_tracking_info(&source))
             .map_err(dcb_error_to_py_err)
     }
 
@@ -452,6 +505,7 @@ fn _umadb(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyQuery>()?;
     m.add_class::<PyQueryItem>()?;
     m.add_class::<PyAppendCondition>()?;
+    m.add_class::<PyTrackingInfo>()?;
     m.add_function(wrap_pyfunction!(trigger_cancel_from_python, m)?)?;
     m.add_function(wrap_pyfunction!(trigger_cancel_from_python2, m)?)?;
     m.add_function(wrap_pyfunction!(_generate_umadb_pyi_stubs, m)?)?;
