@@ -2840,6 +2840,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "umadb-tools"
+version = "0.2.0"
+dependencies = [
+ "umadb-core",
+ "umadb-dcb",
+]
+
+[[package]]
 name = "unic-char-property"
 version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"

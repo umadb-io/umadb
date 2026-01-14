@@ -96,10 +96,11 @@ impl TagsLeafNode {
     }
 
     pub fn from_slice(slice: &[u8]) -> DCBResult<Self> {
-        if slice.len() < 2 {
+        let slice_len = slice.len();
+        if slice_len < 2 {
             return Err(DCBError::DeserializationError(format!(
                 "Expected at least 2 bytes, got {}",
-                slice.len()
+                slice_len
             )));
         }
 
@@ -109,11 +110,11 @@ impl TagsLeafNode {
         // keys (runtime width)
         let keyw = get_tag_key_width();
         let keys_bytes = 2 + keys_len * keyw;
-        if slice.len() < keys_bytes {
+        if slice_len < keys_bytes {
             return Err(DCBError::DeserializationError(format!(
                 "Expected at least {} bytes for keys, got {}",
                 keys_bytes,
-                slice.len()
+                slice_len
             )));
         }
 
@@ -129,10 +130,13 @@ impl TagsLeafNode {
         // values
         let mut values = Vec::with_capacity(keys_len);
         let mut offset = keys_bytes;
-        for _ in 0..keys_len {
-            if offset + 10 > slice.len() {
+        for i in 0..keys_len {
+            let need = 10;
+            if offset + need > slice_len {
+                let key_number = i + 1;
+                let shortfall = offset + need - slice_len;
                 return Err(DCBError::DeserializationError(
-                    "Unexpected end of data while reading value header".to_string(),
+                    format!("Unexpected end of data while reading tags leaf value header for key {key_number}/{keys_len}: shortfall: {shortfall}, slice len: {slice_len}, offset: {offset}, need: {need}"),
                 ));
             }
             // root_id (8 bytes)
@@ -145,9 +149,11 @@ impl TagsLeafNode {
 
             // positions
             let need = positions_len * 8;
-            if offset + need > slice.len() {
+            if offset + need > slice_len {
+                let key_number = i + 1;
+                let shortfall = offset + need - slice_len;
                 return Err(DCBError::DeserializationError(
-                    "Unexpected end of data while reading positions".to_string(),
+                    format!("Unexpected end of data while reading tags leaf value positions for key {key_number}/{keys_len}: shortfall: {shortfall}, slice len: {slice_len}, offset: {offset}, need: {need}"),
                 ));
             }
             let mut positions = Vec::with_capacity(positions_len);

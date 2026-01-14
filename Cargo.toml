@@ -7,6 +7,7 @@ members = [
   "umadb-client",
   "umadb-python",
   "umadb",
+  "umadb-tools",
 
   # Internal
   "umadb-benches",

@@ -1,0 +1,17 @@
+[package]
+name = "umadb-tools"
+version = "0.2.0"
+edition = "2024"
+authors = ["UmaDB Developers <dev@umadb.io>"]
+description = "Command-line tools for UmaDB databases (integrity checks, utilities)."
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/umadb-io/umadb"
+
+# We provide multiple binaries under this crate; for now only umadb-check
+[[bin]]
+name = "umadb-check"
+path = "src/bin/umadb-check.rs"
+
+[dependencies]
+umadb-core = { path = "../umadb-core" }
+umadb-dcb = { path = "../umadb-dcb" }
