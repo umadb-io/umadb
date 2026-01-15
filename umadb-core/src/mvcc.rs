@@ -10,6 +10,7 @@ use crate::page::{PAGE_HEADER_SIZE, Page, serialize_page_into};
 use crate::pager::Pager;
 use crate::tags_tree_nodes::TagsLeafNode;
 use crate::tags_tree_nodes::set_tag_key_width;
+use crate::db::read_conditional;
 use dashmap::DashMap;
 use std::collections::HashMap;
 use std::collections::VecDeque;
@@ -18,7 +19,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::sleep;
 use std::time::Duration;
-use umadb_dcb::{DCBError, DCBResult};
+use umadb_dcb::{DCBError, DCBResult, DCBQuery};
 
 const GET_LATEST_HEADER_RETRIES: usize = 5;
 const GET_LATEST_HEADER_DELAY: Duration = Duration::from_millis(10);
@@ -131,7 +132,7 @@ impl Mvcc {
             mvcc.fsync()?;
         } else {
             // Existing DB: hydrate headers from disk and set tag key width based on latest header
-            if let Ok((hid, header_latest)) = mvcc.get_latest_header() {
+            if let Ok((_, header_latest)) = mvcc.get_latest_header() {
                 // Set key width first from the reported header schema
                 if header_latest.schema_version == 0 {
                     set_tag_key_width(8);
@@ -153,7 +154,7 @@ impl Mvcc {
                 }
 
                 // Defensive check: if header says schema_version=1, verify tags root deserializes at width=16.
-                // If it fails but succeeds at width=8, downgrade schema_version to 0 in latest header.
+                // If it fails but succeeds at width=8, downgrade schema_version to 0 in both headers.
                 if header_latest.schema_version == 1 {
                     use crate::node::Node;
                     let tags_root = header_latest.tags_tree_root_id;
@@ -165,37 +166,88 @@ impl Mvcc {
                         set_tag_key_width(8);
                         let eight_ok = mvcc.read_page(tags_root).map(|p| matches!(p.node, Node::TagsLeaf(_) | Node::TagsInternal(_))).is_ok();
                         if eight_ok {
-                            // Downgrade: write schema_version=0 into the latest header on disk and update in-memory headers
-                            // Update in-memory headers first
+                            // Downgrade: write schema_version=0 into both in-memory headers and write to disk
                             {
                                 let mut headers = mvcc.headers.lock().unwrap();
                                 for hp in headers.iter_mut() {
+                                    let header_page_id = hp.page_id;
                                     if let Node::Header(ref mut hn) = hp.node {
+                                        let schema_version = hn.schema_version;
+                                        if mvcc.verbose {
+                                            println!("Resetting header node {header_page_id:?} schema version from {schema_version:?} to 0");
+                                        }
                                         hn.schema_version = 0;
                                     }
+                                    // Re-write the header pages with identical fields but schema_version=0
+                                    let mut buf = mvcc.page_buf.lock().unwrap();
+                                    serialize_page_into(&mut buf, &hp.node)?;
+                                    mvcc.pager.write_page(hp.page_id, &buf)?;
                                 }
                             }
-                            // Re-write the latest header page with identical fields but schema_version=0
-                            let h = header_latest;
-                            let target = hid;
+
                             // Ensure key width remains 8 for this DB after downgrade
                             set_tag_key_width(8);
-                            mvcc.update_header(
-                                target,
-                                h.tsn,
-                                h.free_lists_tree_root_id,
-                                h.events_tree_root_id,
-                                h.tags_tree_root_id,
-                                h.tracking_root_page_id,
-                                h.next_page_id,
-                                h.next_position,
-                            )?;
+
                             // Sync to disk to persist the downgrade promptly
                             mvcc.fsync()?;
                         } else {
                             // Neither width worked; leave as-is
                             if mvcc.verbose { println!("Tags root failed to deserialize at width 16 and 8; leaving schema_version unchanged"); }
                         }
+                    }
+                }
+            }
+            if let Ok((hid, header_latest)) = mvcc.get_latest_header() {
+                // Validate header.next_position against events tree's last event and fix if needed
+                {
+                    let empty_dirty: std::collections::HashMap<PageID, Page> = std::collections::HashMap::new();
+                    let mut last_by_tree: Option<u64> = None;
+                    match read_conditional(
+                        &mvcc,
+                        &empty_dirty,
+                        header_latest.events_tree_root_id,
+                        header_latest.tags_tree_root_id,
+                        DCBQuery { items: vec![] },
+                        None,
+                        true,
+                        Some(1),
+                        false,
+                    ) {
+                        Ok(mut v) => {
+                            if let Some(ev) = v.pop() {
+                                last_by_tree = Some(ev.position);
+                            }
+                        }
+                        Err(e) => {
+                            if mvcc.verbose {
+                                println!(
+                                    "Warning: failed to read last event from events tree: {:?}",
+                                    e
+                                );
+                            }
+                        }
+                    }
+                    let last_pos = last_by_tree.unwrap_or(0);
+                    let expected_next = Position(last_pos.saturating_add(1));
+                    if expected_next != header_latest.next_position {
+                        if mvcc.verbose {
+                            println!(
+                                "Fixing header.next_position from {} to {} based on events tree",
+                                header_latest.next_position.0, expected_next.0
+                            );
+                        }
+                        // Rewrite only the latest header page
+                        mvcc.update_header(
+                            hid,
+                            header_latest.tsn,
+                            header_latest.free_lists_tree_root_id,
+                            header_latest.events_tree_root_id,
+                            header_latest.tags_tree_root_id,
+                            header_latest.tracking_root_page_id,
+                            header_latest.next_page_id,
+                            expected_next,
+                        )?;
+                        mvcc.fsync()?;
                     }
                 }
             }
