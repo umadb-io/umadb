@@ -458,8 +458,36 @@ fn real_main() -> DCBResult<()> {
 
     // Compare last event position to header.next_position - 1
     let header_last = header.next_position.0.saturating_sub(1);
-    let events_ok = last_event_pos == header_last;
-    if !events_ok {
+
+    // New: validate we can get the last event directly using the events tree (backwards read)
+    let mut last_by_tree: Option<u64> = None;
+    match read_conditional(
+        &mvcc,
+        &empty_dirty,
+        header.events_tree_root_id,
+        header.tags_tree_root_id,
+        DCBQuery { items: vec![] },
+        None,              // no start -> let iterator pick end when backwards
+        true,              // backwards: start from the end
+        Some(1),           // only need the last event
+        false,
+    ) {
+        Ok(mut v) => {
+            if let Some(ev) = v.pop() {
+                last_by_tree = Some(ev.position);
+            }
+        }
+        Err(e) => {
+            event_errors.push(format!(
+                "Direct last-event lookup via events tree failed: {:?}",
+                e
+            ));
+        }
+    }
+
+    // events_ok1: sequential scan vs header
+    let events_ok1 = last_event_pos == header_last;
+    if !events_ok1 {
         event_errors.push(format!(
             "Event sequence mismatch: header.next_position={} implies last={}, but events end at {} (events read: {})",
             header.next_position.0,
@@ -473,6 +501,40 @@ fn real_main() -> DCBResult<()> {
             last_event_pos
         );
     }
+
+    // events_ok2: direct-tree last vs header
+    let events_ok2 = match last_by_tree {
+        Some(p) => p == header_last,
+        None => false,
+    };
+    if !events_ok2 {
+        match last_by_tree {
+            Some(p) => event_errors.push(format!(
+                "Events tree last-event mismatch: header.next_position={} implies last={}, but direct-tree read returned {}",
+                header.next_position.0,
+                header_last,
+                p
+            )),
+            None => event_errors.push("Events tree last-event lookup returned no events while header indicates there should be some".to_string()),
+        }
+    } else if args.verbose {
+        eprintln!(
+            "Direct events-tree last-event check OK: {}",
+            header_last
+        );
+    }
+
+    // Also compare sequential scan vs direct-tree result if both present
+    if let Some(p) = last_by_tree {
+        if p != last_event_pos {
+            event_errors.push(format!(
+                "Mismatch between sequential scan last ({}) and direct-tree last ({})",
+                last_event_pos, p
+            ));
+        }
+    }
+
+    let events_ok = events_ok1 && events_ok2 && last_by_tree.map(|p| p == last_event_pos).unwrap_or(false);
 
     // If there are missing events, probe EventLeaf pages to see if the missing positions are present there
     let mut probe_findings: Vec<String> = Vec::new();
