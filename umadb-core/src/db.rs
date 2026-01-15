@@ -8,7 +8,7 @@ use crate::node::Node;
 use crate::page::Page;
 use crate::tags_tree::{TagsTreeIterator, tags_tree_insert};
 use crate::tags_tree_nodes::{TagHash, get_tag_key_width};
-use crate::tracking_tree_nodes::TrackingLeafNode;
+use crate::tracking_tree_nodes::{TrackingInternalNode, TrackingLeafNode};
 use itertools::Itertools;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
@@ -53,17 +53,33 @@ impl UmaDB {
     /// Returns the greatest recorded upstream position for a source, if any.
     pub fn get_tracking_info(&self, source: &str) -> DCBResult<Option<u64>> {
         let reader = self.mvcc.reader()?;
-        let root = reader.tracking_tree_root_id;
-        if root == PageID(0) {
+        let mut pid = reader.tracking_tree_root_id;
+        if pid == PageID(0) {
             return Ok(None);
         }
-        let page = self.mvcc.read_page(root)?;
-        match page.node {
-            Node::TrackingLeaf(node) => Ok(node.get(source).map(|p| p.0)),
-            other => Err(DCBError::DatabaseCorrupted(format!(
-                "Invalid tracking node type: {}",
-                other.type_name()
-            ))),
+        loop {
+            let page = self.mvcc.read_page(pid)?;
+            match page.node {
+                Node::TrackingLeaf(node) => return Ok(node.get(source).map(|p| p.0)),
+                Node::TrackingInternal(internal) => {
+                    let idx = match internal.keys.binary_search_by(|k| k.as_str().cmp(source)) {
+                        Ok(i) => i + 1,
+                        Err(i) => i,
+                    };
+                    if idx >= internal.child_ids.len() {
+                        return Err(DCBError::DatabaseCorrupted(
+                            "tracking internal child index out of bounds".to_string(),
+                        ));
+                    }
+                    pid = internal.child_ids[idx];
+                }
+                other => {
+                    return Err(DCBError::DatabaseCorrupted(format!(
+                        "Invalid tracking node type: {}",
+                        other.type_name()
+                    )))
+                }
+            }
         }
     }
 
@@ -269,13 +285,22 @@ struct ReadResponse {
 
 /// Ensure tracking constraint and update/insert the position into leaf without splitting.
 fn tracking_upsert(mvcc: &Mvcc, writer: &mut Writer, source: &str, pos: Position) -> DCBResult<()> {
-    let page_body_capacity = mvcc.max_node_size; // available bytes for node body (body excludes page header)
+    // Enforce maximum key length (1-byte length field in tracking nodes)
+    let key_len = source.as_bytes().len();
+    if key_len > u8::MAX as usize {
+        return Err(DCBError::InvalidArgument(
+            format!("tracking source too long ({} > 255)", key_len),
+        ));
+    }
 
     let root = writer.tracking_tree_root_id;
+
+    // Empty tree: create a new leaf as root
     if root == PageID(0) {
-        // Create a new leaf with the entry
         let mut node = TrackingLeafNode::new();
-        node.upsert_no_split(source, pos, page_body_capacity)?;
+        // First insert; no need to pre-check capacity as we will allocate a page and verify
+        node.keys.push(source.to_string());
+        node.values.push(pos);
         let new_root_id = writer.alloc_page_id();
         let page = Page::new(new_root_id, Node::TrackingLeaf(node));
         writer.insert_dirty(page)?;
@@ -283,43 +308,189 @@ fn tracking_upsert(mvcc: &Mvcc, writer: &mut Writer, source: &str, pos: Position
         return Ok(());
     }
 
-    // Have an existing leaf: read it and validate monotonicity
-    let page = writer.get_page_ref(mvcc, root)?;
-    let leaf = match &page.node {
-        Node::TrackingLeaf(n) => n.clone(),
-        other => {
-            return Err(DCBError::DatabaseCorrupted(format!(
-                "Invalid tracking node type at root: {}",
-                other.type_name()
-            )));
-        }
-    };
-
-    if let Some(existing) = leaf.get(source) {
-        if pos.0 <= existing.0 {
-            return Err(DCBError::IntegrityError(format!(
-                "non-increasing tracking position for source '{source}': {} <= {}",
-                pos.0, existing.0
-            )));
+    // Descend the tree to find the target leaf
+    let mut stack: Vec<(PageID, usize)> = Vec::new();
+    let mut current_id = root;
+    loop {
+        let page = writer.get_page_ref(mvcc, current_id)?;
+        match &page.node {
+            Node::TrackingLeaf(_) => break,
+            Node::TrackingInternal(internal) => {
+                let child_idx = internal.child_index_for_key(source);
+                if child_idx >= internal.child_ids.len() {
+                    return Err(DCBError::DatabaseCorrupted(
+                        "tracking internal child index out of bounds".to_string(),
+                    ));
+                }
+                let next = internal.child_ids[child_idx];
+                stack.push((current_id, child_idx));
+                current_id = next;
+            }
+            other => {
+                return Err(DCBError::DatabaseCorrupted(format!(
+                    "Invalid tracking node type: {}",
+                    other.type_name()
+                )));
+            }
         }
     }
 
-    // Copy-on-write the root page
-    let new_root_id = writer.get_dirty_page_id(root)?;
-    let page_mut = writer.get_mut_dirty(new_root_id)?;
-    // Update the cloned leaf node with capacity check
-    if let Node::TrackingLeaf(ref mut node_mut) = page_mut.node {
-        node_mut.upsert_no_split(source, pos, page_body_capacity)?;
-    } else {
-        return Err(DCBError::DatabaseCorrupted(
-            "Dirty tracking page not a leaf".to_string(),
-        ));
+    // At leaf: check monotonicity first on an immutable snapshot
+    {
+        let page = writer.get_page_ref(mvcc, current_id)?;
+        let Node::TrackingLeaf(leaf) = &page.node else {
+            return Err(DCBError::DatabaseCorrupted(
+                "Expected TrackingLeaf".to_string(),
+            ));
+        };
+        if let Some(existing) = leaf.get(source) {
+            if pos.0 <= existing.0 {
+                return Err(DCBError::IntegrityError(format!(
+                    "non-increasing tracking position for source '{source}': {} <= {}",
+                    pos.0, existing.0
+                )));
+            }
+        }
     }
 
-    // Update header root id if changed
-    if root != new_root_id {
+    // COW the leaf
+    let dirty_leaf_id = writer.get_dirty_page_id(current_id)?;
+    let mut replacement_info: Option<(PageID, PageID)> =
+        (dirty_leaf_id != current_id).then_some((current_id, dirty_leaf_id));
+
+    // We may need to propagate a split upward
+    let mut split_info: Option<(String, PageID)> = None;
+
+    // Insert/update in the leaf
+    {
+        let leaf_page = writer.get_mut_dirty(dirty_leaf_id)?;
+        // First, insert/update within a limited scope to end the mutable borrow before size checks
+        {
+            let Node::TrackingLeaf(ref mut node) = leaf_page.node else {
+                return Err(DCBError::DatabaseCorrupted(
+                    "Dirty tracking page not a leaf".to_string(),
+                ));
+            };
+            match node.keys.binary_search_by(|k| k.as_str().cmp(source)) {
+                Ok(i) => node.values[i] = pos,
+                Err(ins) => {
+                    node.keys.insert(ins, source.to_string());
+                    node.values.insert(ins, pos);
+                }
+            }
+        }
+        // Now check overflow and perform split if needed in a new scope
+        if leaf_page.calc_serialized_size() > mvcc.page_size {
+            let promoted_key: String;
+            let right_id: PageID;
+            {
+                let Node::TrackingLeaf(ref mut node) = leaf_page.node else {
+                    return Err(DCBError::DatabaseCorrupted(
+                        "Dirty tracking page not a leaf".to_string(),
+                    ));
+                };
+                if node.keys.len() < 2 {
+                    return Err(DCBError::DatabaseCorrupted(
+                        "Cannot split tracking leaf with too few keys".to_string(),
+                    ));
+                }
+                let mid = node.keys.len() / 2;
+                let right_keys = node.keys.split_off(mid);
+                let right_vals = node.values.split_off(mid);
+                promoted_key = right_keys
+                    .first()
+                    .ok_or_else(|| DCBError::DatabaseCorrupted("empty right split".to_string()))?
+                    .clone();
+                let right_leaf = TrackingLeafNode {
+                    keys: right_keys,
+                    values: right_vals,
+                };
+                right_id = writer.alloc_page_id();
+                let right_page = Page::new(right_id, Node::TrackingLeaf(right_leaf));
+                writer.insert_dirty(right_page)?;
+            }
+            split_info = Some((promoted_key, right_id));
+        }
+    }
+
+    // Walk up the stack to apply replacements and propagate splits
+    while let Some((parent_id, child_idx)) = stack.pop() {
+        // COW parent if needed
+        let dirty_parent_id = writer.get_dirty_page_id(parent_id)?;
+        let parent_replacement_info =
+            (dirty_parent_id != parent_id).then_some((parent_id, dirty_parent_id));
+
+        // Apply child replacement if needed
+        if let Some((old_id, new_id)) = replacement_info.take() {
+            let parent_page = writer.get_mut_dirty(dirty_parent_id)?;
+            let Node::TrackingInternal(ref mut internal) = parent_page.node else {
+                return Err(DCBError::DatabaseCorrupted(
+                    "Expected TrackingInternal".to_string(),
+                ));
+            };
+            internal.replace_child_id_at(child_idx, old_id, new_id)?;
+        }
+
+        // Apply split promotion if any
+        if let Some((prom_key, new_child_id)) = split_info.take() {
+            let need_split: bool;
+            {
+                let parent_page = writer.get_mut_dirty(dirty_parent_id)?;
+                let Node::TrackingInternal(ref mut internal) = parent_page.node else {
+                    return Err(DCBError::DatabaseCorrupted(
+                        "Expected TrackingInternal".to_string(),
+                    ));
+                };
+                internal.insert_promoted_at(child_idx, prom_key, new_child_id);
+                need_split = parent_page.calc_serialized_size() > mvcc.page_size;
+            }
+            if need_split {
+                // Reborrow mutably to perform the split
+                let parent_page = writer.get_mut_dirty(dirty_parent_id)?;
+                let Node::TrackingInternal(ref mut internal) = parent_page.node else {
+                    return Err(DCBError::DatabaseCorrupted(
+                        "Expected TrackingInternal".to_string(),
+                    ));
+                };
+                let (promote_up, right_keys, right_child_ids) = internal.split_off()?;
+                let right_internal = TrackingInternalNode {
+                    keys: right_keys,
+                    child_ids: right_child_ids,
+                };
+                let right_internal_id = writer.alloc_page_id();
+                let right_internal_page =
+                    Page::new(right_internal_id, Node::TrackingInternal(right_internal));
+                writer.insert_dirty(right_internal_page)?;
+                split_info = Some((promote_up, right_internal_id));
+            }
+        }
+
+        // Propagate parent replacement upwards if any
+        replacement_info = parent_replacement_info;
+    }
+
+    // Apply root replacement if necessary
+    if let Some((old_id, new_id)) = replacement_info.take() {
+        if writer.tracking_tree_root_id == old_id {
+            writer.tracking_tree_root_id = new_id;
+        } else {
+            return Err(DCBError::RootIDMismatch(old_id.0, new_id.0));
+        }
+    }
+
+    // If we still have a pending promotion, create a new internal root
+    if let Some((prom_key, right_id)) = split_info.take() {
+        let new_root_id = writer.alloc_page_id();
+        let left_id = writer.tracking_tree_root_id;
+        let new_root = TrackingInternalNode {
+            keys: vec![prom_key],
+            child_ids: vec![left_id, right_id],
+        };
+        let new_root_page = Page::new(new_root_id, Node::TrackingInternal(new_root));
+        writer.insert_dirty(new_root_page)?;
         writer.tracking_tree_root_id = new_root_id;
     }
+
     Ok(())
 }
 
@@ -779,6 +950,135 @@ mod tests {
         let uma = UmaDB::new(db_path).unwrap();
         let pos = uma.get_tracking_info("source-A").unwrap();
         assert!(pos.is_none());
+    }
+
+    #[test]
+    #[serial]
+    fn tracking_source_length_too_long_errors() {
+        let temp_dir = tempdir().unwrap();
+        let db_path = temp_dir.path().join("tracking-longkey.db");
+        let uma = UmaDB::new(db_path).unwrap();
+        // Make a 256-byte ASCII string
+        let long_key = "a".repeat(256);
+        let ev = DCBEvent::new().event_type("T").data([1u8]);
+        let err = uma
+            .append(
+                vec![ev],
+                None,
+                Some(TrackingInfo { source: long_key, position: 1 }),
+            )
+            .unwrap_err();
+        match err {
+            DCBError::InvalidArgument(msg) => assert!(msg.contains("too long")),
+            other => panic!("unexpected error: {:?}", other),
+        }
+    }
+
+    #[test]
+    #[serial]
+    fn tracking_leaf_split_creates_internal_root_and_lookups_work() {
+        let temp_dir = tempdir().unwrap();
+        let db_path = temp_dir.path().join("tracking-split.db");
+        // Use a small page size to trigger splits with few inserts
+        let mvcc = Mvcc::new(&db_path, 256, false).unwrap();
+        let uma = UmaDB::from_arc(Arc::new(mvcc));
+
+        let base_event = DCBEvent::new().event_type("T").data([0u8]);
+        // Insert many different sources to force at least one leaf split
+        for i in 0..50u32 {
+            let key = format!("k{:03}", i);
+            let ev = base_event.clone();
+            uma
+                .append(
+                    vec![ev],
+                    None,
+                    Some(TrackingInfo { source: key.clone(), position: (i + 1) as u64 }),
+                )
+                .unwrap();
+        }
+        // Verify some lookups
+        assert_eq!(Some(1), uma.get_tracking_info("k000").unwrap());
+        assert_eq!(Some(25), uma.get_tracking_info("k024").unwrap());
+        assert_eq!(Some(50), uma.get_tracking_info("k049").unwrap());
+        assert_eq!(None, uma.get_tracking_info("k999").unwrap());
+    }
+
+    #[test]
+    #[serial]
+    fn tracking_internal_node_splits_under_load() {
+        let temp_dir = tempdir().unwrap();
+        let db_path = temp_dir.path().join("tracking-internal-split.db");
+        // Small page size to force both leaf and internal splits quickly
+        let mvcc = Mvcc::new(&db_path, 128, false).unwrap();
+        let uma = UmaDB::from_arc(Arc::new(mvcc));
+
+        let base_event = DCBEvent::new().event_type("T").data([0u8]);
+
+        // Keep track of every key we send and the expected value (position)
+        let mut observed: HashMap<String, u64> = HashMap::new();
+
+        // Insert keys until we observe that the root's first child is also an internal node,
+        // which only happens after the root internal itself has split and a new root was created.
+        let mut detected_internal_split = false;
+        for i in 0..200u32 {
+            let key = format!("s{:03}xxxx", i); // 8-byte keys keep node capacities small
+            println!("Key: {key}");
+            let ev = base_event.clone();
+            let pos = (i + 1) as u64;
+            uma
+                .append(
+                    vec![ev],
+                    None,
+                    Some(TrackingInfo { source: key.clone(), position: pos }),
+                )
+                .unwrap();
+            observed.insert(key, pos);
+
+            if i % 5 == 4 {
+                let reader = uma.mvcc.reader().unwrap();
+                let root_id = reader.tracking_tree_root_id;
+                if root_id != PageID(0) {
+                    let root = uma.mvcc.read_page(root_id).unwrap();
+                    if let Node::TrackingInternal(root_internal) = &root.node {
+                        let first_child_id = root_internal.child_ids[0];
+                        let first_child = uma.mvcc.read_page(first_child_id).unwrap();
+                        if matches!(first_child.node, Node::TrackingInternal(_)) {
+                            detected_internal_split = true;
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        assert!(
+            detected_internal_split,
+            "Exceeded safety limit without causing tracking internal split"
+        );
+
+        // Verify that every key we inserted can be looked up and has the expected value
+        for (k, expected_pos) in &observed {
+            let got = uma.get_tracking_info(&k).unwrap();
+            assert_eq!(Some(*expected_pos), got, "tracking info mismatch for key {k}");
+        }
+
+        // Now, for each source, increment the position by 1000 and verify updates are visible
+        let mut updated: HashMap<String, u64> = HashMap::new();
+        for (k, prev_pos) in &observed {
+            let new_pos = *prev_pos + 1000;
+            uma
+                .append(
+                    vec![base_event.clone()],
+                    None,
+                    Some(TrackingInfo { source: k.clone(), position: new_pos }),
+                )
+                .unwrap();
+            updated.insert(k.clone(), new_pos);
+        }
+        for (k, expected_pos) in updated {
+            let got = uma.get_tracking_info(&k).unwrap();
+            assert_eq!(Some(expected_pos), got, "after update: tracking info mismatch for key {k}");
+        }
     }
 
     #[test]

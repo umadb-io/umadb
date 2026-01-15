@@ -328,6 +328,9 @@ pub enum DCBError {
     IntegrityError(String),
     #[error("Corruption detected: {0}")]
     Corruption(String),
+    /// Invalid input argument provided by the caller
+    #[error("invalid argument: {0}")]
+    InvalidArgument(String),
 
     // Storage errors (unified into DCBError)
     #[error("Initialization error: {0:?}")]

@@ -130,6 +130,10 @@ pub fn status_from_dcb_error(e: DCBError) -> Status {
             Code::Unauthenticated,
             v1::error_response::ErrorType::Authentication as i32,
         ),
+        DCBError::InvalidArgument(_) => (
+            Code::InvalidArgument,
+            v1::error_response::ErrorType::InvalidArgument as i32,
+        ),
         DCBError::IntegrityError(_) => (
             Code::FailedPrecondition,
             v1::error_response::ErrorType::Integrity as i32,
@@ -170,6 +174,9 @@ pub fn dcb_error_from_status(status: Status) -> DCBError {
             x if x == v1::error_response::ErrorType::Authentication as i32 => {
                 DCBError::AuthenticationError(err.message)
             }
+            x if x == v1::error_response::ErrorType::InvalidArgument as i32 => {
+                DCBError::InvalidArgument(err.message)
+            }
             x if x == v1::error_response::ErrorType::Integrity as i32 => {
                 DCBError::IntegrityError(err.message)
             }
@@ -188,9 +195,9 @@ pub fn dcb_error_from_status(status: Status) -> DCBError {
     // Fallback: infer from gRPC code
     match status.code() {
         Code::Unauthenticated => DCBError::AuthenticationError(status.message().to_string()),
+        Code::InvalidArgument => DCBError::InvalidArgument(status.message().to_string()),
         Code::FailedPrecondition => DCBError::IntegrityError(status.message().to_string()),
         Code::DataLoss => DCBError::Corruption(status.message().to_string()),
-        Code::InvalidArgument => DCBError::SerializationError(status.message().to_string()),
         Code::Internal => DCBError::InternalError(status.message().to_string()),
         _ => DCBError::Io(std::io::Error::other(format!("gRPC error: {}", status))),
     }

@@ -26,11 +26,11 @@ impl TrackingLeafNode {
         // layout (v1 and newer on write):
         // u8: node version (1 for sorted keys)
         // u16: key_count
-        // repeated key_count times: u16 key_len + [u8; key_len]
+        // repeated key_count times: u8 key_len + [u8; key_len]
         // repeated key_count times: u64 position
         let mut size = 1 + 2; // version + count(u16)
         for k in &self.keys {
-            size += 2 + k.as_bytes().len();
+            size += 1 + k.as_bytes().len();
         }
         size += 8 * self.values.len();
         size
@@ -45,8 +45,9 @@ impl TrackingLeafNode {
         // Keys are expected to be maintained in sorted order by the node
         for k in &self.keys {
             let kb = k.as_bytes();
-            LittleEndian::write_u16(&mut buf[off..off + 2], kb.len() as u16);
-            off += 2;
+            assert!(kb.len() <= u8::MAX as usize, "tracking key too long to serialize (len>{})", u8::MAX);
+            buf[off] = kb.len() as u8;
+            off += 1;
             buf[off..off + kb.len()].copy_from_slice(kb);
             off += kb.len();
         }
@@ -94,9 +95,9 @@ impl TrackingLeafNode {
                     ));
                 }
                 let klen_u32 = LittleEndian::read_u32(&slice[off..off + 4]);
-                if klen_u32 > u16::MAX as u32 {
+                if klen_u32 > u8::MAX as u32 {
                     return Err(DCBError::DeserializationError(
-                        "v0 tracking leaf key length exceeds u16".to_string(),
+                        "v0 tracking leaf key length exceeds u8".to_string(),
                     ));
                 }
                 let klen = klen_u32 as usize;
@@ -112,13 +113,13 @@ impl TrackingLeafNode {
                 off += klen;
                 keys.push(k);
             } else {
-                if off + 2 > slice.len() {
+                if off + 1 > slice.len() {
                     return Err(DCBError::DeserializationError(
                         "tracking leaf truncated klen (v1)".to_string(),
                     ));
                 }
-                let klen = LittleEndian::read_u16(&slice[off..off + 2]) as usize;
-                off += 2;
+                let klen = slice[off] as usize;
+                off += 1;
                 if off + klen > slice.len() {
                     return Err(DCBError::DeserializationError(
                         "tracking leaf truncated key (v1)".to_string(),
@@ -204,6 +205,45 @@ pub struct TrackingInternalNode {
 }
 
 impl TrackingInternalNode {
+    pub fn child_index_for_key(&self, key: &str) -> usize {
+        match self.keys.binary_search_by(|k| k.as_str().cmp(key)) {
+            Ok(idx) => idx + 1,
+            Err(idx) => idx,
+        }
+    }
+
+    pub fn replace_child_id_at(&mut self, idx: usize, old_id: PageID, new_id: PageID) -> DCBResult<()> {
+        if idx >= self.child_ids.len() {
+            return Err(DCBError::DatabaseCorrupted("child index out of bounds".to_string()));
+        }
+        if self.child_ids[idx] != old_id {
+            return Err(DCBError::DatabaseCorrupted("Child ID mismatch".to_string()));
+        }
+        self.child_ids[idx] = new_id;
+        Ok(())
+    }
+
+    pub fn insert_promoted_at(&mut self, idx: usize, key: String, right_child: PageID) {
+        self.keys.insert(idx, key);
+        self.child_ids.insert(idx + 1, right_child);
+    }
+
+    /// Split this internal node around the middle key. Returns (promoted_key, right_keys, right_child_ids).
+    pub fn split_off(&mut self) -> DCBResult<(String, Vec<String>, Vec<PageID>)> {
+        if self.child_ids.len() < 4 || self.keys.len() + 1 != self.child_ids.len() {
+            return Err(DCBError::DatabaseCorrupted(
+                "Cannot split tracking internal with insufficient arity".to_string(),
+            ));
+        }
+        let mid = self.keys.len() / 2; // promote this key
+        let promoted_key = self.keys[mid].clone();
+        let right_keys: Vec<String> = self.keys[mid + 1..].to_vec();
+        let right_child_ids: Vec<PageID> = self.child_ids[mid + 1..].to_vec();
+        // Truncate left
+        self.keys.truncate(mid);
+        self.child_ids.truncate(mid + 1);
+        Ok((promoted_key, right_keys, right_child_ids))
+    }
     pub fn new() -> Self {
         Self {
             keys: Vec::new(),
@@ -219,11 +259,11 @@ impl TrackingInternalNode {
         // layout (v1 write):
         // u8: version (1)
         // u16: key_count
-        // repeated key_count times: u16 key_len + [u8; key_len]
+        // repeated key_count times: u8 key_len + [u8; key_len]
         // repeated (key_count + 1) times: u64 child_page_id
         let mut size = 1 + 2; // version + count(u16)
         for k in &self.keys {
-            size += 2 + k.as_bytes().len();
+            size += 1 + k.as_bytes().len();
         }
         size += 8 * (self.keys.len() + 1);
         size
@@ -237,8 +277,9 @@ impl TrackingInternalNode {
         let mut off = 3;
         for k in &self.keys {
             let kb = k.as_bytes();
-            LittleEndian::write_u16(&mut buf[off..off + 2], kb.len() as u16);
-            off += 2;
+            assert!(kb.len() <= u8::MAX as usize, "tracking internal key too long to serialize (len>{})", u8::MAX);
+            buf[off] = kb.len() as u8;
+            off += 1;
             buf[off..off + kb.len()].copy_from_slice(kb);
             off += kb.len();
         }
@@ -271,13 +312,13 @@ impl TrackingInternalNode {
         let mut off = 3;
         let mut keys = Vec::with_capacity(count);
         for _ in 0..count {
-            if off + 2 > slice.len() {
+            if off + 1 > slice.len() {
                 return Err(DCBError::DeserializationError(
                     "tracking internal truncated klen (v1)".to_string(),
                 ));
             }
-            let klen = LittleEndian::read_u16(&slice[off..off + 2]) as usize;
-            off += 2;
+            let klen = slice[off] as usize;
+            off += 1;
             if off + klen > slice.len() {
                 return Err(DCBError::DeserializationError(
                     "tracking internal truncated key (v1)".to_string(),

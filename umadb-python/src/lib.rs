@@ -24,6 +24,7 @@ create_exception!(umadb, AuthenticationError, PyPermissionError);
 /// Convert DCBError to Python exception
 fn dcb_error_to_py_err(err: DCBError) -> PyErr {
     match err {
+        DCBError::InvalidArgument(msg) => PyValueError::new_err(msg),
         DCBError::IntegrityError(msg) => IntegrityError::new_err(msg),
         DCBError::TransportError(msg) => TransportError::new_err(msg),
         DCBError::Corruption(msg) => CorruptionError::new_err(msg),

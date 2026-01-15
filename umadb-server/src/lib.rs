@@ -1038,6 +1038,7 @@ fn clone_dcb_error(src: &DCBError) -> DCBError {
         DCBError::Io(err) => DCBError::Io(std::io::Error::other(err.to_string())),
         DCBError::IntegrityError(s) => DCBError::IntegrityError(s.clone()),
         DCBError::Corruption(s) => DCBError::Corruption(s.clone()),
+        DCBError::InvalidArgument(s) => DCBError::InvalidArgument(s.clone()),
         DCBError::PageNotFound(id) => DCBError::PageNotFound(*id),
         DCBError::DirtyPageNotFound(id) => DCBError::DirtyPageNotFound(*id),
         DCBError::RootIDMismatch(old_id, new_id) => DCBError::RootIDMismatch(*old_id, *new_id),

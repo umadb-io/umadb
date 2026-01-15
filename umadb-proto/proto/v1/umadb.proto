@@ -83,6 +83,7 @@ message ErrorResponse {
     CORRUPTION = 3;
     INTERNAL = 4;
     AUTHENTICATION = 5;
+    INVALID_ARGUMENT = 6;
   }
 }
 

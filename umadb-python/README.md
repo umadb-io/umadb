@@ -366,6 +366,7 @@ The Python client raises Python exceptions on error:
 - Integrity/condition failure: `IntegrityError`
 - Transport/connection errors: `TransportError`
 - Authentication failures: `AuthenticationError`
+- Invalid argument errors: `ValueError`
 - Other internal errors: `RuntimeError` or `OSError`
 
 Your application should catch these as appropriate.

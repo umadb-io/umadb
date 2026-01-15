@@ -4,7 +4,7 @@ use crate::free_lists_tree_nodes::{
 };
 use crate::header_node::HeaderNode;
 use crate::tags_tree_nodes::{TagInternalNode, TagLeafNode, TagsInternalNode, TagsLeafNode};
-use crate::tracking_tree_nodes::TrackingLeafNode;
+use crate::tracking_tree_nodes::{TrackingInternalNode, TrackingLeafNode};
 use umadb_dcb::{DCBError, DCBResult};
 
 // Constants for serialization
@@ -21,6 +21,7 @@ const PAGE_TYPE_EVENT_OVERFLOW: u8 = b'a';
 const PAGE_TYPE_FREELIST_TSN_LEAF: u8 = b'b';
 const PAGE_TYPE_FREELIST_TSN_INTERNAL: u8 = b'c';
 const PAGE_TYPE_TRACKING_LEAF: u8 = b'd';
+const PAGE_TYPE_TRACKING_INTERNAL: u8 = b'e';
 
 // Enum to represent different node types
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -38,6 +39,7 @@ pub enum Node {
     FreeListTsnLeaf(FreeListTsnLeafNode),
     FreeListTsnInternal(FreeListTsnInternalNode),
     TrackingLeaf(TrackingLeafNode),
+    TrackingInternal(TrackingInternalNode),
 }
 
 impl Node {
@@ -56,6 +58,7 @@ impl Node {
             Node::FreeListTsnLeaf(_) => PAGE_TYPE_FREELIST_TSN_LEAF,
             Node::FreeListTsnInternal(_) => PAGE_TYPE_FREELIST_TSN_INTERNAL,
             Node::TrackingLeaf(_) => PAGE_TYPE_TRACKING_LEAF,
+            Node::TrackingInternal(_) => PAGE_TYPE_TRACKING_INTERNAL,
         }
     }
 
@@ -74,6 +77,7 @@ impl Node {
             Node::FreeListTsnLeaf(_) => "FreeListTsnLeaf",
             Node::FreeListTsnInternal(_) => "FreeListTsnInternal",
             Node::TrackingLeaf(_) => "TrackingLeaf",
+            Node::TrackingInternal(_) => "TrackingInternal",
         }
     }
 
@@ -92,6 +96,7 @@ impl Node {
             Node::FreeListTsnLeaf(node) => node.calc_serialized_size(),
             Node::FreeListTsnInternal(node) => node.calc_serialized_size(),
             Node::TrackingLeaf(node) => node.calc_serialized_size(),
+            Node::TrackingInternal(node) => node.calc_serialized_size(),
         }
     }
 
@@ -152,6 +157,10 @@ impl Node {
                 let n = node.serialize_into(buf);
                 Ok(n)
             }
+            Node::TrackingInternal(node) => {
+                let n = node.serialize_into(buf);
+                Ok(n)
+            }
         }
     }
 
@@ -208,6 +217,10 @@ impl Node {
             PAGE_TYPE_TRACKING_LEAF => {
                 let node = TrackingLeafNode::from_slice(data)?;
                 Ok(Node::TrackingLeaf(node))
+            }
+            PAGE_TYPE_TRACKING_INTERNAL => {
+                let node = TrackingInternalNode::from_slice(data)?;
+                Ok(Node::TrackingInternal(node))
             }
             _ => Err(DCBError::DatabaseCorrupted(format!(
                 "Invalid node type: {node_type}"
