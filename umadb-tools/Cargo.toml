@@ -1,11 +1,14 @@
 [package]
 name = "umadb-tools"
-version = "0.3.0"
-edition = "2024"
-authors = ["UmaDB Developers <dev@umadb.io>"]
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
 description = "Command-line tools for UmaDB databases (integrity checks, utilities)."
-license = "MIT OR Apache-2.0"
-repository = "https://github.com/umadb-io/umadb"
+keywords = ["event-store", "event-sourcing", "database"]
+categories = ["database"]
+
 
 # We provide multiple binaries under this crate; for now only umadb-check
 [[bin]]
@@ -13,5 +16,5 @@ name = "umadb-check"
 path = "src/bin/umadb-check.rs"
 
 [dependencies]
-umadb-core = { path = "../umadb-core" }
-umadb-dcb = { path = "../umadb-dcb" }
+umadb-core = { path = "../umadb-core", version = "0.3.0" }
+umadb-dcb = { path = "../umadb-dcb", version = "0.3.0" }
