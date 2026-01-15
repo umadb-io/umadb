@@ -1,4 +1,4 @@
-use crate::common::Position;
+use crate::common::{PageID, Position};
 use byteorder::{ByteOrder, LittleEndian};
 use umadb_dcb::{DCBError, DCBResult};
 
@@ -23,14 +23,14 @@ impl TrackingLeafNode {
     }
 
     pub fn calc_serialized_size(&self) -> usize {
-        // layout:
+        // layout (v1 and newer on write):
         // u8: node version (1 for sorted keys)
-        // u32: key_count
-        // repeated key_count times: u32 key_len + [u8; key_len]
+        // u16: key_count
+        // repeated key_count times: u16 key_len + [u8; key_len]
         // repeated key_count times: u64 position
-        let mut size = 1 + 4; // version + count
+        let mut size = 1 + 2; // version + count(u16)
         for k in &self.keys {
-            size += 4 + k.as_bytes().len();
+            size += 2 + k.as_bytes().len();
         }
         size += 8 * self.values.len();
         size
@@ -40,13 +40,13 @@ impl TrackingLeafNode {
         let needed = self.calc_serialized_size();
         assert!(buf.len() >= needed, "buffer too small for TrackingLeafNode");
         buf[0] = 1; // version >=1 means keys are sorted
-        LittleEndian::write_u32(&mut buf[1..5], self.keys.len() as u32);
-        let mut off = 5;
+        LittleEndian::write_u16(&mut buf[1..3], self.keys.len() as u16);
+        let mut off = 3;
         // Keys are expected to be maintained in sorted order by the node
         for k in &self.keys {
             let kb = k.as_bytes();
-            LittleEndian::write_u32(&mut buf[off..off + 4], kb.len() as u32);
-            off += 4;
+            LittleEndian::write_u16(&mut buf[off..off + 2], kb.len() as u16);
+            off += 2;
             buf[off..off + kb.len()].copy_from_slice(kb);
             off += kb.len();
         }
@@ -58,33 +58,78 @@ impl TrackingLeafNode {
     }
 
     pub fn from_slice(slice: &[u8]) -> DCBResult<Self> {
-        if slice.len() < 5 {
+        if slice.len() < 1 {
             return Err(DCBError::DeserializationError(
                 "tracking leaf too small".to_string(),
             ));
         }
         let ver = slice[0];
-        let count = LittleEndian::read_u32(&slice[1..5]) as usize;
-        let mut off = 5;
+        let (mut off, count): (usize, usize) = if ver == 0 {
+            if slice.len() < 5 {
+                return Err(DCBError::DeserializationError(
+                    "tracking leaf too small (v0)".to_string(),
+                ));
+            }
+            let cnt_u32 = LittleEndian::read_u32(&slice[1..5]);
+            if cnt_u32 > u16::MAX as u32 {
+                return Err(DCBError::DeserializationError(
+                    "v0 tracking leaf count exceeds u16".to_string(),
+                ));
+            }
+            (5, cnt_u32 as usize)
+        } else {
+            if slice.len() < 3 {
+                return Err(DCBError::DeserializationError(
+                    "tracking leaf too small (v1)".to_string(),
+                ));
+            }
+            (3, LittleEndian::read_u16(&slice[1..3]) as usize)
+        };
         let mut keys = Vec::with_capacity(count);
         for _ in 0..count {
-            if off + 4 > slice.len() {
-                return Err(DCBError::DeserializationError(
-                    "tracking leaf truncated klen".to_string(),
-                ));
+            if ver == 0 {
+                if off + 4 > slice.len() {
+                    return Err(DCBError::DeserializationError(
+                        "tracking leaf truncated klen (v0)".to_string(),
+                    ));
+                }
+                let klen_u32 = LittleEndian::read_u32(&slice[off..off + 4]);
+                if klen_u32 > u16::MAX as u32 {
+                    return Err(DCBError::DeserializationError(
+                        "v0 tracking leaf key length exceeds u16".to_string(),
+                    ));
+                }
+                let klen = klen_u32 as usize;
+                off += 4;
+                if off + klen > slice.len() {
+                    return Err(DCBError::DeserializationError(
+                        "tracking leaf truncated key (v0)".to_string(),
+                    ));
+                }
+                let k = std::str::from_utf8(&slice[off..off + klen])
+                    .map_err(|e| DCBError::DeserializationError(format!("invalid utf8: {e}")))?
+                    .to_string();
+                off += klen;
+                keys.push(k);
+            } else {
+                if off + 2 > slice.len() {
+                    return Err(DCBError::DeserializationError(
+                        "tracking leaf truncated klen (v1)".to_string(),
+                    ));
+                }
+                let klen = LittleEndian::read_u16(&slice[off..off + 2]) as usize;
+                off += 2;
+                if off + klen > slice.len() {
+                    return Err(DCBError::DeserializationError(
+                        "tracking leaf truncated key (v1)".to_string(),
+                    ));
+                }
+                let k = std::str::from_utf8(&slice[off..off + klen])
+                    .map_err(|e| DCBError::DeserializationError(format!("invalid utf8: {e}")))?
+                    .to_string();
+                off += klen;
+                keys.push(k);
             }
-            let klen = LittleEndian::read_u32(&slice[off..off + 4]) as usize;
-            off += 4;
-            if off + klen > slice.len() {
-                return Err(DCBError::DeserializationError(
-                    "tracking leaf truncated key".to_string(),
-                ));
-            }
-            let k = std::str::from_utf8(&slice[off..off + klen])
-                .map_err(|e| DCBError::DeserializationError(format!("invalid utf8: {e}")))?
-                .to_string();
-            off += klen;
-            keys.push(k);
         }
         let mut values = Vec::with_capacity(count);
         for _ in 0..count {
@@ -149,6 +194,116 @@ impl TrackingLeafNode {
                 Ok(())
             }
         }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TrackingInternalNode {
+    pub keys: Vec<String>,
+    pub child_ids: Vec<PageID>,
+}
+
+impl TrackingInternalNode {
+    pub fn new() -> Self {
+        Self {
+            keys: Vec::new(),
+            child_ids: Vec::new(),
+        }
+    }
+
+    pub fn len(&self) -> usize {
+        self.keys.len()
+    }
+
+    pub fn calc_serialized_size(&self) -> usize {
+        // layout (v1 write):
+        // u8: version (1)
+        // u16: key_count
+        // repeated key_count times: u16 key_len + [u8; key_len]
+        // repeated (key_count + 1) times: u64 child_page_id
+        let mut size = 1 + 2; // version + count(u16)
+        for k in &self.keys {
+            size += 2 + k.as_bytes().len();
+        }
+        size += 8 * (self.keys.len() + 1);
+        size
+    }
+
+    pub fn serialize_into(&self, buf: &mut [u8]) -> usize {
+        let needed = self.calc_serialized_size();
+        assert!(buf.len() >= needed, "buffer too small for TrackingInternalNode");
+        buf[0] = 1; // version 1
+        LittleEndian::write_u16(&mut buf[1..3], self.keys.len() as u16);
+        let mut off = 3;
+        for k in &self.keys {
+            let kb = k.as_bytes();
+            LittleEndian::write_u16(&mut buf[off..off + 2], kb.len() as u16);
+            off += 2;
+            buf[off..off + kb.len()].copy_from_slice(kb);
+            off += kb.len();
+        }
+        // children count is implied as keys.len() + 1
+        for id in &self.child_ids {
+            LittleEndian::write_u64(&mut buf[off..off + 8], id.0);
+            off += 8;
+        }
+        needed
+    }
+
+    pub fn from_slice(slice: &[u8]) -> DCBResult<Self> {
+        if slice.len() < 1 {
+            return Err(DCBError::DeserializationError(
+                "tracking internal too small".to_string(),
+            ));
+        }
+        let ver = slice[0];
+        if ver == 0 {
+            return Err(DCBError::DeserializationError(
+                "unsupported tracking internal version 0".to_string(),
+            ));
+        }
+        if slice.len() < 3 {
+            return Err(DCBError::DeserializationError(
+                "tracking internal too small (v1)".to_string(),
+            ));
+        }
+        let count = LittleEndian::read_u16(&slice[1..3]) as usize;
+        let mut off = 3;
+        let mut keys = Vec::with_capacity(count);
+        for _ in 0..count {
+            if off + 2 > slice.len() {
+                return Err(DCBError::DeserializationError(
+                    "tracking internal truncated klen (v1)".to_string(),
+                ));
+            }
+            let klen = LittleEndian::read_u16(&slice[off..off + 2]) as usize;
+            off += 2;
+            if off + klen > slice.len() {
+                return Err(DCBError::DeserializationError(
+                    "tracking internal truncated key (v1)".to_string(),
+                ));
+            }
+            let k = std::str::from_utf8(&slice[off..off + klen])
+                .map_err(|e| DCBError::DeserializationError(format!("invalid utf8: {e}")))?
+                .to_string();
+            off += klen;
+            keys.push(k);
+        }
+        // Now children: implied count = keys.len() + 1
+        let child_count = keys.len() + 1;
+        let need = off + 8 * child_count;
+        if slice.len() < need {
+            return Err(DCBError::DeserializationError(
+                "tracking internal truncated children".to_string(),
+            ));
+        }
+        let mut child_ids = Vec::with_capacity(child_count);
+        for _ in 0..child_count {
+            let v = LittleEndian::read_u64(&slice[off..off + 8]);
+            off += 8;
+            child_ids.push(PageID(v));
+        }
+        Ok(Self { keys, child_ids })
     }
 }
 
@@ -223,6 +378,49 @@ mod tests {
         match err {
             DCBError::InternalError(s) => assert!(s.contains("tracking split")),
             _ => panic!("unexpected error type"),
+        }
+    }
+
+    #[test]
+    fn test_tracking_internal_roundtrip() {
+        let node = TrackingInternalNode {
+            keys: vec!["alpha".into(), "beta".into(), "gamma".into()],
+            child_ids: vec![PageID(10), PageID(20), PageID(30), PageID(40)],
+        };
+        let mut buf = vec![0u8; node.calc_serialized_size()];
+        let n = node.serialize_into(&mut buf);
+        assert_eq!(n, buf.len());
+        let dec = TrackingInternalNode::from_slice(&buf).unwrap();
+        assert_eq!(dec, node);
+    }
+
+    #[test]
+    fn test_tracking_internal_empty_keys_one_child_roundtrip() {
+        let node = TrackingInternalNode {
+            keys: vec![],
+            child_ids: vec![PageID(123)],
+        };
+        let mut buf = vec![0u8; node.calc_serialized_size()];
+        let n = node.serialize_into(&mut buf);
+        assert_eq!(n, buf.len());
+        let dec = TrackingInternalNode::from_slice(&buf).unwrap();
+        assert_eq!(dec, node);
+    }
+
+    #[test]
+    fn test_tracking_internal_from_slice_truncated_children_err() {
+        // Build a valid buffer then truncate last 8 bytes to simulate missing child
+        let node = TrackingInternalNode {
+            keys: vec!["k1".into()],
+            child_ids: vec![PageID(1), PageID(2)],
+        };
+        let mut buf = vec![0u8; node.calc_serialized_size()];
+        let _ = node.serialize_into(&mut buf);
+        buf.truncate(buf.len() - 4); // remove less than 8 to force error path
+        let err = TrackingInternalNode::from_slice(&buf).unwrap_err();
+        match err {
+            DCBError::DeserializationError(_) => {}
+            _ => panic!("expected DeserializationError"),
         }
     }
 }
