@@ -130,12 +130,73 @@ impl Mvcc {
             // Sync the file to disk.
             mvcc.fsync()?;
         } else {
-            // Existing DB: detect schema from latest header and set tag key width accordingly
-            if let Ok((_hid, header)) = mvcc.get_latest_header() {
-                if header.schema_version == 0 {
-                    set_tag_key_width(8); // For 64-bit CRC tag hash.
+            // Existing DB: hydrate headers from disk and set tag key width based on latest header
+            if let Ok((hid, header_latest)) = mvcc.get_latest_header() {
+                // Set key width first from the reported header schema
+                if header_latest.schema_version == 0 {
+                    set_tag_key_width(8);
                 } else {
                     set_tag_key_width(crate::tags_tree_nodes::TAG_HASH_LEN);
+                }
+
+                // Hydrate in-memory header pages 0 and 1 from disk so we preserve on-disk fields
+                let h0 = mvcc.read_page(HEADER_PAGE_ID_0).ok();
+                let h1 = mvcc.read_page(HEADER_PAGE_ID_1).ok();
+                {
+                    let mut headers = mvcc.headers.lock().unwrap();
+                    if let Some(p0) = h0 {
+                        headers[0] = p0;
+                    }
+                    if let Some(p1) = h1 {
+                        headers[1] = p1;
+                    }
+                }
+
+                // Defensive check: if header says schema_version=1, verify tags root deserializes at width=16.
+                // If it fails but succeeds at width=8, downgrade schema_version to 0 in latest header.
+                if header_latest.schema_version == 1 {
+                    use crate::node::Node;
+                    let tags_root = header_latest.tags_tree_root_id;
+                    // Try with width=16
+                    set_tag_key_width(crate::tags_tree_nodes::TAG_HASH_LEN);
+                    let sixteen_ok = mvcc.read_page(tags_root).map(|p| matches!(p.node, Node::TagsLeaf(_) | Node::TagsInternal(_))).is_ok();
+                    if !sixteen_ok {
+                        // Try legacy width=8
+                        set_tag_key_width(8);
+                        let eight_ok = mvcc.read_page(tags_root).map(|p| matches!(p.node, Node::TagsLeaf(_) | Node::TagsInternal(_))).is_ok();
+                        if eight_ok {
+                            // Downgrade: write schema_version=0 into the latest header on disk and update in-memory headers
+                            // Update in-memory headers first
+                            {
+                                let mut headers = mvcc.headers.lock().unwrap();
+                                for hp in headers.iter_mut() {
+                                    if let Node::Header(ref mut hn) = hp.node {
+                                        hn.schema_version = 0;
+                                    }
+                                }
+                            }
+                            // Re-write the latest header page with identical fields but schema_version=0
+                            let h = header_latest;
+                            let target = hid;
+                            // Ensure key width remains 8 for this DB after downgrade
+                            set_tag_key_width(8);
+                            mvcc.update_header(
+                                target,
+                                h.tsn,
+                                h.free_lists_tree_root_id,
+                                h.events_tree_root_id,
+                                h.tags_tree_root_id,
+                                h.tracking_root_page_id,
+                                h.next_page_id,
+                                h.next_position,
+                            )?;
+                            // Sync to disk to persist the downgrade promptly
+                            mvcc.fsync()?;
+                        } else {
+                            // Neither width worked; leave as-is
+                            if mvcc.verbose { println!("Tags root failed to deserialize at width 16 and 8; leaving schema_version unchanged"); }
+                        }
+                    }
                 }
             }
         }
