@@ -1,6 +1,7 @@
 use crate::common::PageID;
 use memmap2::{Mmap, MmapOptions};
 // use memmap2::{Advice, MmapOptions};
+use fs2::FileExt as Fs2FileExt;
 use nix::fcntl;
 use std::collections::HashMap;
 use std::fs::{File, OpenOptions};
@@ -10,7 +11,6 @@ use std::os::unix::fs::FileExt;
 use std::path::Path;
 use std::sync::{Arc, RwLock};
 use umadb_dcb::{DCBError, DCBResult};
-use fs2::FileExt as Fs2FileExt;
 
 // Pager for file I/O
 #[derive(Debug)]

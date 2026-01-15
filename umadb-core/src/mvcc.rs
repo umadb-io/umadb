@@ -1,5 +1,6 @@
 use crate::common::Position;
 use crate::common::{PageID, Tsn};
+use crate::db::read_conditional;
 use crate::events_tree_nodes::EventLeafNode;
 use crate::free_lists_tree_nodes::{
     FreeListInternalNode, FreeListLeafNode, FreeListLeafValue, FreeListTsnLeafNode,
@@ -10,7 +11,6 @@ use crate::page::{PAGE_HEADER_SIZE, Page, serialize_page_into};
 use crate::pager::Pager;
 use crate::tags_tree_nodes::TagsLeafNode;
 use crate::tags_tree_nodes::set_tag_key_width;
-use crate::db::read_conditional;
 use dashmap::DashMap;
 use std::collections::HashMap;
 use std::collections::VecDeque;
@@ -19,7 +19,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::sleep;
 use std::time::Duration;
-use umadb_dcb::{DCBError, DCBResult, DCBQuery};
+use umadb_dcb::{DCBError, DCBQuery, DCBResult};
 
 const GET_LATEST_HEADER_RETRIES: usize = 5;
 const GET_LATEST_HEADER_DELAY: Duration = Duration::from_millis(10);
@@ -160,11 +160,17 @@ impl Mvcc {
                     let tags_root = header_latest.tags_tree_root_id;
                     // Try with width=16
                     set_tag_key_width(crate::tags_tree_nodes::TAG_HASH_LEN);
-                    let sixteen_ok = mvcc.read_page(tags_root).map(|p| matches!(p.node, Node::TagsLeaf(_) | Node::TagsInternal(_))).is_ok();
+                    let sixteen_ok = mvcc
+                        .read_page(tags_root)
+                        .map(|p| matches!(p.node, Node::TagsLeaf(_) | Node::TagsInternal(_)))
+                        .is_ok();
                     if !sixteen_ok {
                         // Try legacy width=8
                         set_tag_key_width(8);
-                        let eight_ok = mvcc.read_page(tags_root).map(|p| matches!(p.node, Node::TagsLeaf(_) | Node::TagsInternal(_))).is_ok();
+                        let eight_ok = mvcc
+                            .read_page(tags_root)
+                            .map(|p| matches!(p.node, Node::TagsLeaf(_) | Node::TagsInternal(_)))
+                            .is_ok();
                         if eight_ok {
                             // Downgrade: write schema_version=0 into both in-memory headers and write to disk
                             {
@@ -174,7 +180,9 @@ impl Mvcc {
                                     if let Node::Header(ref mut hn) = hp.node {
                                         let schema_version = hn.schema_version;
                                         if mvcc.verbose {
-                                            println!("Resetting header node {header_page_id:?} schema version from {schema_version:?} to 0");
+                                            println!(
+                                                "Resetting header node {header_page_id:?} schema version from {schema_version:?} to 0"
+                                            );
                                         }
                                         hn.schema_version = 0;
                                     }
@@ -192,7 +200,11 @@ impl Mvcc {
                             mvcc.fsync()?;
                         } else {
                             // Neither width worked; leave as-is
-                            if mvcc.verbose { println!("Tags root failed to deserialize at width 16 and 8; leaving schema_version unchanged"); }
+                            if mvcc.verbose {
+                                println!(
+                                    "Tags root failed to deserialize at width 16 and 8; leaving schema_version unchanged"
+                                );
+                            }
                         }
                     }
                 }
@@ -200,7 +212,8 @@ impl Mvcc {
             if let Ok((hid, header_latest)) = mvcc.get_latest_header() {
                 // Validate header.next_position against events tree's last event and fix if needed
                 {
-                    let empty_dirty: std::collections::HashMap<PageID, Page> = std::collections::HashMap::new();
+                    let empty_dirty: std::collections::HashMap<PageID, Page> =
+                        std::collections::HashMap::new();
                     let mut last_by_tree: Option<u64> = None;
                     match read_conditional(
                         &mvcc,

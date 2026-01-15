@@ -1002,7 +1002,7 @@ impl RequestHandler {
                     .send(WriterRequest::Append {
                         events,
                         condition: adjusted_condition,
-                        tracking_info: tracking_info,
+                        tracking_info,
                         response_tx,
                     })
                     .await

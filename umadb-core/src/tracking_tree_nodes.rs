@@ -18,10 +18,6 @@ impl TrackingLeafNode {
         }
     }
 
-    pub fn len(&self) -> usize {
-        self.keys.len()
-    }
-
     pub fn calc_serialized_size(&self) -> usize {
         // layout (v1 and newer on write):
         // u8: node version (1 for sorted keys)
@@ -30,7 +26,7 @@ impl TrackingLeafNode {
         // repeated key_count times: u64 position
         let mut size = 1 + 2; // version + count(u16)
         for k in &self.keys {
-            size += 1 + k.as_bytes().len();
+            size += 1 + k.len();
         }
         size += 8 * self.values.len();
         size
@@ -45,7 +41,11 @@ impl TrackingLeafNode {
         // Keys are expected to be maintained in sorted order by the node
         for k in &self.keys {
             let kb = k.as_bytes();
-            assert!(kb.len() <= u8::MAX as usize, "tracking key too long to serialize (len>{})", u8::MAX);
+            assert!(
+                kb.len() <= u8::MAX as usize,
+                "tracking key too long to serialize (len>{})",
+                u8::MAX
+            );
             buf[off] = kb.len() as u8;
             off += 1;
             buf[off..off + kb.len()].copy_from_slice(kb);
@@ -59,7 +59,7 @@ impl TrackingLeafNode {
     }
 
     pub fn from_slice(slice: &[u8]) -> DCBResult<Self> {
-        if slice.len() < 1 {
+        if slice.is_empty() {
             return Err(DCBError::DeserializationError(
                 "tracking leaf too small".to_string(),
             ));
@@ -145,10 +145,13 @@ impl TrackingLeafNode {
         }
         if ver == 0 {
             // Old format: keys may be unsorted. Sort keys and keep values aligned.
-            let mut pairs: Vec<(String, Position)> = keys.into_iter().zip(values.into_iter()).collect();
+            let mut pairs: Vec<(String, Position)> = keys.into_iter().zip(values).collect();
             pairs.sort_by(|a, b| a.0.cmp(&b.0));
             let (new_keys, new_vals): (Vec<String>, Vec<Position>) = pairs.into_iter().unzip();
-            Ok(Self { keys: new_keys, values: new_vals })
+            Ok(Self {
+                keys: new_keys,
+                values: new_vals,
+            })
         } else {
             // v>=1: keys are already sorted
             Ok(Self { keys, values })
@@ -156,10 +159,7 @@ impl TrackingLeafNode {
     }
 
     pub fn get(&self, source: &str) -> Option<Position> {
-        match self
-            .keys
-            .binary_search_by(|k| k.as_str().cmp(source))
-        {
+        match self.keys.binary_search_by(|k| k.as_str().cmp(source)) {
             Ok(i) => Some(self.values[i]),
             Err(_) => None,
         }
@@ -181,7 +181,7 @@ impl TrackingLeafNode {
             }
             Err(ins_idx) => {
                 // Key not found; check capacity before inserting
-                let key_len = source.as_bytes().len();
+                let key_len = source.len();
                 // Check free space as key bytes length + 8 for position (as requested)
                 let additional = key_len + 8;
                 let current = self.calc_serialized_size();
@@ -212,9 +212,16 @@ impl TrackingInternalNode {
         }
     }
 
-    pub fn replace_child_id_at(&mut self, idx: usize, old_id: PageID, new_id: PageID) -> DCBResult<()> {
+    pub fn replace_child_id_at(
+        &mut self,
+        idx: usize,
+        old_id: PageID,
+        new_id: PageID,
+    ) -> DCBResult<()> {
         if idx >= self.child_ids.len() {
-            return Err(DCBError::DatabaseCorrupted("child index out of bounds".to_string()));
+            return Err(DCBError::DatabaseCorrupted(
+                "child index out of bounds".to_string(),
+            ));
         }
         if self.child_ids[idx] != old_id {
             return Err(DCBError::DatabaseCorrupted("Child ID mismatch".to_string()));
@@ -251,10 +258,6 @@ impl TrackingInternalNode {
         }
     }
 
-    pub fn len(&self) -> usize {
-        self.keys.len()
-    }
-
     pub fn calc_serialized_size(&self) -> usize {
         // layout (v1 write):
         // u8: version (1)
@@ -263,7 +266,7 @@ impl TrackingInternalNode {
         // repeated (key_count + 1) times: u64 child_page_id
         let mut size = 1 + 2; // version + count(u16)
         for k in &self.keys {
-            size += 1 + k.as_bytes().len();
+            size += 1 + k.len();
         }
         size += 8 * (self.keys.len() + 1);
         size
@@ -271,13 +274,20 @@ impl TrackingInternalNode {
 
     pub fn serialize_into(&self, buf: &mut [u8]) -> usize {
         let needed = self.calc_serialized_size();
-        assert!(buf.len() >= needed, "buffer too small for TrackingInternalNode");
+        assert!(
+            buf.len() >= needed,
+            "buffer too small for TrackingInternalNode"
+        );
         buf[0] = 1; // version 1
         LittleEndian::write_u16(&mut buf[1..3], self.keys.len() as u16);
         let mut off = 3;
         for k in &self.keys {
             let kb = k.as_bytes();
-            assert!(kb.len() <= u8::MAX as usize, "tracking internal key too long to serialize (len>{})", u8::MAX);
+            assert!(
+                kb.len() <= u8::MAX as usize,
+                "tracking internal key too long to serialize (len>{})",
+                u8::MAX
+            );
             buf[off] = kb.len() as u8;
             off += 1;
             buf[off..off + kb.len()].copy_from_slice(kb);
@@ -292,7 +302,7 @@ impl TrackingInternalNode {
     }
 
     pub fn from_slice(slice: &[u8]) -> DCBResult<Self> {
-        if slice.len() < 1 {
+        if slice.is_empty() {
             return Err(DCBError::DeserializationError(
                 "tracking internal too small".to_string(),
             ));
@@ -410,12 +420,17 @@ mod tests {
         node.upsert_no_split("b", Position(2), capacity).unwrap();
         node.upsert_no_split("a", Position(1), capacity).unwrap();
         node.upsert_no_split("c", Position(3), capacity).unwrap();
-        assert_eq!(node.keys, vec!["a".to_string(), "b".to_string(), "c".to_string()]);
+        assert_eq!(
+            node.keys,
+            vec!["a".to_string(), "b".to_string(), "c".to_string()]
+        );
         assert_eq!(node.get("b"), Some(Position(2)));
         // Now try to insert with too small capacity
         let mut node2 = TrackingLeafNode::new();
         let small_capacity = 1 + 4; // too small to accept any key/value
-        let err = node2.upsert_no_split("x", Position(9), small_capacity).unwrap_err();
+        let err = node2
+            .upsert_no_split("x", Position(9), small_capacity)
+            .unwrap_err();
         match err {
             DCBError::InternalError(s) => assert!(s.contains("tracking split")),
             _ => panic!("unexpected error type"),

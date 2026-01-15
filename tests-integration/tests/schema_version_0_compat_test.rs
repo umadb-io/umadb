@@ -121,15 +121,14 @@ fn schema_version_0_roundtrip_read_write_and_tags() -> Result<(), Box<dyn std::e
         }
     }
 
-// Additionally, verify that the header's schema_version remains 0 (legacy) after appends
+    // Additionally, verify that the header's schema_version remains 0 (legacy) after appends
     {
         use umadb_core::db::DEFAULT_PAGE_SIZE;
         use umadb_core::mvcc::Mvcc;
         let mvcc = Mvcc::new(&db_path, DEFAULT_PAGE_SIZE, false)?;
         let (_hid, header) = mvcc.get_latest_header()?;
         assert_eq!(
-            0,
-            header.schema_version,
+            0, header.schema_version,
             "Legacy DB header schema_version should remain 0 after append; got {}",
             header.schema_version
         );

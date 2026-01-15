@@ -113,8 +113,7 @@ impl TagsLeafNode {
         if slice_len < keys_bytes {
             return Err(DCBError::DeserializationError(format!(
                 "Expected at least {} bytes for keys, got {}",
-                keys_bytes,
-                slice_len
+                keys_bytes, slice_len
             )));
         }
 
@@ -135,9 +134,9 @@ impl TagsLeafNode {
             if offset + need > slice_len {
                 let key_number = i + 1;
                 let shortfall = offset + need - slice_len;
-                return Err(DCBError::DeserializationError(
-                    format!("Unexpected end of data while reading tags leaf value header for key {key_number}/{keys_len}: shortfall: {shortfall}, slice len: {slice_len}, offset: {offset}, need: {need}"),
-                ));
+                return Err(DCBError::DeserializationError(format!(
+                    "Unexpected end of data while reading tags leaf value header for key {key_number}/{keys_len}: shortfall: {shortfall}, slice len: {slice_len}, offset: {offset}, need: {need}"
+                )));
             }
             // root_id (8 bytes)
             let root_id_u64 = LittleEndian::read_u64(&slice[offset..offset + 8]);
@@ -152,9 +151,9 @@ impl TagsLeafNode {
             if offset + need > slice_len {
                 let key_number = i + 1;
                 let shortfall = offset + need - slice_len;
-                return Err(DCBError::DeserializationError(
-                    format!("Unexpected end of data while reading tags leaf value positions for key {key_number}/{keys_len}: shortfall: {shortfall}, slice len: {slice_len}, offset: {offset}, need: {need}"),
-                ));
+                return Err(DCBError::DeserializationError(format!(
+                    "Unexpected end of data while reading tags leaf value positions for key {key_number}/{keys_len}: shortfall: {shortfall}, slice len: {slice_len}, offset: {offset}, need: {need}"
+                )));
             }
             let mut positions = Vec::with_capacity(positions_len);
             for i in 0..positions_len {

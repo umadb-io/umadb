@@ -1,14 +1,17 @@
 use std::collections::{BTreeMap, HashMap};
 use std::env;
-use std::path::PathBuf;
 use std::os::unix::fs::FileExt;
+use std::path::PathBuf;
 use umadb_core::common::{PageID, Position};
-use umadb_core::db::{read_conditional, DEFAULT_DB_FILENAME, DEFAULT_PAGE_SIZE, tag_to_hash};
+use umadb_core::db::{DEFAULT_DB_FILENAME, DEFAULT_PAGE_SIZE, read_conditional, tag_to_hash};
 use umadb_core::mvcc::Mvcc;
-use umadb_core::page::Page;
 use umadb_core::node::Node;
-use umadb_core::tags_tree_nodes::{get_tag_key_width, normalize_tag_hash_for_current_width, TAG_HASH_LEN, set_tag_key_width, TagsLeafNode};
-use umadb_dcb::{DCBError, DCBResult, DCBEvent, DCBQuery};
+use umadb_core::page::Page;
+use umadb_core::tags_tree_nodes::{
+    TAG_HASH_LEN, TagsLeafNode, get_tag_key_width, normalize_tag_hash_for_current_width,
+    set_tag_key_width,
+};
+use umadb_dcb::{DCBError, DCBEvent, DCBQuery, DCBResult};
 
 fn type_name_from_byte(b: u8) -> Option<&'static str> {
     match b {
@@ -54,10 +57,8 @@ fn parse_args() -> Result<Args, String> {
                 let v = args
                     .next()
                     .ok_or_else(|| "--page-size requires a value".to_string())?;
-                let ps: usize = v
-                    .parse()
-                    .map_err(|_| format!("Invalid page size: {v}"))?;
-                if ps == 0 || ps % 512 != 0 {
+                let ps: usize = v.parse().map_err(|_| format!("Invalid page size: {v}"))?;
+                if ps == 0 || !ps.is_multiple_of(512) {
                     return Err("Page size must be a positive multiple of 512".to_string());
                 }
                 res.page_size = Some(ps);
@@ -94,7 +95,7 @@ fn main() {
 }
 
 fn real_main() -> DCBResult<()> {
-    let args = parse_args().map_err(|e| DCBError::InternalError(e))?;
+    let args = parse_args().map_err(DCBError::InternalError)?;
 
     let path = args.path.unwrap();
     let p = if path.is_dir() {
@@ -115,7 +116,7 @@ fn real_main() -> DCBResult<()> {
 
     // Open MVCC in normal mode; the library controls file access and reads.
     // No writes are performed by this tool.
-    let mvcc = Mvcc::new(&p.as_path(), page_size, args.verbose)?;
+    let mvcc = Mvcc::new(p.as_path(), page_size, args.verbose)?;
 
     // Progressive report prelude
     println!("UmaDB file: {}", p.display());
@@ -130,7 +131,11 @@ fn real_main() -> DCBResult<()> {
     let mut header_errors: Vec<String> = Vec::new();
     let mut header_infos: Vec<String> = Vec::new();
     // Collect raw bytes of TagsLeaf pages that fail to deserialize for Stage 4 forensic analysis
-    struct ForensicPage { page_id: u64, bytes: Vec<u8>, source: &'static str }
+    struct ForensicPage {
+        page_id: u64,
+        bytes: Vec<u8>,
+        source: &'static str,
+    }
     let mut forensic_tags_pages: Vec<ForensicPage> = Vec::new();
 
     // Bootstrap: attempt to deserialize header pages 0 and 1 before reading the latest header
@@ -160,24 +165,37 @@ fn real_main() -> DCBResult<()> {
                             }
                             _ => {}
                         }
-                        if args.verbose { println!("ok page_id={} type={} (bootstrap)", pid, t); }
+                        if args.verbose {
+                            println!("ok page_id={} type={} (bootstrap)", pid, t);
+                        }
                     }
                     Err(err) => {
                         let type_str = type_name_from_byte(bytes[0]).unwrap_or("unknown");
                         *counts.entry(type_str).or_insert(0) += 1;
                         let msg = match &err {
-                            DCBError::DeserializationError(_) => format!("Page {}: {} {:?}", pid, type_str, err),
-                            DCBError::DatabaseCorrupted(s) => format!("Page {}: {} {}", pid, type_str, s),
+                            DCBError::DeserializationError(_) => {
+                                format!("Page {}: {} {:?}", pid, type_str, err)
+                            }
+                            DCBError::DatabaseCorrupted(s) => {
+                                format!("Page {}: {} {}", pid, type_str, s)
+                            }
                             other => format!("Page {}: {} {:?}", pid, type_str, other),
                         };
-                        if args.verbose { eprintln!("{}", msg); }
+                        if args.verbose {
+                            eprintln!("{}", msg);
+                        }
                         header_errors.push(msg);
                     }
                 }
             }
             Err(e) => {
-                let msg = format!("Page {}: unknown I/O error while reading header page: {}", pid, e);
-                if args.verbose { eprintln!("{}", msg); }
+                let msg = format!(
+                    "Page {}: unknown I/O error while reading header page: {}",
+                    pid, e
+                );
+                if args.verbose {
+                    eprintln!("{}", msg);
+                }
                 deser_errors.push(msg);
             }
         }
@@ -206,19 +224,26 @@ fn real_main() -> DCBResult<()> {
             println!("{}", info);
         }
     }
-    println!("Latest header: page={} tsn={} next_page_id={} next_position={} schema_version={} flags={}",
+    println!(
+        "Latest header: page={} tsn={} next_page_id={} next_position={} schema_version={} flags={}",
         header_page_id.0,
         header.tsn.0,
         header.next_page_id.0,
         header.next_position.0,
         header.schema_version,
-        if header.tracking_root_page_id.0 != 0 { "HAS_TRACKING_ROOT_ID" } else { "none" }
+        if header.tracking_root_page_id.0 != 0 {
+            "HAS_TRACKING_ROOT_ID"
+        } else {
+            "none"
+        }
     );
     if header_errors.is_empty() {
         println!("Headers: OK");
     } else {
         println!("Header errors:");
-        for e in &header_errors { println!("  - {}", e); }
+        for e in &header_errors {
+            println!("  - {}", e);
+        }
     }
 
     // Track actual last scanned page id for reporting (will be updated if we read beyond header)
@@ -246,16 +271,23 @@ fn real_main() -> DCBResult<()> {
                 Err(err) => {
                     // Try to peek the page header to guess the node type
                     let mapped_opt = mvcc.pager.read_page_mmap_slice(page_id).ok();
-                    let type_hint = mapped_opt.as_ref().and_then(|m| type_name_from_byte(m.as_slice()[0]));
+                    let type_hint = mapped_opt
+                        .as_ref()
+                        .and_then(|m| type_name_from_byte(m.as_slice()[0]));
                     let type_str = type_hint.unwrap_or("unknown");
                     // Include failed pages in counts under their hinted type (or "unknown")
                     *counts.entry(type_str).or_insert(0) += 1;
                     // If this looks like a TagsLeaf, retain the raw page bytes for Stage 4 forensic analysis
-                    if type_str == "TagsLeaf" {
-                        if let Some(mapped) = mapped_opt {
-                            forensic_tags_pages.push(ForensicPage { page_id: pid, bytes: mapped.as_slice().to_vec(), source: "within-header" });
-                        }
+                    if type_str == "TagsLeaf"
+                        && let Some(mapped) = mapped_opt
+                    {
+                        forensic_tags_pages.push(ForensicPage {
+                            page_id: pid,
+                            bytes: mapped.as_slice().to_vec(),
+                            source: "within-header",
+                        });
                     }
+
                     let msg = match &err {
                         DCBError::DeserializationError(_) => {
                             // Show the variant and message using Debug formatting
@@ -279,7 +311,10 @@ fn real_main() -> DCBResult<()> {
     // Extended scan: continue reading pages beyond header.next_page_id up to actual file length
     // Stop when a full page of zeros is encountered or when the file ends.
     let reader_file = mvcc.pager.file.clone();
-    let file_len = reader_file.metadata().map_err(|e| DCBError::InternalError(format!("Failed to read file metadata: {}", e)))?.len();
+    let file_len = reader_file
+        .metadata()
+        .map_err(|e| DCBError::InternalError(format!("Failed to read file metadata: {}", e)))?
+        .len();
     let page_size_u64 = page_size as u64;
     let mut pid = total_pages; // start at next_page_id
     let mut buf = vec![0u8; page_size];
@@ -311,7 +346,10 @@ fn real_main() -> DCBResult<()> {
                 if pid == total_pages {
                     next_page_status = Some(format!("I/O error: {}", e));
                 }
-                deser_errors.push(format!("Page {}: unknown I/O error while reading beyond header: {}", pid, e));
+                deser_errors.push(format!(
+                    "Page {}: unknown I/O error while reading beyond header: {}",
+                    pid, e
+                ));
                 break;
             }
         }
@@ -335,21 +373,31 @@ fn real_main() -> DCBResult<()> {
                 if let Node::EventLeaf(_) = &page.node {
                     event_leaf_page_ids.push(page_id);
                 }
-                if args.verbose { println!("ok page_id={} (beyond header) type={}", pid, t); }
+                if args.verbose {
+                    println!("ok page_id={} (beyond header) type={}", pid, t);
+                }
             }
             Err(err) => {
                 let type_hint = type_name_from_byte(buf[0]);
                 let type_str = type_hint.unwrap_or("unknown");
                 *counts.entry(type_str).or_insert(0) += 1;
                 if type_str == "TagsLeaf" {
-                    forensic_tags_pages.push(ForensicPage { page_id: pid, bytes: buf.clone(), source: "beyond-header" });
+                    forensic_tags_pages.push(ForensicPage {
+                        page_id: pid,
+                        bytes: buf.clone(),
+                        source: "beyond-header",
+                    });
                 }
                 let msg = match &err {
-                    DCBError::DeserializationError(_) => format!("Page {}: {} {:?}", pid, type_str, err),
+                    DCBError::DeserializationError(_) => {
+                        format!("Page {}: {} {:?}", pid, type_str, err)
+                    }
                     DCBError::DatabaseCorrupted(s) => format!("Page {}: {} {}", pid, type_str, s),
                     other => format!("Page {}: {} {:?}", pid, type_str, other),
                 };
-                if args.verbose { eprintln!("{}", msg); }
+                if args.verbose {
+                    eprintln!("{}", msg);
+                }
                 deser_errors.push(msg);
             }
         }
@@ -359,12 +407,18 @@ fn real_main() -> DCBResult<()> {
     }
 
     // Deserialisation section (Stage 2 findings)
-    println!("Checking page deserialisation across pages 0..{}...", last_scanned_pid);
+    println!(
+        "Checking page deserialisation across pages 0..{}...",
+        last_scanned_pid
+    );
     // Report next-page status and how many contiguous data pages exist before first zero page
     let next_page_id_val = total_pages;
     let next_status = next_page_status.unwrap_or_else(|| "unknown".to_string());
     println!("Next page (page {}): {}", next_page_id_val, next_status);
-    println!("Data pages beyond header.next_page_id before first zero page: {}", data_pages_beyond);
+    println!(
+        "Data pages beyond header.next_page_id before first zero page: {}",
+        data_pages_beyond
+    );
     println!("Counts by node type:");
     for (k, v) in counts.iter() {
         println!("  {:>22}: {}", k, v);
@@ -416,14 +470,21 @@ fn real_main() -> DCBResult<()> {
                         } else {
                             let mut s = String::from("[");
                             for (i, t) in ev.event.tags.iter().enumerate() {
-                                if i > 0 { s.push_str(", "); }
+                                if i > 0 {
+                                    s.push_str(", ");
+                                }
                                 s.push_str(t);
                             }
                             s.push(']');
                             s
                         };
                         // Build UUID string (if any)
-                        let uuid_str = ev.event.uuid.as_ref().map(|u| u.to_string()).unwrap_or_else(|| "none".to_string());
+                        let uuid_str = ev
+                            .event
+                            .uuid
+                            .as_ref()
+                            .map(|u| u.to_string())
+                            .unwrap_or_else(|| "none".to_string());
                         // Hex-encode data
                         let mut hex = String::with_capacity(ev.event.data.len() * 2);
                         for b in &ev.event.data {
@@ -440,17 +501,22 @@ fn real_main() -> DCBResult<()> {
                 total_events_read += batch.len() as u64;
                 for ev in &batch {
                     // Cache event by position for Stage 4
-                    events_by_position.insert(ev.position, DCBEvent { event_type: ev.event.event_type.clone(), data: ev.event.data.clone(), tags: ev.event.tags.clone(), uuid: ev.event.uuid });
+                    events_by_position.insert(
+                        ev.position,
+                        DCBEvent {
+                            event_type: ev.event.event_type.clone(),
+                            data: ev.event.data.clone(),
+                            tags: ev.event.tags.clone(),
+                            uuid: ev.event.uuid,
+                        },
+                    );
                     last_event_pos = ev.position;
                 }
                 // next start is last + 1
                 start = Some(Position(last_event_pos + 1));
             }
             Err(e) => {
-                event_errors.push(format!(
-                    "Event sequence traversal failed: {:?}",
-                    e
-                ));
+                event_errors.push(format!("Event sequence traversal failed: {:?}", e));
                 break;
             }
         }
@@ -467,9 +533,9 @@ fn real_main() -> DCBResult<()> {
         header.events_tree_root_id,
         header.tags_tree_root_id,
         DCBQuery { items: vec![] },
-        None,              // no start -> let iterator pick end when backwards
-        true,              // backwards: start from the end
-        Some(1),           // only need the last event
+        None,    // no start -> let iterator pick end when backwards
+        true,    // backwards: start from the end
+        Some(1), // only need the last event
         false,
     ) {
         Ok(mut v) => {
@@ -518,23 +584,21 @@ fn real_main() -> DCBResult<()> {
             None => event_errors.push("Events tree last-event lookup returned no events while header indicates there should be some".to_string()),
         }
     } else if args.verbose {
-        eprintln!(
-            "Direct events-tree last-event check OK: {}",
-            header_last
-        );
+        eprintln!("Direct events-tree last-event check OK: {}", header_last);
     }
 
     // Also compare sequential scan vs direct-tree result if both present
-    if let Some(p) = last_by_tree {
-        if p != last_event_pos {
-            event_errors.push(format!(
-                "Mismatch between sequential scan last ({}) and direct-tree last ({})",
-                last_event_pos, p
-            ));
-        }
+    if let Some(p) = last_by_tree
+        && p != last_event_pos
+    {
+        event_errors.push(format!(
+            "Mismatch between sequential scan last ({}) and direct-tree last ({})",
+            last_event_pos, p
+        ));
     }
 
-    let events_ok = events_ok1 && events_ok2 && last_by_tree.map(|p| p == last_event_pos).unwrap_or(false);
+    let events_ok =
+        events_ok1 && events_ok2 && last_by_tree.map(|p| p == last_event_pos).unwrap_or(false);
 
     // If there are missing events, probe EventLeaf pages to see if the missing positions are present there
     let mut probe_findings: Vec<String> = Vec::new();
@@ -566,8 +630,13 @@ fn real_main() -> DCBResult<()> {
                                 matches.sort_unstable();
                                 let total = matches.len();
                                 let show = usize::min(total, 10);
-                                let sample: Vec<String> = matches.iter().take(show).map(|p| p.to_string()).collect();
-                                let suffix = if total > show { format!(" (showing first {} of {})", show, total) } else { String::new() };
+                                let sample: Vec<String> =
+                                    matches.iter().take(show).map(|p| p.to_string()).collect();
+                                let suffix = if total > show {
+                                    format!(" (showing first {} of {})", show, total)
+                                } else {
+                                    String::new()
+                                };
                                 probe_findings.push(format!(
                                     "Page {}: contains {} missing positions{}: {}",
                                     pid.0,
@@ -580,7 +649,10 @@ fn real_main() -> DCBResult<()> {
                     }
                     Err(e) => {
                         if args.verbose {
-                            eprintln!("Skipping EventLeaf probe for page {} due to error: {:?}", pid.0, e);
+                            eprintln!(
+                                "Skipping EventLeaf probe for page {} due to error: {:?}",
+                                pid.0, e
+                            );
                         }
                     }
                 }
@@ -594,15 +666,12 @@ fn real_main() -> DCBResult<()> {
         }
     }
 
-
     // Event sequence section
     println!("Checking event sequence vs header.next_position...");
     if events_ok && event_errors.is_empty() {
         println!(
             "Events: {} (last position {}) checks out against header.next_position={}",
-            total_events_read,
-            last_event_pos,
-            header.next_position.0
+            total_events_read, last_event_pos, header.next_position.0
         );
     } else {
         println!("Event sequence errors:");
@@ -624,13 +693,22 @@ fn real_main() -> DCBResult<()> {
         println!("No failed TagsLeaf pages to analyze.");
     } else {
         // Helper to parse a TagsLeaf body tolerantly with a given key width
-        fn forensic_parse_tags_leaf(body: &[u8], keyw: usize) -> (usize, Vec<([u8; TAG_HASH_LEN], Vec<u64>)>, String) {
+        fn forensic_parse_tags_leaf(
+            body: &[u8],
+            keyw: usize,
+        ) -> (usize, Vec<([u8; TAG_HASH_LEN], Vec<u64>)>, String) {
             let mut notes = String::new();
-            if body.len() < 2 { notes.push_str("too short (<2 bytes) for keys_len; "); return (0, vec![], notes); }
+            if body.len() < 2 {
+                notes.push_str("too short (<2 bytes) for keys_len; ");
+                return (0, vec![], notes);
+            }
             let keys_len = u16::from_le_bytes([body[0], body[1]]) as usize;
             let mut offset = 2usize;
             let keys_bytes = keys_len.saturating_mul(keyw);
-            if body.len() < offset + keys_bytes { notes.push_str("not enough bytes for keys; "); return (0, vec![], notes); }
+            if body.len() < offset + keys_bytes {
+                notes.push_str("not enough bytes for keys; ");
+                return (0, vec![], notes);
+            }
             let mut keys: Vec<[u8; TAG_HASH_LEN]> = Vec::with_capacity(keys_len);
             for i in 0..keys_len {
                 let start = offset + i * keyw;
@@ -641,7 +719,7 @@ fn real_main() -> DCBResult<()> {
                 } else {
                     notes.push_str(&format!("key {} truncated; ", i));
                     let avail = body.len().saturating_sub(start);
-                    k[..avail].copy_from_slice(&body[start..start+avail]);
+                    k[..avail].copy_from_slice(&body[start..start + avail]);
                 }
                 keys.push(k);
             }
@@ -652,9 +730,10 @@ fn real_main() -> DCBResult<()> {
                     notes.push_str(&format!("value header for key {} truncated; ", i));
                     break;
                 }
-                let _root = u64::from_le_bytes(body[offset..offset+8].try_into().unwrap());
+                let _root = u64::from_le_bytes(body[offset..offset + 8].try_into().unwrap());
                 offset += 8;
-                let plen = u16::from_le_bytes(body[offset..offset+2].try_into().unwrap()) as usize;
+                let plen =
+                    u16::from_le_bytes(body[offset..offset + 2].try_into().unwrap()) as usize;
                 offset += 2;
                 let need = plen.saturating_mul(8);
                 if offset + need > body.len() {
@@ -662,12 +741,18 @@ fn real_main() -> DCBResult<()> {
                     // read as many complete u64s as we have
                     let avail = (body.len().saturating_sub(offset)) / 8;
                     let mut pos: Vec<u64> = Vec::with_capacity(avail);
-                    for j in 0..avail { let p = offset + j*8; pos.push(u64::from_le_bytes(body[p..p+8].try_into().unwrap())); }
+                    for j in 0..avail {
+                        let p = offset + j * 8;
+                        pos.push(u64::from_le_bytes(body[p..p + 8].try_into().unwrap()));
+                    }
                     out.push((kh, pos));
                     break;
                 } else {
                     let mut pos: Vec<u64> = Vec::with_capacity(usize::min(plen, 4096));
-                    for j in 0..plen { let p = offset + j*8; pos.push(u64::from_le_bytes(body[p..p+8].try_into().unwrap())); }
+                    for j in 0..plen {
+                        let p = offset + j * 8;
+                        pos.push(u64::from_le_bytes(body[p..p + 8].try_into().unwrap()));
+                    }
                     offset += need;
                     out.push((kh, pos));
                 }
@@ -695,13 +780,21 @@ fn real_main() -> DCBResult<()> {
                         for t in &ev.tags {
                             if used_w == 8 {
                                 let h = umadb_core::db::tag_to_hash_crc64(t);
-                                if &h[..8] == &kh[..8] { matched = true; break; }
+                                if h[..8] == kh[..8] {
+                                    matched = true;
+                                    break;
+                                }
                             } else {
                                 let h = normalize_tag_hash_for_current_width(tag_to_hash(t));
-                                if &h == kh { matched = true; break; }
+                                if &h == kh {
+                                    matched = true;
+                                    break;
+                                }
                             }
                         }
-                        if matched { hash_matches += 1; } else if mismatches.len() < 5 {
+                        if matched {
+                            hash_matches += 1;
+                        } else if mismatches.len() < 5 {
                             mismatches.push(format!(
                                 "pos {} has event with tags {:?} but none hash to key {:02x?}",
                                 pos,
@@ -719,7 +812,11 @@ fn real_main() -> DCBResult<()> {
         for fp in &forensic_tags_pages {
             // Extract page body from full page bytes (strip 9-byte page header)
             let bytes = &fp.bytes;
-            let body = if bytes.len() >= 9 { &bytes[9..] } else { bytes.as_slice() };
+            let body = if bytes.len() >= 9 {
+                &bytes[9..]
+            } else {
+                bytes.as_slice()
+            };
 
             // Parse with both widths independently
             let cur_w = get_tag_key_width();
@@ -729,25 +826,50 @@ fn real_main() -> DCBResult<()> {
             println!("Forensic TagsLeaf page {} ({}):", fp.page_id, fp.source);
 
             // Report current width analysis
-            let (tpos_cur, pe_cur, hm_cur, mm_cur) = analyze_entries(&cur_entries, cur_w, &events_by_position);
-            println!("  parse width={}: recovered keys={} total_positions={}", cur_w, cur_entries.len(), tpos_cur);
-            if !cur_notes.is_empty() { println!("  notes[width={}]: {}", cur_w, cur_notes); }
+            let (tpos_cur, pe_cur, hm_cur, mm_cur) =
+                analyze_entries(&cur_entries, cur_w, &events_by_position);
+            println!(
+                "  parse width={}: recovered keys={} total_positions={}",
+                cur_w,
+                cur_entries.len(),
+                tpos_cur
+            );
+            if !cur_notes.is_empty() {
+                println!("  notes[width={}]: {}", cur_w, cur_notes);
+            }
             println!("  positions with readable events: {}", pe_cur);
-            println!("  events where some tag hashes matched recovered key: {}", hm_cur);
+            println!(
+                "  events where some tag hashes matched recovered key: {}",
+                hm_cur
+            );
             if !mm_cur.is_empty() {
                 println!("  sample mismatches (up to 5) [width={}]:", cur_w);
-                for m in mm_cur { println!("    - {}", m); }
+                for m in mm_cur {
+                    println!("    - {}", m);
+                }
             }
 
             // Report legacy width=8 analysis
-            let (tpos_legacy, pe_legacy, hm_legacy, mm_legacy) = analyze_entries(&legacy_entries, 8, &events_by_position);
-            println!("  parse width=8: recovered keys={} total_positions={}", legacy_entries.len(), tpos_legacy);
-            if !legacy_notes.is_empty() { println!("  notes[width=8]: {}", legacy_notes); }
+            let (tpos_legacy, pe_legacy, hm_legacy, mm_legacy) =
+                analyze_entries(&legacy_entries, 8, &events_by_position);
+            println!(
+                "  parse width=8: recovered keys={} total_positions={}",
+                legacy_entries.len(),
+                tpos_legacy
+            );
+            if !legacy_notes.is_empty() {
+                println!("  notes[width=8]: {}", legacy_notes);
+            }
             println!("  positions with readable events: {}", pe_legacy);
-            println!("  events where some tag hashes matched recovered key: {}", hm_legacy);
+            println!(
+                "  events where some tag hashes matched recovered key: {}",
+                hm_legacy
+            );
             if !mm_legacy.is_empty() {
                 println!("  sample mismatches (up to 5) [width=8]:");
-                for m in mm_legacy { println!("    - {}", m); }
+                for m in mm_legacy {
+                    println!("    - {}", m);
+                }
             }
 
             // Additionally, attempt core deserialization using schema 0 key width (8 bytes)
@@ -759,11 +881,18 @@ fn real_main() -> DCBResult<()> {
             match core_res {
                 Ok(node) => {
                     let keys = node.keys.len();
-                    let total_positions: usize = node.values.iter().map(|v| v.positions.len()).sum();
-                    println!("  core deserialise with schema0 key width=8: OK (keys={} total_positions={})", keys, total_positions);
+                    let total_positions: usize =
+                        node.values.iter().map(|v| v.positions.len()).sum();
+                    println!(
+                        "  core deserialise with schema0 key width=8: OK (keys={} total_positions={})",
+                        keys, total_positions
+                    );
                 }
                 Err(e) => {
-                    println!("  core deserialise with schema0 key width=8: failed: {:?}", e);
+                    println!(
+                        "  core deserialise with schema0 key width=8: failed: {:?}",
+                        e
+                    );
                 }
             }
         }
@@ -774,6 +903,8 @@ fn real_main() -> DCBResult<()> {
         println!("Integrity: OK");
         Ok(())
     } else {
-        Err(DCBError::InternalError("Integrity check failed".to_string()))
+        Err(DCBError::InternalError(
+            "Integrity check failed".to_string(),
+        ))
     }
 }

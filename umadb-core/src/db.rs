@@ -77,7 +77,7 @@ impl UmaDB {
                     return Err(DCBError::DatabaseCorrupted(format!(
                         "Invalid tracking node type: {}",
                         other.type_name()
-                    )))
+                    )));
                 }
             }
         }
@@ -175,15 +175,15 @@ impl UmaDB {
         }
 
         // If tracking is provided for this item, enforce monotonicity and update tracking leaf under same writer
-        if let Some(tracking_info) = tracking_info {
-            if let Err(e) = tracking_upsert(
+        if let Some(tracking_info) = tracking_info
+            && let Err(e) = tracking_upsert(
                 mvcc,
                 writer,
                 &tracking_info.source,
                 Position(tracking_info.position),
-            ) {
-                return Err(e);
-            }
+            )
+        {
+            return Err(e);
         }
 
         // Append unconditionally
@@ -286,11 +286,12 @@ struct ReadResponse {
 /// Ensure tracking constraint and update/insert the position into leaf without splitting.
 fn tracking_upsert(mvcc: &Mvcc, writer: &mut Writer, source: &str, pos: Position) -> DCBResult<()> {
     // Enforce maximum key length (1-byte length field in tracking nodes)
-    let key_len = source.as_bytes().len();
+    let key_len = source.len();
     if key_len > u8::MAX as usize {
-        return Err(DCBError::InvalidArgument(
-            format!("tracking source too long ({} > 255)", key_len),
-        ));
+        return Err(DCBError::InvalidArgument(format!(
+            "tracking source too long ({} > 255)",
+            key_len
+        )));
     }
 
     let root = writer.tracking_tree_root_id;
@@ -343,13 +344,13 @@ fn tracking_upsert(mvcc: &Mvcc, writer: &mut Writer, source: &str, pos: Position
                 "Expected TrackingLeaf".to_string(),
             ));
         };
-        if let Some(existing) = leaf.get(source) {
-            if pos.0 <= existing.0 {
-                return Err(DCBError::IntegrityError(format!(
-                    "non-increasing tracking position for source '{source}': {} <= {}",
-                    pos.0, existing.0
-                )));
-            }
+        if let Some(existing) = leaf.get(source)
+            && pos.0 <= existing.0
+        {
+            return Err(DCBError::IntegrityError(format!(
+                "non-increasing tracking position for source '{source}': {} <= {}",
+                pos.0, existing.0
+            )));
         }
     }
 
@@ -965,7 +966,10 @@ mod tests {
             .append(
                 vec![ev],
                 None,
-                Some(TrackingInfo { source: long_key, position: 1 }),
+                Some(TrackingInfo {
+                    source: long_key,
+                    position: 1,
+                }),
             )
             .unwrap_err();
         match err {
@@ -988,13 +992,15 @@ mod tests {
         for i in 0..50u32 {
             let key = format!("k{:03}", i);
             let ev = base_event.clone();
-            uma
-                .append(
-                    vec![ev],
-                    None,
-                    Some(TrackingInfo { source: key.clone(), position: (i + 1) as u64 }),
-                )
-                .unwrap();
+            uma.append(
+                vec![ev],
+                None,
+                Some(TrackingInfo {
+                    source: key.clone(),
+                    position: (i + 1) as u64,
+                }),
+            )
+            .unwrap();
         }
         // Verify some lookups
         assert_eq!(Some(1), uma.get_tracking_info("k000").unwrap());
@@ -1025,13 +1031,15 @@ mod tests {
             println!("Key: {key}");
             let ev = base_event.clone();
             let pos = (i + 1) as u64;
-            uma
-                .append(
-                    vec![ev],
-                    None,
-                    Some(TrackingInfo { source: key.clone(), position: pos }),
-                )
-                .unwrap();
+            uma.append(
+                vec![ev],
+                None,
+                Some(TrackingInfo {
+                    source: key.clone(),
+                    position: pos,
+                }),
+            )
+            .unwrap();
             observed.insert(key, pos);
 
             if i % 5 == 4 {
@@ -1059,25 +1067,35 @@ mod tests {
         // Verify that every key we inserted can be looked up and has the expected value
         for (k, expected_pos) in &observed {
             let got = uma.get_tracking_info(&k).unwrap();
-            assert_eq!(Some(*expected_pos), got, "tracking info mismatch for key {k}");
+            assert_eq!(
+                Some(*expected_pos),
+                got,
+                "tracking info mismatch for key {k}"
+            );
         }
 
         // Now, for each source, increment the position by 1000 and verify updates are visible
         let mut updated: HashMap<String, u64> = HashMap::new();
         for (k, prev_pos) in &observed {
             let new_pos = *prev_pos + 1000;
-            uma
-                .append(
-                    vec![base_event.clone()],
-                    None,
-                    Some(TrackingInfo { source: k.clone(), position: new_pos }),
-                )
-                .unwrap();
+            uma.append(
+                vec![base_event.clone()],
+                None,
+                Some(TrackingInfo {
+                    source: k.clone(),
+                    position: new_pos,
+                }),
+            )
+            .unwrap();
             updated.insert(k.clone(), new_pos);
         }
         for (k, expected_pos) in updated {
             let got = uma.get_tracking_info(&k).unwrap();
-            assert_eq!(Some(expected_pos), got, "after update: tracking info mismatch for key {k}");
+            assert_eq!(
+                Some(expected_pos),
+                got,
+                "after update: tracking info mismatch for key {k}"
+            );
         }
     }
 
