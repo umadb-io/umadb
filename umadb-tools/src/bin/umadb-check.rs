@@ -278,7 +278,7 @@ fn real_main() -> DCBResult<()> {
 
     // Extended scan: continue reading pages beyond header.next_page_id up to actual file length
     // Stop when a full page of zeros is encountered or when the file ends.
-    let reader_file = mvcc.pager.reader.clone();
+    let reader_file = mvcc.pager.file.clone();
     let file_len = reader_file.metadata().map_err(|e| DCBError::InternalError(format!("Failed to read file metadata: {}", e)))?.len();
     let page_size_u64 = page_size as u64;
     let mut pid = total_pages; // start at next_page_id

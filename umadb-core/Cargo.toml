@@ -22,6 +22,7 @@ rand = "0.9"
 byteorder = "1"
 bitflags = "2"
 nix = { version = "0.30", features = ["fs"] }
+fs2 = "0.4"
 
 [dev-dependencies]
 tempfile = { workspace = true }

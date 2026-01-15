@@ -10,11 +10,12 @@ use std::os::unix::fs::FileExt;
 use std::path::Path;
 use std::sync::{Arc, RwLock};
 use umadb_dcb::{DCBError, DCBResult};
+use fs2::FileExt as Fs2FileExt;
 
 // Pager for file I/O
+#[derive(Debug)]
 pub struct Pager {
-    pub reader: Arc<File>,
-    pub writer: Arc<File>,
+    pub file: Arc<File>,
     pub writer_raw_fd: RawFd,
     pub page_size: usize,
     pub is_file_new: bool,
@@ -25,12 +26,20 @@ pub struct Pager {
     no_fsync: bool,
 }
 
+impl Drop for Pager {
+    fn drop(&mut self) {
+        // Explicitly unlock to release the advisory lock before closing the file descriptor.
+        // Presence of the file on disk is irrelevant; advisory lock state is maintained by OS.
+        let _ = Fs2FileExt::unlock(self.file.as_ref());
+    }
+}
+
 // Implementation for Pager
 impl Pager {
     pub fn new(path: &Path, page_size: usize) -> DCBResult<Self> {
         let is_file_new = !path.exists();
 
-        let reader_file = match if is_file_new {
+        let file = match if is_file_new {
             OpenOptions::new()
                 .read(true)
                 .write(true)
@@ -40,37 +49,34 @@ impl Pager {
         } else {
             OpenOptions::new().read(true).write(true).open(path)
         } {
-            Ok(reader_file) => reader_file,
+            Ok(file) => file,
             Err(err) => {
                 return Err(DCBError::InitializationError(format!(
-                    "Couldn't open file {} for reading: {}",
+                    "Couldn't open database file {}: {}",
                     path.display(),
                     err
                 )));
             }
         };
 
-        let writer_file = match if is_file_new {
-            OpenOptions::new()
-                .read(true)
-                .write(true)
-                .create(true)
-                .truncate(false)
-                .open(path)
-        } else {
-            OpenOptions::new().read(true).write(true).open(path)
-        } {
-            Ok(reader_file) => reader_file,
-            Err(err) => {
+        let writer_raw_fd = file.as_raw_fd();
+
+        // Acquire advisory file lock using fs2 on the actual database file
+        if let Err(err) = Fs2FileExt::try_lock_exclusive(&file) {
+            use std::io::ErrorKind;
+            if err.kind() == ErrorKind::WouldBlock {
                 return Err(DCBError::InitializationError(format!(
-                    "Couldn't open file {} for writing: {}",
+                    "Database file {} is already locked (another process/container may be using it).",
+                    path.display()
+                )));
+            } else {
+                return Err(DCBError::InitializationError(format!(
+                    "Failed to acquire exclusive lock on database file {}: {}",
                     path.display(),
                     err
                 )));
             }
-        };
-
-        let writer_raw_fd = writer_file.as_raw_fd();
+        }
 
         // Compute pages per mmap so that:
         // - Each mmap offset is aligned to OS page size (and implicitly DB page size), and
@@ -93,8 +99,7 @@ impl Pager {
         let mmap_pages_per_map = align_pages * usize::max(1, k);
 
         Ok(Self {
-            reader: Arc::new(reader_file),
-            writer: Arc::new(writer_file),
+            file: Arc::new(file),
             writer_raw_fd,
             page_size,
             is_file_new,
@@ -128,7 +133,7 @@ impl Pager {
     }
 
     pub fn read_page(&self, page_id: PageID) -> io::Result<Vec<u8>> {
-        let file = self.reader.clone();
+        let file = self.file.clone();
         let offset = page_id.0 * (self.page_size as u64);
         let mut page = vec![0u8; self.page_size];
         let bytes_read = file.read_at(&mut page, offset)?;
@@ -269,7 +274,7 @@ impl Pager {
         }
 
         // Slow path: need to create the mapping with double-checked locking
-        let file = self.reader.clone();
+        let file = self.file.clone();
         let file_len = file.metadata()?.len();
 
         // Re-check if mapping appeared while we acquired the file lock
@@ -363,10 +368,10 @@ impl Pager {
         }
 
         // Check the page doesn't overflow the file size.
-        let file_len = self.writer.metadata()?.len();
+        let file_len = self.file.metadata()?.len();
         if self.page_size as u64 * (page_id.0 + 1) > file_len
             && let Err(err) = preallocate(
-                &self.writer,
+                &self.file,
                 (self.mmap_pages_per_map * self.page_size) as u64,
             )
         {
@@ -374,7 +379,7 @@ impl Pager {
         }
 
         // Write the page data
-        self.writer
+        self.file
             .write_at(page_data, page_id.0 * (self.page_size as u64))?;
 
         Ok(())
@@ -400,7 +405,7 @@ impl Pager {
             // On Linux, prefer sync_data() over fsync() because:
             // - It avoids unnecessary metadata flushes
             // - It is implemented as fdatasync(), which is the Linux idiom
-            self.writer.sync_data()
+            self.file.sync_data()
         }
 
         #[cfg(not(any(target_os = "macos", target_os = "linux")))]
@@ -670,5 +675,29 @@ mod tests {
             .read_page_mmap_slice(PageID(ppm as u64))
             .expect("read second window");
         assert_eq!(pager.debug_mmap_count(), 2);
+    }
+
+    #[test]
+    fn lock_file_persists_and_unlocks() {
+        let page_size = 1024usize;
+        let path = temp_file_path("pager_lock_test.db");
+
+        // First open acquires lock
+        let pager = Pager::new(&path, page_size).expect("pager new");
+
+        // While pager is open, attempting to open a second Pager should fail with InitializationError
+        let err = Pager::new(&path, page_size).unwrap_err();
+        match err {
+            DCBError::InitializationError(msg) => {
+                assert!(msg.contains("already locked"), "unexpected error: {}", msg);
+            }
+            other => panic!("expected InitializationError, got {:?}", other),
+        }
+
+        // Drop pager, which should release the lock via Drop::unlock
+        drop(pager);
+
+        // Re-open should now succeed (lock released)
+        let _pager2 = Pager::new(&path, page_size).expect("re-open after release");
     }
 }
