@@ -100,7 +100,8 @@ impl Pager {
             is_file_new,
             mmap_pages_per_map,
             mmaps: RwLock::new(HashMap::new()),
-            no_fsync: std::env::var("UMADB_NO_FSYNC").ok().is_some(),
+            // no_fsync: std::env::var("UMADB_NO_FSYNC").ok().is_some(),
+            no_fsync: false,
         })
     }
 
