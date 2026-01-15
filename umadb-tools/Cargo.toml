@@ -1,6 +1,6 @@
 [package]
 name = "umadb-tools"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
 authors = ["UmaDB Developers <dev@umadb.io>"]
 description = "Command-line tools for UmaDB databases (integrity checks, utilities)."
