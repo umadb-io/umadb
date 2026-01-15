@@ -514,33 +514,11 @@ impl umadb_proto::v1::dcb_server::Dcb for DCBServer {
                             }
                             // For subscriptions, wait for new events instead of terminating
                             if subscribe {
-                                // Wait while head <= next_after (or None)
-                                loop {
-                                    // Stop if the channel is closed.
-                                    if tx.is_closed() {
-                                        break;
-                                    }
-                                    let current_head = *head_rx.borrow();
-                                    if current_head
-                                        .map(|h| h >= next_start.unwrap_or(1))
-                                        .unwrap_or(false)
-                                    {
-                                        break; // Break out of waiting, new events are available.
-                                    }
-                                    // Wait for either a new head or a server shutdown signal
-                                    tokio::select! {
-                                        res = head_rx.changed() => {
-                                            if res.is_err() { break; }
-                                        }
-                                        res2 = shutdown_watch_rx.changed() => {
-                                            if res2.is_ok() {
-                                                // Exit if shutting down.
-                                                if *shutdown_watch_rx.borrow() { break; }
-                                            } else {
-                                                break; // sender dropped
-                                            }
-                                        }
-                                    }
+                                // Wait for either a new head or a server shutdown signal
+                                tokio::select! {
+                                    _ = head_rx.changed() => {},
+                                    _ = shutdown_watch_rx.changed() => {},
+                                    _ = tx.closed() => {},
                                 }
                                 continue;
                             }
