@@ -226,8 +226,8 @@ The `Client.head()` method returns the position of the last event recorded in an
 def head(self) -> int | None: ...
 ```
 
-The `Client.head()` method can be used both for constructing decision models in a domain layer, and for projecting events into
-materialized views in CQRS. An optional [`DCBQuery`](#query) can be provided to select by tags and types.
+The `Client.head()` method can be used for counting the number of recorded events in the database, or for determining the position
+of the last recorded event when subscribing only to new events.
 
 ### Return Value
 
