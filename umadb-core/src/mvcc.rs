@@ -1,6 +1,6 @@
 use crate::common::Position;
 use crate::common::{PageID, Tsn};
-use crate::db::read_conditional;
+use crate::db::{DB_SCHEMA_VERSION, read_conditional};
 use crate::events_tree_nodes::EventLeafNode;
 use crate::free_lists_tree_nodes::{
     FreeListInternalNode, FreeListLeafNode, FreeListLeafValue, FreeListTsnLeafNode,
@@ -19,6 +19,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::sleep;
 use std::time::Duration;
+use umadb_dcb::DCBError::InternalError;
 use umadb_dcb::{DCBError, DCBQuery, DCBResult};
 
 const GET_LATEST_HEADER_RETRIES: usize = 5;
@@ -133,6 +134,14 @@ impl Mvcc {
         } else {
             // Existing DB: hydrate headers from disk and set tag key width based on latest header
             if let Ok((_, header_latest)) = mvcc.get_latest_header() {
+                // Don't proceed if this software is too old.
+                if header_latest.schema_version > DB_SCHEMA_VERSION {
+                    let schema_version = header_latest.schema_version;
+                    return Err(InternalError(format!(
+                        "Software version is too old. This software supports schema version {DB_SCHEMA_VERSION} but the database file has schema version {schema_version}."
+                    )));
+                }
+
                 // Set key width first from the reported header schema
                 if header_latest.schema_version == 0 {
                     set_tag_key_width(8);
@@ -4241,6 +4250,57 @@ mod tests {
                 expected, union,
                 "All page IDs must be accounted for (active or freed)"
             );
+        }
+    }
+
+    #[cfg(test)]
+    mod schema_version_tests {
+        use super::*;
+        use serial_test::serial;
+        use tempfile::tempdir;
+
+        #[test]
+        #[serial]
+        fn opening_db_with_newer_schema_version_errors() {
+            // 1) Create a new database
+            let temp_dir = tempdir().unwrap();
+            let db_path = temp_dir.path().join("schema-guard.db");
+            let page_size = 64usize; // small is fine for tests
+            let verbose = false;
+
+            let mvcc = Mvcc::new(&db_path, page_size, verbose).expect("must create new db");
+
+            // 2) Read header[0], bump its schema_version, write it back via pager
+            let mut h0 = mvcc.read_header(HEADER_PAGE_ID_0).expect("read header 0");
+            h0.schema_version = DB_SCHEMA_VERSION + 1;
+
+            // Recreate a Page with modified header and write it
+            let page = Page::new(HEADER_PAGE_ID_0, Node::Header(h0));
+            {
+                let mut buf = mvcc.page_buf.lock().unwrap();
+                serialize_page_into(&mut buf, &page.node).expect("serialize header page");
+                mvcc.pager
+                    .write_page(page.page_id, &buf)
+                    .expect("write modified header 0");
+            }
+
+            // Ensure data is flushed (optional but nice to have)
+            mvcc.fsync().ok();
+
+            // 3) Drop the instance to release the fs2 file lock so we can reopen
+            drop(mvcc);
+
+            // 4) Attempt to open again; expect an InternalError complaining about schema version
+            match Mvcc::new(&db_path, page_size, verbose) {
+                Ok(_) => panic!("opening should have failed due to newer on-disk schema"),
+                Err(DCBError::InternalError(msg)) => {
+                    assert!(
+                        msg.contains("Software version is too old"),
+                        "unexpected error message: {msg}"
+                    );
+                }
+                Err(other) => panic!("unexpected error type: {other:?}"),
+            }
         }
     }
 }
