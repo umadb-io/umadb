@@ -1028,7 +1028,6 @@ mod tests {
         let mut detected_internal_split = false;
         for i in 0..200u32 {
             let key = format!("s{:03}xxxx", i); // 8-byte keys keep node capacities small
-            println!("Key: {key}");
             let ev = base_event.clone();
             let pos = (i + 1) as u64;
             uma.append(
