@@ -16,5 +16,5 @@ name = "umadb-check"
 path = "src/bin/umadb-check.rs"
 
 [dependencies]
-umadb-core = { path = "../umadb-core", version = "0.3.1" }
-umadb-dcb = { path = "../umadb-dcb", version = "0.3.1" }
+umadb-core = { path = "../umadb-core", version = "0.3.2" }
+umadb-dcb = { path = "../umadb-dcb", version = "0.3.2" }
