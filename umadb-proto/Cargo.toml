@@ -11,7 +11,7 @@ keywords = ["event-store", "grpc", "protobuf"]
 categories = ["database", "network-programming"]
 
 [dependencies]
-umadb-dcb = { path = "../umadb-dcb", version = "0.3.2" }
+umadb-dcb = { path = "../umadb-dcb", version = "0.3.3" }
 prost = "0.14.1"
 tonic-prost = "0.14.2"
 tonic = { workspace = true }
