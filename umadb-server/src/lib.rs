@@ -865,19 +865,18 @@ impl RequestHandler {
                             match batch_result {
                                 Ok(results) => {
                                     // Send individual results back to requesters
-                                    // Also compute the new head as the maximum successful last position in this batch
-                                    let mut max_ok: Option<u64> = None;
                                     for (res, tx) in results.into_iter().zip(responders.into_iter())
                                     {
-                                        if let Ok(v) = &res {
-                                            max_ok = Some(max_ok.map_or(*v, |m| m.max(*v)));
-                                        }
                                         let _ = tx.send(res);
                                     }
-                                    // After a successful batch commit, publish the updated head.
-                                    if let Some(h) = max_ok {
-                                        let _ = head_tx_writer.send(Some(h));
-                                    }
+                                    // After a successful batch commit, publish the updated head from writer.next_position.
+                                    let last_committed = writer.next_position.0.saturating_sub(1);
+                                    let new_head = if last_committed == 0 {
+                                        None
+                                    } else {
+                                        Some(last_committed)
+                                    };
+                                    let _ = head_tx_writer.send(new_head);
                                 }
                                 Err(e) => {
                                     // If the batch failed as a whole (e.g., commit failed), propagate the SAME error to all responders.
