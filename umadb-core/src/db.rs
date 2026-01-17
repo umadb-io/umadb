@@ -92,25 +92,57 @@ impl UmaDB {
     /// At the end, commits the writer once. If commit fails, returns the commit error and discards per-item results.
     pub fn append_batch(
         &self,
-        items: Vec<(
+        mut items: Vec<(
             Vec<DCBEvent>,
             Option<DCBAppendCondition>,
             Option<TrackingInfo>,
         )>,
     ) -> DCBResult<Vec<DCBResult<u64>>> {
-        // println!("Processing batch of {} items", items.len());
-
+        let total = items.len();
         let mvcc = &self.mvcc;
         let mut writer = mvcc.writer()?;
-        let mut results: Vec<DCBResult<u64>> = Vec::with_capacity(items.len());
+        let mut results: Vec<DCBResult<u64>> = Vec::with_capacity(total);
 
-        for (events, condition, tracking) in items.into_iter() {
-            let result =
-                Self::process_append_request(events, condition, tracking, mvcc, &mut writer);
-            results.push(result);
+        // Track abort state
+        let mut abort_idx: Option<usize> = None;
+        let mut abort_err: Option<DCBError> = None;
+
+        for (idx, (events, condition, tracking)) in items.drain(..).enumerate() {
+            if abort_idx.is_some() {
+                break;
+            }
+            let res = Self::process_append_request(events, condition, tracking, mvcc, &mut writer);
+            match &res {
+                Ok(_) => results.push(res),
+                Err(e) if is_integrity_error(e) => results.push(Err(clone_dcb_error(e))),
+                Err(e) => {
+                    // First non-integrity error: record and abort
+                    abort_idx = Some(idx);
+                    abort_err = Some(clone_dcb_error(e));
+                    results.push(Err(clone_dcb_error(e))); // failing item keeps original error
+                }
+            }
         }
 
-        // Single commit at the end of the batch
+        if let (Some(failed_at), Some(orig_err)) = (abort_idx, abort_err) {
+            // Skip commit: dropping writer will rollback dirty state
+            let shadow = shadow_for_batch_abort(&orig_err);
+
+            // Overwrite already processed items except the failing one
+            for i in 0..results.len() {
+                if i != failed_at {
+                    results[i] = Err(clone_dcb_error(&shadow));
+                }
+            }
+            // Fill remaining, unprocessed items with the redacted error
+            while results.len() < total {
+                results.push(Err(clone_dcb_error(&shadow)));
+            }
+
+            return Ok(results);
+        }
+
+        // No non-integrity errors: single commit at end
         mvcc.commit(&mut writer)?;
         Ok(results)
     }
@@ -929,6 +961,57 @@ pub fn is_request_idempotent(
         }
     }
     Ok(None)
+}
+
+// --- helpers for append_batch abort policy ---
+pub fn is_integrity_error(e: &DCBError) -> bool {
+    matches!(e, DCBError::IntegrityError(_))
+}
+
+pub fn clone_dcb_error(src: &DCBError) -> DCBError {
+    match src {
+        DCBError::AuthenticationError(err) => DCBError::AuthenticationError(err.to_string()),
+        DCBError::InitializationError(err) => DCBError::InitializationError(err.to_string()),
+        DCBError::Io(err) => DCBError::Io(std::io::Error::other(err.to_string())),
+        DCBError::IntegrityError(s) => DCBError::IntegrityError(s.clone()),
+        DCBError::Corruption(s) => DCBError::Corruption(s.clone()),
+        DCBError::InvalidArgument(s) => DCBError::InvalidArgument(s.clone()),
+        DCBError::PageNotFound(id) => DCBError::PageNotFound(*id),
+        DCBError::DirtyPageNotFound(id) => DCBError::DirtyPageNotFound(*id),
+        DCBError::RootIDMismatch(old_id, new_id) => DCBError::RootIDMismatch(*old_id, *new_id),
+        DCBError::DatabaseCorrupted(s) => DCBError::DatabaseCorrupted(s.clone()),
+        DCBError::InternalError(s) => DCBError::InternalError(s.clone()),
+        DCBError::SerializationError(s) => DCBError::SerializationError(s.clone()),
+        DCBError::DeserializationError(s) => DCBError::DeserializationError(s.clone()),
+        DCBError::PageAlreadyFreed(id) => DCBError::PageAlreadyFreed(*id),
+        DCBError::PageAlreadyDirty(id) => DCBError::PageAlreadyDirty(*id),
+        DCBError::TransportError(err) => DCBError::TransportError(err.clone()),
+        DCBError::CancelledByUser() => DCBError::CancelledByUser(),
+    }
+}
+
+pub fn shadow_for_batch_abort(src: &DCBError) -> DCBError {
+    let msg = "batch aborted due to internal error".to_string();
+    match src {
+        DCBError::AuthenticationError(_) => DCBError::AuthenticationError(msg),
+        DCBError::InitializationError(_) => DCBError::InitializationError(msg),
+        DCBError::Io(_) => DCBError::Io(std::io::Error::other(msg)),
+        DCBError::IntegrityError(_) => DCBError::IntegrityError(msg),
+        DCBError::Corruption(_) => DCBError::Corruption(msg),
+        DCBError::InvalidArgument(_) => DCBError::InvalidArgument(msg),
+        DCBError::DatabaseCorrupted(_) => DCBError::DatabaseCorrupted(msg),
+        DCBError::InternalError(_) => DCBError::InternalError(msg),
+        DCBError::SerializationError(_) => DCBError::SerializationError(msg),
+        DCBError::DeserializationError(_) => DCBError::DeserializationError(msg),
+        DCBError::TransportError(_) => DCBError::TransportError(msg),
+        // For numeric/marker variants, we cannot add a message; keep same variant to preserve type
+        DCBError::PageNotFound(id) => DCBError::PageNotFound(*id),
+        DCBError::DirtyPageNotFound(id) => DCBError::DirtyPageNotFound(*id),
+        DCBError::RootIDMismatch(a, b) => DCBError::RootIDMismatch(*a, *b),
+        DCBError::PageAlreadyFreed(id) => DCBError::PageAlreadyFreed(*id),
+        DCBError::PageAlreadyDirty(id) => DCBError::PageAlreadyDirty(*id),
+        DCBError::CancelledByUser() => DCBError::CancelledByUser(),
+    }
 }
 
 #[cfg(test)]

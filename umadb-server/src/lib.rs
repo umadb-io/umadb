@@ -11,7 +11,8 @@ use tokio_stream::wrappers::ReceiverStream;
 use tonic::transport::{Identity, ServerTlsConfig};
 use tonic::{Request, Response, Status, transport::Server};
 use umadb_core::db::{
-    DEFAULT_DB_FILENAME, DEFAULT_PAGE_SIZE, UmaDB, is_request_idempotent, read_conditional,
+    DEFAULT_DB_FILENAME, DEFAULT_PAGE_SIZE, UmaDB, clone_dcb_error, is_integrity_error,
+    is_request_idempotent, read_conditional, shadow_for_batch_abort,
 };
 use umadb_core::mvcc::Mvcc;
 use umadb_dcb::{
@@ -759,21 +760,40 @@ impl RequestHandler {
                             let mut responders: Vec<oneshot::Sender<DCBResult<u64>>> = Vec::new();
                             let mut results: Vec<DCBResult<u64>> = Vec::new();
 
+                            // Track abort state for non-integrity error within the batch
+                            let mut abort_idx: Option<usize> = None;
+                            let mut abort_err: Option<DCBError> = None;
+
                             responders.push(response_tx);
-                            let mut result = UmaDB::process_append_request(
+                            let result = UmaDB::process_append_request(
                                 events,
                                 condition,
                                 tracking_info,
                                 mvcc,
                                 &mut writer,
                             );
-                            results.push(result);
+                            // Record result and possibly mark abort
+                            match &result {
+                                Ok(_) => results.push(result),
+                                Err(e) if is_integrity_error(e) => {
+                                    results.push(Err(clone_dcb_error(e)))
+                                }
+                                Err(e) => {
+                                    abort_idx = Some(0);
+                                    abort_err = Some(clone_dcb_error(e));
+                                    results.push(Err(clone_dcb_error(e)));
+                                }
+                            }
 
                             // Drain the channel for more pending writer requests without awaiting.
                             // Important: do not drop a popped request when hitting the batch limit.
                             // We stop draining BEFORE attempting to recv if we've reached the limit.
                             loop {
                                 if total_events >= APPEND_BATCH_MAX_EVENTS {
+                                    break;
+                                }
+                                // Stop draining if we've already decided to abort
+                                if abort_idx.is_some() {
                                     break;
                                 }
                                 match request_rx.try_recv() {
@@ -784,15 +804,27 @@ impl RequestHandler {
                                         response_tx,
                                     }) => {
                                         let ev_len = events.len();
+                                        let idx_in_batch = responders.len();
                                         responders.push(response_tx);
-                                        result = UmaDB::process_append_request(
+                                        let res_next = UmaDB::process_append_request(
                                             events,
                                             condition,
                                             tracking_info,
                                             mvcc,
                                             &mut writer,
                                         );
-                                        results.push(result);
+                                        match &res_next {
+                                            Ok(_) => results.push(res_next),
+                                            Err(e) if is_integrity_error(e) => {
+                                                results.push(Err(clone_dcb_error(e)))
+                                            }
+                                            Err(e) => {
+                                                abort_idx = Some(idx_in_batch);
+                                                abort_err = Some(clone_dcb_error(e));
+                                                results.push(Err(clone_dcb_error(e)));
+                                                // Do not accumulate more into the batch
+                                            }
+                                        }
                                         total_events += ev_len;
                                     }
                                     Ok(WriterRequest::Shutdown) => {
@@ -809,6 +841,20 @@ impl RequestHandler {
                                 }
                             }
                             // println!("Total events: {total_events}");
+
+                            if let (Some(failed_at), Some(orig_err)) = (abort_idx, abort_err) {
+                                // Abort batch: skip commit; respond to all items in this batch
+                                let shadow = shadow_for_batch_abort(&orig_err);
+                                for (i, tx) in responders.into_iter().enumerate() {
+                                    if i == failed_at {
+                                        let _ = tx.send(Err(clone_dcb_error(&orig_err)));
+                                    } else {
+                                        let _ = tx.send(Err(clone_dcb_error(&shadow)));
+                                    }
+                                }
+                                // Do not update head, since nothing was committed
+                                continue;
+                            }
 
                             // Single commit at the end of the batch
                             let batch_result = match mvcc.commit(&mut writer) {
@@ -1028,28 +1074,6 @@ impl RequestHandler {
     #[allow(dead_code)]
     async fn shutdown(&self) {
         let _ = self.writer_request_tx.send(WriterRequest::Shutdown).await;
-    }
-}
-
-fn clone_dcb_error(src: &DCBError) -> DCBError {
-    match src {
-        DCBError::AuthenticationError(err) => DCBError::AuthenticationError(err.to_string()),
-        DCBError::InitializationError(err) => DCBError::InitializationError(err.to_string()),
-        DCBError::Io(err) => DCBError::Io(std::io::Error::other(err.to_string())),
-        DCBError::IntegrityError(s) => DCBError::IntegrityError(s.clone()),
-        DCBError::Corruption(s) => DCBError::Corruption(s.clone()),
-        DCBError::InvalidArgument(s) => DCBError::InvalidArgument(s.clone()),
-        DCBError::PageNotFound(id) => DCBError::PageNotFound(*id),
-        DCBError::DirtyPageNotFound(id) => DCBError::DirtyPageNotFound(*id),
-        DCBError::RootIDMismatch(old_id, new_id) => DCBError::RootIDMismatch(*old_id, *new_id),
-        DCBError::DatabaseCorrupted(s) => DCBError::DatabaseCorrupted(s.clone()),
-        DCBError::InternalError(s) => DCBError::InternalError(s.clone()),
-        DCBError::SerializationError(s) => DCBError::SerializationError(s.clone()),
-        DCBError::DeserializationError(s) => DCBError::DeserializationError(s.clone()),
-        DCBError::PageAlreadyFreed(id) => DCBError::PageAlreadyFreed(*id),
-        DCBError::PageAlreadyDirty(id) => DCBError::PageAlreadyDirty(*id),
-        DCBError::TransportError(err) => DCBError::TransportError(err.clone()),
-        DCBError::CancelledByUser() => DCBError::CancelledByUser(),
     }
 }
 
