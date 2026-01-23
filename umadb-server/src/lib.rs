@@ -383,6 +383,23 @@ impl DCBServer {
     pub fn into_service(self) -> umadb_proto::v1::dcb_server::DcbServer<Self> {
         umadb_proto::v1::dcb_server::DcbServer::new(self)
     }
+
+    fn enforce_api_key(&self, metadata: &tonic::metadata::MetadataMap) -> Result<(), Status> {
+        if let Some(expected) = &self.api_key {
+            let auth = metadata.get("authorization");
+            let expected_val = format!("Bearer {}", expected);
+            let ok = auth
+                .and_then(|m| m.to_str().ok())
+                .map(|s| s == expected_val)
+                .unwrap_or(false);
+            if !ok {
+                return Err(status_from_dcb_error(DCBError::AuthenticationError(
+                    "missing or invalid API key".to_string(),
+                )));
+            }
+        }
+        Ok(())
+    }
 }
 
 #[tonic::async_trait]
@@ -395,19 +412,7 @@ impl umadb_proto::v1::dcb_server::Dcb for DCBServer {
         request: Request<umadb_proto::v1::ReadRequest>,
     ) -> Result<Response<Self::ReadStream>, Status> {
         // Enforce API key if configured
-        if let Some(expected) = &self.api_key {
-            let auth = request.metadata().get("authorization");
-            let expected_val = format!("Bearer {}", expected);
-            let ok = auth
-                .and_then(|m| m.to_str().ok())
-                .map(|s| s == expected_val)
-                .unwrap_or(false);
-            if !ok {
-                return Err(status_from_dcb_error(DCBError::AuthenticationError(
-                    "missing or invalid API key".to_string(),
-                )));
-            }
-        }
+        self.enforce_api_key(request.metadata())?;
         let read_request = request.into_inner();
 
         // Convert protobuf query to DCB types
@@ -583,19 +588,7 @@ impl umadb_proto::v1::dcb_server::Dcb for DCBServer {
         request: Request<umadb_proto::v1::AppendRequest>,
     ) -> Result<Response<umadb_proto::v1::AppendResponse>, Status> {
         // Enforce API key if configured
-        if let Some(expected) = &self.api_key {
-            let auth = request.metadata().get("authorization");
-            let expected_val = format!("Bearer {}", expected);
-            let ok = auth
-                .and_then(|m| m.to_str().ok())
-                .map(|s| s == expected_val)
-                .unwrap_or(false);
-            if !ok {
-                return Err(status_from_dcb_error(DCBError::AuthenticationError(
-                    "missing or invalid API key".to_string(),
-                )));
-            }
-        }
+        self.enforce_api_key(request.metadata())?;
         let req = request.into_inner();
 
         // Convert protobuf types to API types
@@ -630,19 +623,7 @@ impl umadb_proto::v1::dcb_server::Dcb for DCBServer {
         request: Request<umadb_proto::v1::HeadRequest>,
     ) -> Result<Response<umadb_proto::v1::HeadResponse>, Status> {
         // Enforce API key if configured
-        if let Some(expected) = &self.api_key {
-            let auth = request.metadata().get("authorization");
-            let expected_val = format!("Bearer {}", expected);
-            let ok = auth
-                .and_then(|m| m.to_str().ok())
-                .map(|s| s == expected_val)
-                .unwrap_or(false);
-            if !ok {
-                return Err(status_from_dcb_error(DCBError::AuthenticationError(
-                    "missing or invalid API key".to_string(),
-                )));
-            }
-        }
+        self.enforce_api_key(request.metadata())?;
         // Call the event store head method
         match self.request_handler.head().await {
             Ok(position) => {
@@ -658,19 +639,7 @@ impl umadb_proto::v1::dcb_server::Dcb for DCBServer {
         request: Request<umadb_proto::v1::TrackingRequest>,
     ) -> Result<Response<umadb_proto::v1::TrackingResponse>, Status> {
         // Enforce API key if configured
-        if let Some(expected) = &self.api_key {
-            let auth = request.metadata().get("authorization");
-            let expected_val = format!("Bearer {}", expected);
-            let ok = auth
-                .and_then(|m| m.to_str().ok())
-                .map(|s| s == expected_val)
-                .unwrap_or(false);
-            if !ok {
-                return Err(status_from_dcb_error(DCBError::AuthenticationError(
-                    "missing or invalid API key".to_string(),
-                )));
-            }
-        }
+        self.enforce_api_key(request.metadata())?;
         let req = request.into_inner();
         match self.request_handler.get_tracking_info(req.source).await {
             Ok(position) => Ok(Response::new(umadb_proto::v1::TrackingResponse {
