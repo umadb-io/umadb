@@ -42,7 +42,7 @@ jobs:
 
       - name: Setup QEMU
         if: matrix.platform.target != 'x86_64'
-        uses: docker/setup-qemu-action@v1
+        uses: docker/setup-qemu-action@v3
 
       - name: Build wheels
         uses: PyO3/maturin-action@v1
@@ -150,7 +150,7 @@ jobs:
 
       - name: Setup QEMU
         if: matrix.platform.target != 'x86_64'
-        uses: docker/setup-qemu-action@v1
+        uses: docker/setup-qemu-action@v3
 
       - name: Build wheels
         uses: PyO3/maturin-action@v1
