@@ -73,7 +73,20 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
 
     let (tx, rx) = oneshot::channel::<()>();
     tokio::spawn(async move {
-        let _ = signal::ctrl_c().await;
+        #[cfg(unix)]
+        {
+            use tokio::signal::unix::{SignalKind, signal};
+            let mut sigterm =
+                signal(SignalKind::terminate()).expect("failed to register SIGTERM handler");
+            tokio::select! {
+                _ = signal::ctrl_c() => {}
+                _ = sigterm.recv() => {}
+            }
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = signal::ctrl_c().await;
+        }
         let _ = tx.send(());
     });
 
