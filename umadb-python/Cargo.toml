@@ -18,8 +18,8 @@ name = "umadb_python"
 crate-type = ["cdylib"]
 
 [dependencies]
-umadb-client = { path = "../umadb-client", version = "0.3.3" }
-umadb-dcb = { path = "../umadb-dcb", version = "0.3.3" }
+umadb-client = { path = "../umadb-client", version = "0.4.0" }
+umadb-dcb = { path = "../umadb-dcb", version = "0.4.0" }
 pyo3 = { version = ">=0.24", features = ["abi3-py310", "extension-module"] }
 uuid = { version = "1.18.1", features = ["v4"] }
 pyo3-stub-gen = "0.17.2"
