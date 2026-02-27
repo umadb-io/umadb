@@ -45,6 +45,21 @@ class Client:
         Returns:
             List of SequencedEvent objects
         """
+    def subscribe(self, query: typing.Optional[Query] = None, after: typing.Optional[builtins.int] = None) -> Subscription:
+        r"""
+        Subscribe to events from the event store
+        
+        This method returns optionally filtered events after
+        an optional position. The returned iterator yields
+        events indefinitely until canceled or the stream ends.
+        
+        Args:
+            query: Optional tags and types filter
+            after: Optional position filter
+        
+        Returns:
+            An iterable of SequencedEvent objects
+        """
     def head(self) -> typing.Optional[builtins.int]:
         r"""
         Get the current head position of the event store
@@ -138,6 +153,18 @@ class SequencedEvent:
     @property
     def position(self) -> builtins.int: ...
     def __repr__(self) -> builtins.str: ...
+
+@typing.final
+class Subscription:
+    r"""
+    Python iterator over sequenced events
+    """
+    def __iter__(self) -> Subscription: ...
+    def __next__(self) -> SequencedEvent: ...
+    def next_batch(self) -> builtins.list[SequencedEvent]:
+        r"""
+        Returns the next batch of events for this read. If there are no more events, returns an empty list.
+        """
 
 @typing.final
 class TrackingInfo:

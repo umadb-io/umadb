@@ -21,12 +21,18 @@ def read_example() -> None:
     last_known = resp.head()
     print("Last known position:", last_known)
 
-    # Subscribe to new events
-    subscription = client.read(subscribe=True)
-    for se in subscription:
-        print("New event:", se.position, se.event)
-        # Break for demo purposes
-        break
+
+def subscribe_example() -> None:
+    from umadb import Client, Query, QueryItem
+
+    client = Client("http://localhost:50051")
+
+    # Filter by type(s) and tag(s)
+    q = Query(items=[QueryItem(types=["example"], tags=["tag1", "tag2"])])
+
+    resp = client.subscribe(query=q, after=None)
+    for item in resp:
+        print(f"Got event at position {item.position}: {item.event}")
 
 
 def append_example() -> None:
@@ -136,7 +142,7 @@ def complete_example() -> None:
     print("Append returned same commit position:", commit_position2)
 
     # Subscribe to all events for a projection
-    subscription = client.read(subscribe=True)
+    subscription = client.subscribe()
     for ev in subscription:
         print(f"Processing event at {ev.position}: {ev.event}")
         if ev.position == commit_position2:
@@ -224,6 +230,7 @@ def complete_example_with_tracking() -> None:
 
 if __name__ == "__main__":
     read_example()
+    subscribe_example()
     append_example()
     complete_example()
     complete_example_with_tracking()

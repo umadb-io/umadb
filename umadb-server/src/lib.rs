@@ -406,6 +406,9 @@ impl DCBServer {
 impl umadb_proto::v1::dcb_server::Dcb for DCBServer {
     type ReadStream =
         Pin<Box<dyn Stream<Item = Result<umadb_proto::v1::ReadResponse, Status>> + Send + 'static>>;
+    type SubscribeStream = Pin<
+        Box<dyn Stream<Item = Result<umadb_proto::v1::SubscribeResponse, Status>> + Send + 'static>,
+    >;
 
     async fn read(
         &self,
@@ -580,6 +583,102 @@ impl umadb_proto::v1::dcb_server::Dcb for DCBServer {
         // Return the receiver as a stream
         Ok(Response::new(
             Box::pin(ReceiverStream::new(rx)) as Self::ReadStream
+        ))
+    }
+
+    async fn subscribe(
+        &self,
+        request: Request<umadb_proto::v1::SubscribeRequest>,
+    ) -> Result<Response<Self::SubscribeStream>, Status> {
+        // Enforce API key if configured
+        self.enforce_api_key(request.metadata())?;
+        let subscribe_request = request.into_inner();
+
+        // Convert protobuf query to DCB types
+        let mut query: Option<DCBQuery> = subscribe_request.query.map(|q| q.into());
+        let after = subscribe_request.after;
+        // Cap requested batch size.
+        let batch_size = subscribe_request
+            .batch_size
+            .unwrap_or(READ_RESPONSE_BATCH_SIZE_DEFAULT)
+            .clamp(1, READ_RESPONSE_BATCH_SIZE_MAX);
+
+        // Create a channel for streaming responses
+        let (tx, rx) = mpsc::channel(2048);
+        // Clone the request handler.
+        let request_handler = self.request_handler.clone();
+        // Clone the shutdown watch receiver.
+        let mut shutdown_watch_rx = self.shutdown_watch_rx.clone();
+
+        // Spawn a task to handle the subscribe operation and stream multiple batches
+        tokio::spawn(async move {
+            // Ensure we can reuse the same query across batches
+            let query_clone = query.take();
+            // Todo: End the subscription if after is Some(u64:MAX).
+            let mut next_after = after.map(|a| a.saturating_add(1));
+            // Create a watch receiver for head updates
+            let mut head_rx = request_handler.watch_head();
+
+            loop {
+                // Exit if the client has gone away or the server is shutting down.
+                if tx.is_closed() {
+                    break;
+                }
+                if *shutdown_watch_rx.borrow() {
+                    break;
+                }
+
+                // Always read forward with the requested batch size
+                match request_handler
+                    .read(query_clone.clone(), next_after, false, Some(batch_size))
+                    .await
+                {
+                    Ok((dcb_sequenced_events, _head)) => {
+                        // Map events to protobuf type
+                        let sequenced_event_protos: Vec<umadb_proto::v1::SequencedEvent> =
+                            dcb_sequenced_events
+                                .into_iter()
+                                .map(umadb_proto::v1::SequencedEvent::from)
+                                .collect();
+
+                        if sequenced_event_protos.is_empty() {
+                            // For subscriptions, wait for new events instead of terminating
+                            tokio::select! {
+                                _ = head_rx.changed() => {},
+                                _ = shutdown_watch_rx.changed() => {},
+                                _ = tx.closed() => {},
+                            }
+                            continue;
+                        }
+
+                        let last_event_position = sequenced_event_protos.last().map(|e| e.position);
+
+                        let response = umadb_proto::v1::SubscribeResponse {
+                            events: sequenced_event_protos,
+                        };
+
+                        if tx.send(Ok(response)).await.is_err() {
+                            break;
+                        }
+
+                        // Advance the cursor (use a new reader on the next loop iteration)
+                        // Todo: End the subscription if last_event_position is Some(u64:MAX).
+                        next_after = last_event_position.map(|p| p.saturating_add(1));
+
+                        // Yield to let other tasks progress under high concurrency
+                        tokio::task::yield_now().await;
+                    }
+                    Err(e) => {
+                        let _ = tx.send(Err(status_from_dcb_error(e))).await;
+                        break;
+                    }
+                }
+            }
+        });
+
+        // Return the receiver as a stream
+        Ok(Response::new(
+            Box::pin(ReceiverStream::new(rx)) as Self::SubscribeStream
         ))
     }
 

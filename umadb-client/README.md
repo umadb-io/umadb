@@ -118,7 +118,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // Subscribe to all events for a projection
-    let mut subscription = client.read(None, None, false, None, true).await?;
+    let mut subscription = client.sub(None, None).await?;
 
     // Build an up-to-date view
     while let Some(result) = subscription.next().await {

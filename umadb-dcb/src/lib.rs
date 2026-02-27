@@ -25,7 +25,7 @@ pub trait DCBEventStoreSync {
         start: Option<u64>,
         backwards: bool,
         limit: Option<u32>,
-        subscribe: bool,
+        subscribe: bool, // Deprecated - remove in v1.0.
     ) -> DCBResult<Box<dyn DCBReadResponseSync + Send + 'static>>;
 
     /// Reads events from the store and returns them as a tuple of (Vec<DCBSequencedEvent>, Option<u64>)
@@ -69,6 +69,14 @@ pub trait DCBReadResponseSync: Iterator<Item = DCBResult<DCBSequencedEvent>> + S
     /// events per underlying transport message ("batch"). If there are no more
     /// events available, returns an empty Vec. The head() method should reflect
     /// the latest known head as reported by the underlying store.
+    fn next_batch(&mut self) -> DCBResult<Vec<DCBSequencedEvent>>;
+}
+
+/// Response from a subscribe operation, providing an iterator over sequenced events
+pub trait DCBSubscriptionSync: Iterator<Item = DCBResult<DCBSequencedEvent>> + Send {
+    /// Returns the next batch of events for this read. Implementations may buffer
+    /// events per underlying transport message ("batch"). If there are no more
+    /// events available, returns an empty Vec.
     fn next_batch(&mut self) -> DCBResult<Vec<DCBSequencedEvent>>;
 }
 
@@ -137,6 +145,12 @@ pub trait DCBReadResponseAsync: Stream<Item = DCBResult<DCBSequencedEvent>> + Se
         Ok((events, head))
     }
 
+    async fn next_batch(&mut self) -> DCBResult<Vec<DCBSequencedEvent>>;
+}
+
+/// Asynchronous response from a subscribe operation, providing a stream of sequenced events
+#[async_trait]
+pub trait DCBSubscriptionAsync: Stream<Item = DCBResult<DCBSequencedEvent>> + Send + Unpin {
     async fn next_batch(&mut self) -> DCBResult<Vec<DCBSequencedEvent>>;
 }
 

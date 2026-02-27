@@ -42,6 +42,16 @@ message ReadResponse {
   optional uint64 head = 2;
 }
 
+message SubscribeRequest {
+  optional Query query = 1;
+  optional uint64 after = 2;
+  optional uint32 batch_size = 3;
+}
+
+message SubscribeResponse {
+  repeated SequencedEvent events = 1;
+}
+
 message TrackingInfo {
   string source = 1;
   uint64 position = 2;
@@ -89,6 +99,7 @@ message ErrorResponse {
 
 service DCB {
   rpc Read(ReadRequest) returns (stream ReadResponse);
+  rpc Subscribe(SubscribeRequest) returns (stream SubscribeResponse);
   rpc Append(AppendRequest) returns (AppendResponse);
   rpc Head(HeadRequest) returns (HeadResponse);
   rpc GetTrackingInfo(TrackingRequest) returns (TrackingResponse);

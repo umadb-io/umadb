@@ -185,7 +185,7 @@ materialized views in CQRS. An optional `Query` can be provided to select by tag
 | `start`     | `int\|None`   | Read events *from* this sequence number. Only events with positions greater than or equal will be returned (or less than or equal if `backwards` is `True`. |
 | `backwards` | `bool`        | If `True` events will be read backwards, either from the given position or from the last recorded event.                                                    |
 | `limit`     | `int\|None`   | Optional cap on the number of events to retrieve.                                                                                                           |
-| `subscribe` | `bool`        | If `True`, keeps the stream open to deliver future events as they arrive.                                                                                   |
+| `subscribe` | `bool`        | Deprecated! If `True`, keeps the stream open to deliver future events as they arrive.                                                                       |
 
 ### Return Value
 
@@ -209,10 +209,48 @@ for item in resp:
 
 last_known = resp.head()
 print("Last known position:", last_known)
+```
 
-# Subscribe to new events
-subscription = client.read(subscribe=True)
-for se in subscription:
+## Subscriptions
+
+The `Client.subscribe()` method returns recorded events from an UmaDB server,
+keeping the stream open to deliver future events as they arrive.
+
+
+```python
+def subscribe(
+    query: Query | None = None,
+    after: int | None = None,
+) -> Subscription:
+    ...
+```
+The `Client.subscribe()` method can be used for projecting events into
+materialized views in CQRS. An optional `query` can be provided to select
+by tags and types.
+
+### Parameters
+
+| Name    | Type          | Description                                                                                           |
+|---------|---------------|-------------------------------------------------------------------------------------------------------|
+| `query` | `Query\|None` | Optional structured query to filter events (by tags, event types, etc).                               |
+| `after` | `int\|None`   | Read events *after* this sequence number. Only events with a larger sequence number will be returned. |
+
+### Return Value
+
+Returns an iterable "subscription" instance from which `SequencedEvent` instances can be obtained.
+
+### Example
+
+```python
+from umadb import Client, Query, QueryItem
+
+client = Client("http://localhost:50051")
+
+# Filter by type(s) and tag(s)
+q = Query(items=[QueryItem(types=["example"], tags=["tag1", "tag2"])])
+
+# Subscribe to all events
+for se in client.subscribe():
     print("New event:", se.position, se.event)
     # Break for demo purposes
     break
@@ -427,8 +465,7 @@ assert commit_position1 == commit_position2
 print("Append returned same commit position:", commit_position2)
 
 # Subscribe to all events for a projection
-subscription = client.read(subscribe=True)
-for ev in subscription:
+for ev in client.subscribe():
     print(f"Processing event at {ev.position}: {ev.event}")
     if ev.position == commit_position2:
         print("Projection has processed new event!")

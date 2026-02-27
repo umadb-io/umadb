@@ -327,6 +327,50 @@ impl PyReadResponse {
     }
 }
 
+/// Python iterator over sequenced events
+#[gen_stub_pyclass]
+#[pyclass(name = "Subscription")]
+pub struct PySubscription {
+    inner: Arc<Mutex<Box<dyn umadb_dcb::DCBSubscriptionSync + Send + 'static>>>,
+}
+
+#[gen_stub_pymethods()]
+#[pymethods]
+impl PySubscription {
+    fn __iter__(slf: PyRef<Self>) -> PyRef<Self> {
+        slf
+    }
+
+    fn __next__(slf: PyRefMut<Self>, py: Python<'_>) -> Option<PyResult<PySequencedEvent>> {
+        // Clone the Arc and drop the PyRefMut before releasing the GIL so the closure doesn't capture non-Send data
+        let inner = slf.inner.clone();
+        drop(slf);
+        let result = py.detach(move || {
+            // Release the GIL while we potentially block waiting for the next batch/event
+            inner.lock().unwrap().next()
+        });
+        match result {
+            Some(Ok(event)) => Some(Ok(PySequencedEvent { inner: event })),
+            Some(Err(err)) => Some(Err(dcb_error_to_py_err(err))),
+            None => None,
+        }
+    }
+
+    /// Returns the next batch of events for this read. If there are no more events, returns an empty list.
+    fn next_batch(slf: PyRefMut<Self>, py: Python<'_>) -> PyResult<Vec<PySequencedEvent>> {
+        let inner = slf.inner.clone();
+        drop(slf);
+        let result = py.detach(move || inner.lock().unwrap().next_batch());
+        match result {
+            Ok(batch) => Ok(batch
+                .into_iter()
+                .map(|e| PySequencedEvent { inner: e })
+                .collect()),
+            Err(err) => Err(dcb_error_to_py_err(err)),
+        }
+    }
+}
+
 /// Python wrapper for the synchronous UmaDB client
 #[gen_stub_pyclass]
 #[pyclass(name = "Client")]
@@ -411,6 +455,36 @@ impl PyUmaDBClient {
             .map_err(dcb_error_to_py_err)?;
 
         Ok(PyReadResponse {
+            inner: Arc::new(Mutex::new(response_iter)),
+        })
+    }
+
+    /// Subscribe to events from the event store
+    ///
+    /// This method returns optionally filtered events after
+    /// an optional position. The returned iterator yields
+    /// events indefinitely until canceled or the stream ends.
+    ///
+    /// Args:
+    ///     query: Optional tags and types filter
+    ///     after: Optional position filter
+    ///
+    /// Returns:
+    ///     An iterable of SequencedEvent objects
+    #[pyo3(signature = (query=None, after=None))]
+    fn subscribe(
+        &self,
+        py: Python<'_>,
+        query: Option<PyQuery>,
+        after: Option<u64>,
+    ) -> PyResult<PySubscription> {
+        let query_inner = query.map(|q| q.inner);
+        let inner = self.inner.clone();
+        let response_iter = py
+            .detach(move || inner.subscribe(query_inner, after))
+            .map_err(dcb_error_to_py_err)?;
+
+        Ok(PySubscription {
             inner: Arc::new(Mutex::new(response_iter)),
         })
     }
