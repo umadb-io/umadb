@@ -156,6 +156,7 @@ pub trait DCBSubscriptionAsync: Stream<Item = DCBResult<DCBSequencedEvent>> + Se
 
 /// Represents a query item for filtering events
 #[derive(Debug, Clone, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct DCBQueryItem {
     /// Event types to match
     pub types: Vec<String>,
@@ -195,6 +196,7 @@ impl DCBQueryItem {
 
 /// A query composed of multiple query items
 #[derive(Debug, Clone, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct DCBQuery {
     /// List of query items, where events matching any item are included in results
     pub items: Vec<DCBQueryItem>,
@@ -234,6 +236,7 @@ impl DCBQuery {
 
 /// Conditions that must be satisfied for an append operation to succeed
 #[derive(Debug, Clone, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct DCBAppendCondition {
     /// Query that, if matching any events, will cause the append to fail
     pub fail_if_events_match: DCBQuery,
@@ -258,6 +261,7 @@ impl DCBAppendCondition {
 
 /// Represents an event in the event store
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct DCBEvent {
     /// Type of the event
     pub event_type: String,
@@ -316,6 +320,7 @@ impl DCBEvent {
 }
 
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct TrackingInfo {
     pub source: String,
     pub position: u64,
@@ -323,6 +328,7 @@ pub struct TrackingInfo {
 
 /// An event with its position in the event sequence
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct DCBSequencedEvent {
     /// Position of the event in the sequence
     pub position: u64,
@@ -332,9 +338,11 @@ pub struct DCBSequencedEvent {
 
 // Error types
 #[derive(Error, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum DCBError {
     // Generic/system errors
     #[error("IO error: {0}")]
+    #[cfg_attr(feature = "serde", serde(with = "serde_io_error"))]
     Io(#[from] std::io::Error),
 
     // DCB domain errors
@@ -378,6 +386,129 @@ pub enum DCBError {
 }
 
 pub type DCBResult<T> = Result<T, DCBError>;
+
+#[cfg(feature = "serde")]
+mod serde_io_error {
+    use std::{borrow::Cow, io};
+
+    use serde::{Deserialize, Serialize};
+
+    #[derive(Serialize, Deserialize)]
+    struct IoError {
+        kind: Option<Cow<'static, str>>,
+        message: Option<String>,
+    }
+
+    pub fn serialize<S>(err: &io::Error, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let kind = match err.kind() {
+            io::ErrorKind::NotFound => Some(Cow::Borrowed("NotFound")),
+            io::ErrorKind::PermissionDenied => Some(Cow::Borrowed("PermissionDenied")),
+            io::ErrorKind::ConnectionRefused => Some(Cow::Borrowed("ConnectionRefused")),
+            io::ErrorKind::ConnectionReset => Some(Cow::Borrowed("ConnectionReset")),
+            io::ErrorKind::HostUnreachable => Some(Cow::Borrowed("HostUnreachable")),
+            io::ErrorKind::NetworkUnreachable => Some(Cow::Borrowed("NetworkUnreachable")),
+            io::ErrorKind::ConnectionAborted => Some(Cow::Borrowed("ConnectionAborted")),
+            io::ErrorKind::NotConnected => Some(Cow::Borrowed("NotConnected")),
+            io::ErrorKind::AddrInUse => Some(Cow::Borrowed("AddrInUse")),
+            io::ErrorKind::AddrNotAvailable => Some(Cow::Borrowed("AddrNotAvailable")),
+            io::ErrorKind::NetworkDown => Some(Cow::Borrowed("NetworkDown")),
+            io::ErrorKind::BrokenPipe => Some(Cow::Borrowed("BrokenPipe")),
+            io::ErrorKind::AlreadyExists => Some(Cow::Borrowed("AlreadyExists")),
+            io::ErrorKind::WouldBlock => Some(Cow::Borrowed("WouldBlock")),
+            io::ErrorKind::NotADirectory => Some(Cow::Borrowed("NotADirectory")),
+            io::ErrorKind::IsADirectory => Some(Cow::Borrowed("IsADirectory")),
+            io::ErrorKind::DirectoryNotEmpty => Some(Cow::Borrowed("DirectoryNotEmpty")),
+            io::ErrorKind::ReadOnlyFilesystem => Some(Cow::Borrowed("ReadOnlyFilesystem")),
+            io::ErrorKind::StaleNetworkFileHandle => Some(Cow::Borrowed("StaleNetworkFileHandle")),
+            io::ErrorKind::InvalidInput => Some(Cow::Borrowed("InvalidInput")),
+            io::ErrorKind::InvalidData => Some(Cow::Borrowed("InvalidData")),
+            io::ErrorKind::TimedOut => Some(Cow::Borrowed("TimedOut")),
+            io::ErrorKind::WriteZero => Some(Cow::Borrowed("WriteZero")),
+            io::ErrorKind::StorageFull => Some(Cow::Borrowed("StorageFull")),
+            io::ErrorKind::NotSeekable => Some(Cow::Borrowed("NotSeekable")),
+            io::ErrorKind::QuotaExceeded => Some(Cow::Borrowed("QuotaExceeded")),
+            io::ErrorKind::FileTooLarge => Some(Cow::Borrowed("FileTooLarge")),
+            io::ErrorKind::ResourceBusy => Some(Cow::Borrowed("ResourceBusy")),
+            io::ErrorKind::ExecutableFileBusy => Some(Cow::Borrowed("ExecutableFileBusy")),
+            io::ErrorKind::Deadlock => Some(Cow::Borrowed("Deadlock")),
+            io::ErrorKind::CrossesDevices => Some(Cow::Borrowed("CrossesDevices")),
+            io::ErrorKind::TooManyLinks => Some(Cow::Borrowed("TooManyLinks")),
+            io::ErrorKind::InvalidFilename => Some(Cow::Borrowed("InvalidFilename")),
+            io::ErrorKind::ArgumentListTooLong => Some(Cow::Borrowed("ArgumentListTooLong")),
+            io::ErrorKind::Interrupted => Some(Cow::Borrowed("Interrupted")),
+            io::ErrorKind::Unsupported => Some(Cow::Borrowed("Unsupported")),
+            io::ErrorKind::UnexpectedEof => Some(Cow::Borrowed("UnexpectedEof")),
+            io::ErrorKind::OutOfMemory => Some(Cow::Borrowed("OutOfMemory")),
+            io::ErrorKind::Other => Some(Cow::Borrowed("Other")),
+            _ => None,
+        };
+
+        IoError {
+            kind,
+            message: err.get_ref().map(|err| err.to_string()),
+        }
+        .serialize(serializer)
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<io::Error, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let io_err: IoError = <IoError as Deserialize>::deserialize(deserializer)?;
+        let kind = match io_err.kind.as_deref() {
+            Some("NotFound") => io::ErrorKind::NotFound,
+            Some("PermissionDenied") => io::ErrorKind::PermissionDenied,
+            Some("ConnectionRefused") => io::ErrorKind::ConnectionRefused,
+            Some("ConnectionReset") => io::ErrorKind::ConnectionReset,
+            Some("HostUnreachable") => io::ErrorKind::HostUnreachable,
+            Some("NetworkUnreachable") => io::ErrorKind::NetworkUnreachable,
+            Some("ConnectionAborted") => io::ErrorKind::ConnectionAborted,
+            Some("NotConnected") => io::ErrorKind::NotConnected,
+            Some("AddrInUse") => io::ErrorKind::AddrInUse,
+            Some("AddrNotAvailable") => io::ErrorKind::AddrNotAvailable,
+            Some("NetworkDown") => io::ErrorKind::NetworkDown,
+            Some("BrokenPipe") => io::ErrorKind::BrokenPipe,
+            Some("AlreadyExists") => io::ErrorKind::AlreadyExists,
+            Some("WouldBlock") => io::ErrorKind::WouldBlock,
+            Some("NotADirectory") => io::ErrorKind::NotADirectory,
+            Some("IsADirectory") => io::ErrorKind::IsADirectory,
+            Some("DirectoryNotEmpty") => io::ErrorKind::DirectoryNotEmpty,
+            Some("ReadOnlyFilesystem") => io::ErrorKind::ReadOnlyFilesystem,
+            Some("StaleNetworkFileHandle") => io::ErrorKind::StaleNetworkFileHandle,
+            Some("InvalidInput") => io::ErrorKind::InvalidInput,
+            Some("InvalidData") => io::ErrorKind::InvalidData,
+            Some("TimedOut") => io::ErrorKind::TimedOut,
+            Some("WriteZero") => io::ErrorKind::WriteZero,
+            Some("StorageFull") => io::ErrorKind::StorageFull,
+            Some("NotSeekable") => io::ErrorKind::NotSeekable,
+            Some("QuotaExceeded") => io::ErrorKind::QuotaExceeded,
+            Some("FileTooLarge") => io::ErrorKind::FileTooLarge,
+            Some("ResourceBusy") => io::ErrorKind::ResourceBusy,
+            Some("ExecutableFileBusy") => io::ErrorKind::ExecutableFileBusy,
+            Some("Deadlock") => io::ErrorKind::Deadlock,
+            Some("CrossesDevices") => io::ErrorKind::CrossesDevices,
+            Some("TooManyLinks") => io::ErrorKind::TooManyLinks,
+            Some("InvalidFilename") => io::ErrorKind::InvalidFilename,
+            Some("ArgumentListTooLong") => io::ErrorKind::ArgumentListTooLong,
+            Some("Interrupted") => io::ErrorKind::Interrupted,
+            Some("Unsupported") => io::ErrorKind::Unsupported,
+            Some("UnexpectedEof") => io::ErrorKind::UnexpectedEof,
+            Some("OutOfMemory") => io::ErrorKind::OutOfMemory,
+            Some("Other") => io::ErrorKind::Other,
+            _ => io::ErrorKind::Other,
+        };
+
+        Ok(io::Error::new(
+            kind,
+            io_err
+                .message
+                .unwrap_or_else(|| "unknown error".to_string()),
+        ))
+    }
+}
 
 #[cfg(test)]
 mod tests {
