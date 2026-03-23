@@ -15,6 +15,7 @@ UVX ?= uvx@$(UV_VERSION)
 .PHONY: bench-append bench-append-1 bench-append-10 bench-append-100 bench-append-1000 bench-append-all
 .PHONY: bench-append-cond bench-append-cond-1 bench-append-cond-10 bench-append-cond-100 bench-append-cond-all
 .PHONY: bench-append-with-readers
+.PHONY: bench-append-throughput-vs-writers
 .PHONY: bench-read bench-read-throttled
 .PHONY: bench-read-cond
 .PHONY: bench-read-with-writers
@@ -78,6 +79,7 @@ bench-all:
 	$(MAKE) bench-append-all
 	$(MAKE) bench-append-cond-all
 	$(MAKE) bench-append-with-readers
+	$(MAKE) bench-append-throughput-vs-writers
 	$(MAKE) bench-read
 	$(MAKE) bench-read-throttled
 	$(MAKE) bench-read-cond
@@ -131,6 +133,12 @@ bench-append-with-readers:
 	@trap 'kill 0' INT TERM; \
 	MAX_THREADS=$(MAX_THREADS) cargo bench -p umadb-benches --bench grpc_append_with_readers_bench && \
 	python ./umadb-benches/benches/grpc_append_with_readers_bench_plot.py
+
+bench-append-throughput-vs-writers:
+	@echo "Running append throughput vs writers benchmark"
+	@trap 'kill 0' INT TERM; \
+	MAX_THREADS=$(MAX_THREADS) TEST_DURATION_SECS=$(TEST_DURATION_SECS) SAMPLE_SIZE=$(SAMPLE_SIZE) cargo bench -p umadb-benches --bench grpc_append_throughput_vs_writers_bench && \
+	MAX_THREADS=$(MAX_THREADS) python ./umadb-benches/benches/grpc_append_throughput_vs_writers_bench_plot.py
 
 bench-read:
 	@echo "Running read benchmark"

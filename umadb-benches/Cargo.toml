@@ -48,6 +48,10 @@ name = "grpc_append_with_readers_bench"
 harness = false
 
 [[bench]]
+name = "grpc_append_throughput_vs_writers_bench"
+harness = false
+
+[[bench]]
 name = "grpc_append_cond_bench"
 harness = false
 
