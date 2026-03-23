@@ -7,7 +7,6 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tempfile::tempdir;
-use tokio::runtime::Builder as RtBuilder;
 use umadb_benches::server_helper::start_bench_server;
 use umadb_client::{AsyncUmaDBClient, UmaDBClient};
 use umadb_core::db::UmaDB;
@@ -80,17 +79,12 @@ async fn run_throughput_test(
         writers, duration_secs
     );
 
-    // Build a Tokio runtime with all available cores
-    let rt = RtBuilder::new_multi_thread()
-        .enable_all()
-        .build()
-        .expect("build tokio rt");
-
-    // Create clients
+    // Create clients (we're already in a tokio runtime from #[tokio::main])
     let mut clients: Vec<Arc<AsyncUmaDBClient>> = Vec::with_capacity(writers);
     for _ in 0..writers {
-        let c = rt
-            .block_on(UmaDBClient::new(addr_http.to_string()).connect_async())
+        let c = UmaDBClient::new(addr_http.to_string())
+            .connect_async()
+            .await
             .expect("connect client");
         clients.push(Arc::new(c));
     }
@@ -103,7 +97,7 @@ async fn run_throughput_test(
     let handles: Vec<_> = (0..writers)
         .map(|i| {
             let client = clients[i].clone();
-            rt.spawn(async move {
+            tokio::spawn(async move {
                 let mut count = 0u64;
                 while Instant::now() < end_time {
                     let event = DCBEvent {
@@ -126,10 +120,10 @@ async fn run_throughput_test(
         .collect();
 
     // Wait for all tasks to complete and sum the total events
-    let total_events: u64 = rt.block_on(async {
+    let total_events: u64 = {
         let results = join_all(handles).await;
         results.into_iter().map(|r| r.unwrap_or(0)).sum()
-    });
+    };
 
     let elapsed = start.elapsed();
     let duration_secs = elapsed.as_secs_f64();

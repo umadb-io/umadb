@@ -19,8 +19,8 @@ criterion = { version = "0.7.0", features = ["html_reports", "csv_output"] }
 pprof = { version = "0.15.0", features = ["criterion", "flamegraph"] }
 uuid = { version = "1.18.1", features = ["v4"] }
 clap = { version = "4.5.51", features = ["derive"] }
-serde = { workspace = true }
-serde_json = { workspace = true }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
 
 [package.metadata.release]
 release = false
