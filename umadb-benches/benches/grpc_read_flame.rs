@@ -7,15 +7,13 @@ fn main() -> std::io::Result<()> {
     use std::fs::File;
     use std::net::TcpListener;
     use std::sync::Arc;
-    use std::thread;
     use std::time::{Duration, Instant};
     use tempfile::tempdir;
     use tokio::runtime::Builder as RtBuilder;
-    use tokio::sync::oneshot;
+    use umadb_benches::server_helper::start_bench_server;
     use umadb_client::AsyncUmaDBClient;
     use umadb_core::db::UmaDB;
     use umadb_dcb::{DcbEvent, DcbEventStoreAsync, DcbEventStoreSync};
-    use umadb_server::start_server;
 
     fn init_db_with_events(num_events: usize) -> (tempfile::TempDir, String) {
         let dir = tempdir().expect("tempdir");
@@ -84,41 +82,8 @@ fn main() -> std::io::Result<()> {
 
         let addr_http = format!("http://{}", addr);
 
-        // Start the gRPC server in a background thread, with shutdown channel
-        let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
-        let db_path_clone = db_path.clone();
-        let addr_clone = addr.clone();
-
-        let server_thread = thread::spawn(move || {
-            let server_threads = std::thread::available_parallelism()
-                .map(|n| n.get())
-                .unwrap_or(1);
-            let rt = RtBuilder::new_multi_thread()
-                .worker_threads(server_threads)
-                .max_blocking_threads(2048)
-                .enable_all()
-                .build()
-                .expect("build tokio rt for server");
-            rt.block_on(async move {
-                start_server(db_path_clone, &addr_clone, shutdown_rx)
-                    .await
-                    .expect("start server");
-            });
-        });
-
-        // Wait until the server is actually accepting connections
-        {
-            let deadline = std::time::Instant::now() + Duration::from_secs(5);
-            loop {
-                if std::net::TcpStream::connect(&addr).is_ok() {
-                    break;
-                }
-                if std::time::Instant::now() >= deadline {
-                    panic!("server did not start listening within timeout at {}", addr);
-                }
-                std::thread::sleep(Duration::from_millis(50));
-            }
-        }
+        // Start the gRPC server in a background thread
+        let server_handle = start_bench_server(db_path, addr.clone());
 
         // Profile for different concurrency levels
         for &threads in &[1usize, 16, 128, 1024] {
@@ -175,8 +140,7 @@ fn main() -> std::io::Result<()> {
         }
 
         // Shutdown server
-        let _ = shutdown_tx.send(());
-        let _ = server_thread.join();
+        server_handle.shutdown();
 
         Ok(())
     }

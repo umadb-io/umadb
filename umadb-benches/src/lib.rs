@@ -1,4 +1,5 @@
 // Public bench helpers to exercise internal APIs without exposing them in the public surface
+pub mod server_helper;
 pub mod bench_api {
     use std::path::Path;
     use umadb_core::common::{PageID, Position};

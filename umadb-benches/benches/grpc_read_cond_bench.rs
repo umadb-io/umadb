@@ -3,15 +3,13 @@ use futures::future::join_all;
 use std::hint::black_box;
 use std::net::TcpListener;
 use std::sync::Arc;
-use std::thread;
 use std::time::Duration;
 use tempfile::tempdir;
 use tokio::runtime::Builder as RtBuilder;
-use tokio::sync::oneshot;
+use umadb_benches::server_helper::start_bench_server;
 use umadb_client::{AsyncUmaDBClient, UmaDBClient};
 use umadb_core::db::UmaDB;
 use umadb_dcb::{DcbEvent, DcbEventStoreAsync, DcbEventStoreSync, DcbQuery, DcbQueryItem};
-use umadb_server::start_server;
 
 const EVENTS_PER_TAG: u32 = 10;
 const NUM_TAGS: u32 = 100000;
@@ -60,44 +58,15 @@ pub fn grpc_read_cond_benchmark(c: &mut Criterion) {
 
     let addr_http = format!("http://{}", addr);
 
-    // Start the gRPC server in a background thread, with shutdown channel
-    let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
-    let db_path_clone = db_path.clone();
-    let addr_clone = addr.clone();
+    // Start the gRPC server in a background thread
+    let server_handle = start_bench_server(db_path, addr.clone());
 
-    let server_thread = thread::spawn(move || {
-        let server_threads = std::thread::available_parallelism()
-            .map(|n| n.get())
-            .unwrap_or(1);
-        let rt = RtBuilder::new_multi_thread()
-            .worker_threads(server_threads)
-            .max_blocking_threads(2048)
-            .enable_all()
-            .build()
-            .expect("build tokio rt for server");
-        rt.block_on(async move {
-            start_server(db_path_clone, &addr_clone, shutdown_rx)
-                .await
-                .expect("start server");
-        });
-    });
+    let group_name = format!(
+        "grpc_read_cond{}",
+        if server_handle.use_docker { "_with_docker" } else { "" }
+    );
 
-    // Wait until the server is actually accepting connections (avoid race with startup)
-    {
-        use std::time::Duration;
-        let deadline = std::time::Instant::now() + Duration::from_secs(5);
-        loop {
-            if std::net::TcpStream::connect(&addr).is_ok() {
-                break;
-            }
-            if std::time::Instant::now() >= deadline {
-                panic!("server did not start listening within timeout at {}", addr);
-            }
-            std::thread::sleep(Duration::from_millis(50));
-        }
-    }
-
-    let mut group = c.benchmark_group("grpc_read_cond");
+    let mut group = c.benchmark_group(group_name);
     group.sample_size(10);
     group.measurement_time(Duration::from_secs(10));
 
@@ -180,8 +149,7 @@ pub fn grpc_read_cond_benchmark(c: &mut Criterion) {
     group.finish();
 
     // Shutdown server
-    let _ = shutdown_tx.send(());
-    let _ = server_thread.join();
+    server_handle.shutdown();
 }
 
 criterion_group!(benches, grpc_read_cond_benchmark);

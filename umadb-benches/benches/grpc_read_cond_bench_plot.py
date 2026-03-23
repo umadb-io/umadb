@@ -7,6 +7,8 @@ import os
 # Keep this in sync with benches/grpc_read_cond_bench.rs
 EVENTS_PER_TAG = 10
 MAX_THREADS = int(os.environ.get('MAX_THREADS', '0')) if os.environ.get('MAX_THREADS') else None
+USE_DOCKER = bool(os.environ.get('USE_DOCKER'))
+_with_docker = "_with_docker" if USE_DOCKER else ""
 
 # Thread variants you ran (match the bench). Edit if you change the bench.
 all_threads = [1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024]
@@ -20,9 +22,11 @@ ci_upper_throughputs = []
 # percentile_throughputs[i] contains list of throughputs for (5+i*10) percentile
 percentile_throughputs = [[] for _ in range(10)]  # 5, 15, 25, ..., 85, 95
 
+bench_group = f"grpc_read_cond{_with_docker}"
+
 for t in threads:
-    sample_path = Path(f"target/criterion/grpc_read_cond/{t}/new/sample.json")
-    est_path = Path(f"target/criterion/grpc_read_cond/{t}/new/estimates.json")
+    sample_path = Path(f"target/criterion/{bench_group}/{t}/new/sample.json")
+    est_path = Path(f"target/criterion/{bench_group}/{t}/new/estimates.json")
     if not sample_path.exists() or not est_path.exists():
         # Skip missing variants gracefully
         continue
@@ -134,7 +138,7 @@ plt.xscale('log')
 plt.yscale('log')
 plt.xlabel('Clients')
 plt.ylabel('Total events/sec')
-plt.title(f'UmaDB: Conditional Read Operations ({EVENTS_PER_TAG} events per tag)')
+plt.title(f'UmaDB: Conditional Read Operations{' With Docker' if _with_docker else ''} ({EVENTS_PER_TAG} events per tag)')
 # Show y-axis grid lines and x-axis grid lines only at major ticks (the labeled x ticks)
 plt.grid(True, which='both', axis='y', alpha=0.3)
 plt.grid(True, which='major', axis='x', alpha=0.3)
@@ -148,5 +152,5 @@ y_min = 10 ** np.floor(np.log10(min_value))
 plt.ylim(bottom=y_min)
 
 plt.tight_layout()
-plt.savefig(f"images/UmaDB-read-cond-bench.png", format="png", dpi=300)
+plt.savefig(f"images/UmaDB-read-cond-bench{_with_docker.replace('_', '-')}.png", format="png", dpi=300)
 plt.show()
