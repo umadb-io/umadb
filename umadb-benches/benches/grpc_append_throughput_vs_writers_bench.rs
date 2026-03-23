@@ -101,7 +101,7 @@ pub fn grpc_append_throughput_vs_writers_benchmark(c: &mut Criterion) {
         group.measurement_time(Duration::from_secs(total_measurement_time));
 
         // Number of events appended per iteration per client
-        let events_per_iter = 1usize;
+        // let events_per_iter = 1usize;
 
         // Build a Tokio runtime and multiple persistent clients (one per concurrent writer)
         let rt = RtBuilder::new_multi_thread()
@@ -124,42 +124,41 @@ pub fn grpc_append_throughput_vs_writers_benchmark(c: &mut Criterion) {
             b.iter_custom(|_iters| {
                 let test_duration = Duration::from_secs(test_duration_secs);
                 let start = Instant::now();
-                let mut total_events = 0u64;
+                let end_time = start + test_duration;
 
-                // Build the batch of events that will be reused
-                let events: Vec<DCBEvent> = (0..events_per_iter)
-                    .map(|i| DCBEvent {
-                        event_type: "bench-append".to_string(),
-                        data: format!("data-{i}").into_bytes(),
-                        tags: vec!["append".to_string()],
-                        uuid: None,
+                // Spawn continuous append tasks, one per thread
+                let handles: Vec<_> = (0..threads)
+                    .map(|i| {
+                        let client = clients[i].clone();
+                        let end_time = end_time.clone();
+                        rt.spawn(async move {
+                            let mut count = 0u64;
+                            while Instant::now() < end_time {
+                                let event = DCBEvent {
+                                    event_type: "bench-append".to_string(),
+                                    data: format!("data-{}", count).into_bytes(),
+                                    tags: vec!["append".to_string()],
+                                    uuid: None,
+                                };
+                                match black_box(client.append(vec![event], None, None).await) {
+                                    Ok(_) => count += 1,
+                                    Err(_) => break,
+                                }
+                            }
+                            count
+                        })
                     })
                     .collect();
 
-                // Run appends continuously for the test duration
-                while start.elapsed() < test_duration {
-                    rt.block_on(async {
-                        // Spawn `threads` concurrent append futures and await them all
-                        let futs = (0..threads).map(|i| {
-                            let client = clients[i].clone();
-                            let evs = events.clone();
-                            async move {
-                                let _ = black_box(
-                                    client
-                                        .append(black_box(evs), None, None)
-                                        .await
-                                        .expect("append events"),
-                                );
-                            }
-                        });
-                        let _ = join_all(futs).await;
-                    });
-                    total_events += threads as u64 * events_per_iter as u64;
-                }
+                // Wait for all tasks to complete and sum the total events
+                let total_events: u64 = rt.block_on(async {
+                    let results = join_all(handles).await;
+                    results.into_iter().map(|r| r.unwrap_or(0)).sum()
+                });
 
                 let elapsed = start.elapsed();
                 // Return the average time per event
-                elapsed / total_events as u32
+                elapsed / total_events.max(1) as u32
             });
         });
         // Shutdown server
