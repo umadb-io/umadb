@@ -2,10 +2,13 @@ import json
 import numpy as np
 import matplotlib.pyplot as plt
 from pathlib import Path
+import os
 
 # Keep this in sync with benches/grpc_append_with_readers_bench.rs
 EVENTS_PER_ITER = 1  # number of events appended per iteration by a single writer client
 READER_COUNT = 4     # number of background readers running during the append bench
+USE_DOCKER = bool(os.environ.get('USE_DOCKER'))
+_with_docker = "_with_docker" if USE_DOCKER else ""
 
 # Thread variants you ran (match the bench). Edit if you change the bench.
 threads = [1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024]
@@ -18,9 +21,11 @@ ci_upper_throughputs = []
 # percentile_throughputs[i] contains list of throughputs for (5+i*10) percentile
 percentile_throughputs = [[] for _ in range(10)]  # 5, 15, 25, ..., 85, 95
 
+bench_group = f"grpc_append_4readers{_with_docker}"
+
 for t in threads:
-    sample_path = Path(f"target/criterion/grpc_append_4readers/{t}/new/sample.json")
-    est_path = Path(f"target/criterion/grpc_append_4readers/{t}/new/estimates.json")
+    sample_path = Path(f"target/criterion/{bench_group}/{t}/new/sample.json")
+    est_path = Path(f"target/criterion/{bench_group}/{t}/new/estimates.json")
     if not sample_path.exists() or not est_path.exists():
         # Skip missing variants gracefully
         continue
@@ -132,7 +137,7 @@ plt.xscale('log')
 plt.yscale('log')
 plt.xlabel('Writer clients')
 plt.ylabel('Total events/sec')
-plt.title(f'UmaDB: Append with {READER_COUNT} Concurrent Readers')
+plt.title(f'UmaDB: Append{' With Docker' if _with_docker else ''} with {READER_COUNT} Concurrent Readers')
 # Show y-axis grid lines and x-axis grid lines only at major ticks (the labeled x ticks)
 plt.grid(True, which='both', axis='y', alpha=0.3)
 plt.grid(True, which='major', axis='x', alpha=0.3)
@@ -146,5 +151,5 @@ y_min = 10 ** np.floor(np.log10(min_value))
 plt.ylim(bottom=y_min)
 
 plt.tight_layout()
-plt.savefig(f"images/UmaDB-append-with-readers-bench.png", format="png", dpi=300)
+plt.savefig(f"images/UmaDB-append-with-readers-bench{_with_docker.replace('_', '-')}.png", format="png", dpi=300)
 plt.show()

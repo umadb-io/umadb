@@ -8,7 +8,9 @@ import os
 TOTAL_EVENTS = 100_000  # events per iteration per client
 MAX_THREADS = int(os.environ.get('MAX_THREADS', '0')) if os.environ.get('MAX_THREADS') else None
 THROTTLED = bool(os.environ.get('BENCH_READ_THROTTLED', ''))
-GROUP_NAME = "grpc_read_throttled" if THROTTLED else "grpc_read_unthrottled"
+USE_DOCKER = bool(os.environ.get('USE_DOCKER'))
+_with_docker = "_with_docker" if USE_DOCKER else ""
+GROUP_NAME = ("grpc_read_throttled" if THROTTLED else "grpc_read_unthrottled") + _with_docker
 
 # Thread variants you ran (match the bench). Edit if you change the bench.
 all_threads = [1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024]
@@ -137,7 +139,7 @@ plt.yscale('log')
 plt.xlabel('Clients')
 plt.ylabel('Total events/sec')
 constraint_type = "Self-Constrained" if THROTTLED else "Unconstrained"
-plt.title(f'UmaDB: Read Operations ({constraint_type})')
+plt.title(f'UmaDB: Read Operations{' With Docker' if _with_docker else ''} ({constraint_type})')
 # Show y-axis grid lines and x-axis grid lines only at major ticks (the labeled x ticks)
 plt.grid(True, which='both', axis='y', alpha=0.3)
 plt.grid(True, which='major', axis='x', alpha=0.3)
@@ -157,6 +159,6 @@ y_max = 10 ** np.ceil(np.log10(max_value))
 plt.ylim(bottom=y_min, top=y_max)
 
 plt.tight_layout()
-filename = "images/UmaDB-read-throttled-bench.png" if THROTTLED else "images/UmaDB-read-unthrottled-bench.png"
+filename = f"images/UmaDB-read-{'throttled' if THROTTLED else 'unthrottled'}-bench{_with_docker.replace('_', '-')}.png"
 plt.savefig(filename, format="png", dpi=300)
 plt.show()

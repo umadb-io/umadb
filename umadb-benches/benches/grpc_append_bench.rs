@@ -3,15 +3,13 @@ use futures::future::join_all;
 use std::hint::black_box;
 use std::net::TcpListener;
 use std::sync::Arc;
-use std::thread;
 use std::time::Duration;
 use tempfile::tempdir;
 use tokio::runtime::Builder as RtBuilder;
-use tokio::sync::oneshot;
+use umadb_benches::server_helper::start_bench_server;
 use umadb_client::{AsyncUmaDBClient, UmaDBClient};
 use umadb_core::db::UmaDB;
 use umadb_dcb::{DcbEvent, DcbEventStoreAsync, DcbEventStoreSync};
-use umadb_server::start_server;
 
 fn get_events_per_request() -> usize {
     std::env::var("EVENTS_PER_REQUEST")
@@ -40,7 +38,7 @@ fn init_db_with_events(num_events: usize) -> (tempfile::TempDir, String) {
         let current = remaining.min(batch_size);
         let mut events = Vec::with_capacity(current);
         for i in 0..current {
-            let ev = DcbEvent {
+            let ev = DCBEvent {
                 event_type: "bench-init".to_string(),
                 data: format!("init-{}", i).into_bytes(),
                 tags: vec!["init".to_string()],
@@ -58,10 +56,6 @@ fn init_db_with_events(num_events: usize) -> (tempfile::TempDir, String) {
 pub fn grpc_append_benchmark(c: &mut Criterion) {
     // for &threads in &[1usize, 2, 4] {
     let events_per_request = get_events_per_request();
-    let group_name = format!("grpc_append_{}_per_request", events_per_request);
-    let mut group = c.benchmark_group(&group_name);
-    group.sample_size(50);
-    group.measurement_time(Duration::from_secs(20));
 
     let all_threads = [1usize, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024];
     let max_threads = get_max_threads();
@@ -78,46 +72,23 @@ pub fn grpc_append_benchmark(c: &mut Criterion) {
 
         // Find a free localhost port
         let listener = TcpListener::bind("127.0.0.1:0").expect("bind to ephemeral port");
-        let addr = format!("127.0.0.1:{}", listener.local_addr().unwrap().port());
+        let port = listener.local_addr().unwrap().port();
+        let addr = format!("127.0.0.1:{}", port);
         drop(listener);
 
         let addr_http = format!("http://{}", addr);
 
-        // Start the gRPC server in a background thread, with shutdown channel
-        let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
-        let db_path_clone = db_path.clone();
-        let addr_clone = addr.clone();
+        // Start the gRPC server in a background thread
+        let server_handle = start_bench_server(db_path, addr.clone());
 
-        let server_thread = thread::spawn(move || {
-            let server_threads = std::thread::available_parallelism()
-                .map(|n| n.get())
-                .unwrap_or(1);
-            let rt = RtBuilder::new_multi_thread()
-                .worker_threads(server_threads)
-                .enable_all()
-                .build()
-                .expect("build tokio rt for server");
-            rt.block_on(async move {
-                start_server(db_path_clone, &addr_clone, shutdown_rx)
-                    .await
-                    .expect("start server");
-            });
-        });
-
-        // Wait until the server is actually accepting connections (avoid race with startup)
-        {
-            use std::time::Duration;
-            let deadline = std::time::Instant::now() + Duration::from_secs(5);
-            loop {
-                if std::net::TcpStream::connect(&addr).is_ok() {
-                    break;
-                }
-                if std::time::Instant::now() >= deadline {
-                    panic!("server did not start listening within timeout at {}", addr);
-                }
-                std::thread::sleep(Duration::from_millis(50));
-            }
-        }
+        let group_name = format!(
+            "grpc_append_{}_per_request{}",
+            events_per_request,
+            if server_handle.use_docker { "_with_docker" } else { "" }
+        );
+        let mut group = c.benchmark_group(&group_name);
+        group.sample_size(50);
+        group.measurement_time(Duration::from_secs(20));
 
         // Number of events appended per iteration per client
         let events_per_request = get_events_per_request();
@@ -175,11 +146,9 @@ pub fn grpc_append_benchmark(c: &mut Criterion) {
             });
         });
         // Shutdown server
-        let _ = shutdown_tx.send(());
-        let _ = server_thread.join();
+        server_handle.shutdown();
+        group.finish();
     }
-
-    group.finish();
 }
 
 criterion_group!(benches, grpc_append_benchmark);

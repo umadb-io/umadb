@@ -6,15 +6,13 @@ use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering},
 };
-use std::thread;
 use std::time::Duration;
 use tempfile::tempdir;
 use tokio::runtime::Builder as RtBuilder;
-use tokio::sync::oneshot;
+use umadb_benches::server_helper::start_bench_server;
 use umadb_client::{AsyncUmaDBClient, UmaDBClient};
 use umadb_core::db::UmaDB;
 use umadb_dcb::{DcbEvent, DcbEventStoreAsync, DcbEventStoreSync};
-use umadb_server::start_server;
 
 fn init_db_with_events(num_events: usize) -> (tempfile::TempDir, String) {
     let dir = tempdir().expect("tempdir");
@@ -50,54 +48,27 @@ pub fn grpc_append_with_readers_benchmark(c: &mut Criterion) {
     const READ_BATCH_SIZE: u32 = 1000;
     const READER_COUNT: usize = 4; // number of background readers
 
-    let mut group = c.benchmark_group("grpc_append_4readers");
-    group.sample_size(100);
-
     for &threads in &[1usize, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024] {
         // Initialize DB and server with some events
         let (_tmp_dir, db_path) = init_db_with_events(TOTAL_EVENTS as usize);
 
         // Find a free localhost port
         let listener = TcpListener::bind("127.0.0.1:0").expect("bind to ephemeral port");
-        let addr = format!("127.0.0.1:{}", listener.local_addr().unwrap().port());
+        let port = listener.local_addr().unwrap().port();
+        let addr = format!("127.0.0.1:{}", port);
         drop(listener);
 
         let addr_http = format!("http://{}", addr);
 
-        // Start the gRPC server in a background thread, with shutdown channel
-        let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
-        let db_path_clone = db_path.clone();
-        let addr_clone = addr.clone();
+        // Start the gRPC server in a background thread
+        let server_handle = start_bench_server(db_path, addr.clone());
 
-        let server_thread = thread::spawn(move || {
-            let server_threads = std::thread::available_parallelism()
-                .map(|n| n.get())
-                .unwrap_or(1);
-            let rt = RtBuilder::new_multi_thread()
-                .worker_threads(server_threads)
-                .enable_all()
-                .build()
-                .expect("build tokio rt for server");
-            rt.block_on(async move {
-                start_server(db_path_clone, &addr_clone, shutdown_rx)
-                    .await
-                    .expect("start server");
-            });
-        });
-
-        // Wait until the server is actually accepting connections (avoid race with startup)
-        {
-            let deadline = std::time::Instant::now() + Duration::from_secs(5);
-            loop {
-                if std::net::TcpStream::connect(&addr).is_ok() {
-                    break;
-                }
-                if std::time::Instant::now() >= deadline {
-                    panic!("server did not start listening within timeout at {}", addr);
-                }
-                std::thread::sleep(Duration::from_millis(50));
-            }
-        }
+        let group_name = format!(
+            "grpc_append_4readers{}",
+            if server_handle.use_docker { "_with_docker" } else { "" }
+        );
+        let mut group = c.benchmark_group(&group_name);
+        group.sample_size(100);
 
         // Start background readers that continuously read all preloaded events while appends are benchmarked
         let readers_running = Arc::new(AtomicBool::new(true));
@@ -217,11 +188,9 @@ pub fn grpc_append_with_readers_benchmark(c: &mut Criterion) {
             }
         });
 
-        let _ = shutdown_tx.send(());
-        let _ = server_thread.join();
+        server_handle.shutdown();
+        group.finish();
     }
-
-    group.finish();
 }
 
 criterion_group!(benches, grpc_append_with_readers_benchmark);
