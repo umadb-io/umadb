@@ -19,6 +19,8 @@ criterion = { version = "0.7.0", features = ["html_reports", "csv_output"] }
 pprof = { version = "0.15.0", features = ["criterion", "flamegraph"] }
 uuid = { version = "1.18.1", features = ["v4"] }
 clap = { version = "4.5.51", features = ["derive"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
 
 [package.metadata.release]
 release = false
@@ -48,10 +50,6 @@ name = "grpc_append_with_readers_bench"
 harness = false
 
 [[bench]]
-name = "grpc_append_throughput_vs_writers_bench"
-harness = false
-
-[[bench]]
 name = "grpc_append_cond_bench"
 harness = false
 
@@ -78,3 +76,7 @@ harness = false
 [[bin]]
 name = "throughput_vs_volume"
 path = "src/bin/throughput_vs_volume.rs"
+
+[[bin]]
+name = "throughput_vs_writers"
+path = "src/bin/throughput_vs_writers.rs"

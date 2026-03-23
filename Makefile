@@ -137,8 +137,10 @@ bench-append-with-readers:
 bench-append-throughput-vs-writers:
 	@echo "Running append throughput vs writers benchmark"
 	@trap 'kill 0' INT TERM; \
-	MAX_THREADS=$(MAX_THREADS) TEST_DURATION_SECS=$(TEST_DURATION_SECS) SAMPLE_SIZE=$(SAMPLE_SIZE) cargo bench -p umadb-benches --bench grpc_append_throughput_vs_writers_bench && \
-	MAX_THREADS=$(MAX_THREADS) python ./umadb-benches/benches/grpc_append_throughput_vs_writers_bench_plot.py
+	cargo run --release -p umadb-benches --bin throughput_vs_writers -- \
+		--duration $(or $(TEST_DURATION_SECS),60) \
+		--max-writers $(or $(MAX_THREADS),1024) && \
+	python ./umadb-benches/benches/grpc_append_throughput_vs_writers_bench_plot.py
 
 bench-read:
 	@echo "Running read benchmark"
