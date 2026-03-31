@@ -13,9 +13,9 @@ use tonic::transport::{Certificate, Channel, ClientTlsConfig, Endpoint};
 
 use tokio::runtime::{Handle, Runtime};
 use umadb_dcb::{
-    DCBAppendCondition, DCBError, DCBEvent, DCBEventStoreAsync, DCBEventStoreSync, DCBQuery,
-    DCBReadResponseAsync, DCBReadResponseSync, DCBResult, DCBSequencedEvent, DCBSubscriptionAsync,
-    DCBSubscriptionSync, TrackingInfo,
+    DcbAppendCondition, DcbError, DcbEvent, DcbEventStoreAsync, DcbEventStoreSync, DcbQuery,
+    DcbReadResponseAsync, DcbReadResponseSync, DcbResult, DcbSequencedEvent, DcbSubscriptionAsync,
+    DcbSubscriptionSync, TrackingInfo,
 };
 
 use std::sync::{Once, OnceLock};
@@ -103,7 +103,7 @@ impl UmaDBClient {
         }
     }
 
-    pub fn connect(&self) -> DCBResult<SyncUmaDBClient> {
+    pub fn connect(&self) -> DcbResult<SyncUmaDBClient> {
         let client = SyncUmaDBClient::connect(
             self.url.clone(),
             self.ca_path.clone(),
@@ -117,7 +117,7 @@ impl UmaDBClient {
         }
         client
     }
-    pub async fn connect_async(&self) -> DCBResult<AsyncUmaDBClient> {
+    pub async fn connect_async(&self) -> DcbResult<AsyncUmaDBClient> {
         let client = AsyncUmaDBClient::connect(
             self.url.clone(),
             self.ca_path.clone(),
@@ -147,9 +147,9 @@ impl SyncUmaDBClient {
     /// The returned iterator yields events indefinitely until cancelled or the stream ends.
     pub fn subscribe(
         &self,
-        query: Option<DCBQuery>,
+        query: Option<DcbQuery>,
         after: Option<u64>,
-    ) -> DCBResult<Box<dyn DCBSubscriptionSync + Send + 'static>> {
+    ) -> DcbResult<Box<dyn DcbSubscriptionSync + Send + 'static>> {
         let async_subscription = self
             .handle
             .block_on(self.async_client.subscribe(query, after))?;
@@ -165,7 +165,7 @@ impl SyncUmaDBClient {
         ca_path: Option<String>,
         batch_size: Option<u32>,
         api_key: Option<String>,
-    ) -> DCBResult<Self> {
+    ) -> DcbResult<Self> {
         let (rt, handle) = Self::get_rt_handle();
         let async_client =
             handle.block_on(AsyncUmaDBClient::connect(url, ca_path, batch_size, api_key))?;
@@ -180,7 +180,7 @@ impl SyncUmaDBClient {
         url: String,
         tls_options: Option<ClientTlsOptions>,
         batch_size: Option<u32>,
-    ) -> DCBResult<Self> {
+    ) -> DcbResult<Self> {
         let (rt, handle) = Self::get_rt_handle();
         let async_client = handle.block_on(AsyncUmaDBClient::connect_with_tls_options(
             url,
@@ -216,15 +216,15 @@ impl SyncUmaDBClient {
     }
 }
 
-impl DCBEventStoreSync for SyncUmaDBClient {
+impl DcbEventStoreSync for SyncUmaDBClient {
     fn read(
         &self,
-        query: Option<DCBQuery>,
+        query: Option<DcbQuery>,
         start: Option<u64>,
         backwards: bool,
         limit: Option<u32>,
         subscribe: bool, // Deprecated - remove in v1.0.
-    ) -> DCBResult<Box<dyn DCBReadResponseSync + Send + 'static>> {
+    ) -> DcbResult<Box<dyn DcbReadResponseSync + Send + 'static>> {
         let async_read_response = self.handle.block_on(
             self.async_client
                 .read(query, start, backwards, limit, subscribe),
@@ -237,21 +237,21 @@ impl DCBEventStoreSync for SyncUmaDBClient {
         }))
     }
 
-    fn head(&self) -> DCBResult<Option<u64>> {
+    fn head(&self) -> DcbResult<Option<u64>> {
         self.handle.block_on(self.async_client.head())
     }
 
-    fn get_tracking_info(&self, source: &str) -> DCBResult<Option<u64>> {
+    fn get_tracking_info(&self, source: &str) -> DcbResult<Option<u64>> {
         self.handle
             .block_on(self.async_client.get_tracking_info(source))
     }
 
     fn append(
         &self,
-        events: Vec<DCBEvent>,
-        condition: Option<DCBAppendCondition>,
+        events: Vec<DcbEvent>,
+        condition: Option<DcbAppendCondition>,
         tracking_info: Option<TrackingInfo>,
-    ) -> DCBResult<u64> {
+    ) -> DcbResult<u64> {
         self.handle
             .block_on(self.async_client.append(events, condition, tracking_info))
     }
@@ -259,14 +259,14 @@ impl DCBEventStoreSync for SyncUmaDBClient {
 
 pub struct SyncClientReadResponse {
     rt: Handle,
-    async_resp: Box<dyn DCBReadResponseAsync + Send + 'static>,
-    buffer: VecDeque<DCBSequencedEvent>, // efficient pop_front()
+    async_resp: Box<dyn DcbReadResponseAsync + Send + 'static>,
+    buffer: VecDeque<DcbSequencedEvent>, // efficient pop_front()
     finished: bool,
 }
 
 impl SyncClientReadResponse {
     /// Fetch the next batch from the async response, filling the buffer
-    fn fetch_next_batch(&mut self) -> DCBResult<()> {
+    fn fetch_next_batch(&mut self) -> DcbResult<()> {
         if self.finished {
             return Ok(());
         }
@@ -282,7 +282,7 @@ impl SyncClientReadResponse {
 }
 
 impl Iterator for SyncClientReadResponse {
-    type Item = DCBResult<DCBSequencedEvent>;
+    type Item = DcbResult<DcbSequencedEvent>;
 
     fn next(&mut self) -> Option<Self::Item> {
         // Fetch the next batch if the buffer is empty.
@@ -296,12 +296,12 @@ impl Iterator for SyncClientReadResponse {
     }
 }
 
-impl DCBReadResponseSync for SyncClientReadResponse {
-    fn head(&mut self) -> DCBResult<Option<u64>> {
+impl DcbReadResponseSync for SyncClientReadResponse {
+    fn head(&mut self) -> DcbResult<Option<u64>> {
         self.rt.block_on(self.async_resp.head())
     }
 
-    fn collect_with_head(&mut self) -> DCBResult<(Vec<DCBSequencedEvent>, Option<u64>)> {
+    fn collect_with_head(&mut self) -> DcbResult<(Vec<DcbSequencedEvent>, Option<u64>)> {
         let mut out = Vec::new();
         for result in self.by_ref() {
             out.push(result?);
@@ -309,7 +309,7 @@ impl DCBReadResponseSync for SyncClientReadResponse {
         Ok((out, self.head()?))
     }
 
-    fn next_batch(&mut self) -> DCBResult<Vec<DCBSequencedEvent>> {
+    fn next_batch(&mut self) -> DcbResult<Vec<DcbSequencedEvent>> {
         // If there are remaining events in the buffer, drain them
         if !self.buffer.is_empty() {
             return Ok(self.buffer.drain(..).collect());
@@ -323,14 +323,14 @@ impl DCBReadResponseSync for SyncClientReadResponse {
 
 pub struct SyncClientSubscription {
     rt: Handle,
-    async_resp: Box<dyn DCBSubscriptionAsync + Send + 'static>,
-    buffer: VecDeque<DCBSequencedEvent>, // efficient pop_front()
+    async_resp: Box<dyn DcbSubscriptionAsync + Send + 'static>,
+    buffer: VecDeque<DcbSequencedEvent>, // efficient pop_front()
     finished: bool,
 }
 
 impl SyncClientSubscription {
     /// Fetch the next batch from the async response, filling the buffer
-    fn fetch_next_batch(&mut self) -> DCBResult<()> {
+    fn fetch_next_batch(&mut self) -> DcbResult<()> {
         if self.finished {
             return Ok(());
         }
@@ -346,7 +346,7 @@ impl SyncClientSubscription {
 }
 
 impl Iterator for SyncClientSubscription {
-    type Item = DCBResult<DCBSequencedEvent>;
+    type Item = DcbResult<DcbSequencedEvent>;
 
     fn next(&mut self) -> Option<Self::Item> {
         // Fetch the next batch if the buffer is empty.
@@ -360,8 +360,8 @@ impl Iterator for SyncClientSubscription {
     }
 }
 
-impl DCBSubscriptionSync for SyncClientSubscription {
-    fn next_batch(&mut self) -> DCBResult<Vec<DCBSequencedEvent>> {
+impl DcbSubscriptionSync for SyncClientSubscription {
+    fn next_batch(&mut self) -> DcbResult<Vec<DcbSequencedEvent>> {
         // If there are remaining events in the buffer, drain them
         if !self.buffer.is_empty() {
             return Ok(self.buffer.drain(..).collect());
@@ -384,9 +384,9 @@ pub struct AsyncUmaDBClient {
 impl AsyncUmaDBClient {
     pub async fn subscribe(
         &self,
-        query: Option<DCBQuery>,
+        query: Option<DcbQuery>,
         after: Option<u64>,
-    ) -> DCBResult<Box<dyn DCBSubscriptionAsync + Send + 'static>> {
+    ) -> DcbResult<Box<dyn DcbSubscriptionAsync + Send + 'static>> {
         let query_proto = query.map(|q| q.into());
         let mut client = self.client.clone();
         let req_body = umadb_proto::v1::SubscribeRequest {
@@ -407,7 +407,7 @@ impl AsyncUmaDBClient {
         ca_path: Option<String>,
         batch_size: Option<u32>,
         api_key: Option<String>,
-    ) -> DCBResult<Self> {
+    ) -> DcbResult<Self> {
         // Try to read the CA certificate.
         let ca_pem = {
             if let Some(ca_path) = ca_path {
@@ -434,7 +434,7 @@ impl AsyncUmaDBClient {
         tls_options: Option<ClientTlsOptions>,
         batch_size: Option<u32>,
         api_key: Option<String>,
-    ) -> DCBResult<Self> {
+    ) -> DcbResult<Self> {
         let tls_enabled = url.starts_with("https://") || url.starts_with("grpcs://");
         match new_channel(url, tls_options).await {
             Ok(channel) => Ok(Self {
@@ -443,19 +443,19 @@ impl AsyncUmaDBClient {
                 tls_enabled,
                 api_key,
             }),
-            Err(err) => Err(DCBError::TransportError(format!("{err}"))),
+            Err(err) => Err(DcbError::TransportError(format!("{err}"))),
         }
     }
 
-    fn add_auth<T>(&self, mut req: Request<T>) -> DCBResult<Request<T>> {
+    fn add_auth<T>(&self, mut req: Request<T>) -> DcbResult<Request<T>> {
         if let Some(key) = &self.api_key {
             if !self.tls_enabled {
-                return Err(DCBError::TransportError(
+                return Err(DcbError::TransportError(
                     "API key configured but TLS is not enabled; refusing to send credentials over insecure channel".to_string(),
                 ));
             }
             let token = MetadataValue::from_str(&format!("Bearer {}", key))
-                .map_err(|e| DCBError::TransportError(format!("invalid API key: {}", e)))?;
+                .map_err(|e| DcbError::TransportError(format!("invalid API key: {}", e)))?;
             req.metadata_mut().insert("authorization", token);
         }
         Ok(req)
@@ -467,16 +467,16 @@ impl AsyncUmaDBClient {
 }
 
 #[async_trait]
-impl DCBEventStoreAsync for AsyncUmaDBClient {
+impl DcbEventStoreAsync for AsyncUmaDBClient {
     // Async inherent methods: use the gRPC client directly (no trait required)
     async fn read<'a>(
         &'a self,
-        query: Option<DCBQuery>,
+        query: Option<DcbQuery>,
         start: Option<u64>,
         backwards: bool,
         limit: Option<u32>,
         subscribe: bool,
-    ) -> DCBResult<Box<dyn DCBReadResponseAsync + Send + 'static>> {
+    ) -> DcbResult<Box<dyn DcbReadResponseAsync + Send + 'static>> {
         let query_proto = query.map(|q| q.into());
         let req_body = umadb_proto::v1::ReadRequest {
             query: query_proto,
@@ -496,7 +496,7 @@ impl DCBEventStoreAsync for AsyncUmaDBClient {
         Ok(Box::new(AsyncClientReadResponse::new(stream)))
     }
 
-    async fn head(&self) -> DCBResult<Option<u64>> {
+    async fn head(&self) -> DcbResult<Option<u64>> {
         let mut client = self.client.clone();
         let req = self.add_auth(Request::new(umadb_proto::v1::HeadRequest {}))?;
         match client.head(req).await {
@@ -505,7 +505,7 @@ impl DCBEventStoreAsync for AsyncUmaDBClient {
         }
     }
 
-    async fn get_tracking_info(&self, source: &str) -> DCBResult<Option<u64>> {
+    async fn get_tracking_info(&self, source: &str) -> DcbResult<Option<u64>> {
         let mut client = self.client.clone();
         let req = self.add_auth(Request::new(umadb_proto::v1::TrackingRequest {
             source: source.to_string(),
@@ -518,10 +518,10 @@ impl DCBEventStoreAsync for AsyncUmaDBClient {
 
     async fn append(
         &self,
-        events: Vec<DCBEvent>,
-        condition: Option<DCBAppendCondition>,
+        events: Vec<DcbEvent>,
+        condition: Option<DcbAppendCondition>,
         tracking_info: Option<TrackingInfo>,
-    ) -> DCBResult<u64> {
+    ) -> DcbResult<u64> {
         let events_proto: Vec<umadb_proto::v1::Event> = events
             .into_iter()
             .map(umadb_proto::v1::Event::from)
@@ -551,7 +551,7 @@ impl DCBEventStoreAsync for AsyncUmaDBClient {
 /// Async read response wrapper that provides batched access and head metadata
 pub struct AsyncClientReadResponse {
     stream: tonic::Streaming<umadb_proto::v1::ReadResponse>,
-    buffered: VecDeque<DCBSequencedEvent>,
+    buffered: VecDeque<DcbSequencedEvent>,
     last_head: Option<Option<u64>>, // None = unknown yet; Some(x) = known
     ended: bool,
     cancel: watch::Receiver<()>,
@@ -569,7 +569,7 @@ impl AsyncClientReadResponse {
     }
 
     /// Fetches the next batch if needed, filling the buffer
-    async fn fetch_next_if_needed(&mut self) -> DCBResult<()> {
+    async fn fetch_next_if_needed(&mut self) -> DcbResult<()> {
         if !self.buffered.is_empty() || self.ended {
             return Ok(());
         }
@@ -578,7 +578,7 @@ impl AsyncClientReadResponse {
             _ = self.cancel.changed() => {
                 self.ended = true;
                 // return Ok(());
-                return Err(DCBError::CancelledByUser());
+                return Err(DcbError::CancelledByUser());
             }
             msg = self.stream.message() => {
                 match msg {
@@ -587,8 +587,8 @@ impl AsyncClientReadResponse {
                         let mut buffered = VecDeque::with_capacity(resp.events.len());
                         for e in resp.events {
                             if let Some(ev) = e.event {
-                                let event = DCBEvent::try_from(ev)?;
-                                buffered.push_back(DCBSequencedEvent { position: e.position, event });
+                                let event = DcbEvent::try_from(ev)?;
+                                buffered.push_back(DcbSequencedEvent { position: e.position, event });
                             }
                         }
                         self.buffered = buffered;
@@ -604,8 +604,8 @@ impl AsyncClientReadResponse {
 }
 
 #[async_trait]
-impl DCBReadResponseAsync for AsyncClientReadResponse {
-    async fn head(&mut self) -> DCBResult<Option<u64>> {
+impl DcbReadResponseAsync for AsyncClientReadResponse {
+    async fn head(&mut self) -> DcbResult<Option<u64>> {
         if let Some(h) = self.last_head {
             return Ok(h);
         }
@@ -614,7 +614,7 @@ impl DCBReadResponseAsync for AsyncClientReadResponse {
         Ok(self.last_head.unwrap_or(None))
     }
 
-    async fn next_batch(&mut self) -> DCBResult<Vec<DCBSequencedEvent>> {
+    async fn next_batch(&mut self) -> DcbResult<Vec<DcbSequencedEvent>> {
         if !self.buffered.is_empty() {
             return Ok(self.buffered.drain(..).collect());
         }
@@ -630,7 +630,7 @@ impl DCBReadResponseAsync for AsyncClientReadResponse {
 }
 
 impl Stream for AsyncClientReadResponse {
-    type Item = DCBResult<DCBSequencedEvent>;
+    type Item = DcbResult<DcbSequencedEvent>;
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let this = self.get_mut();
@@ -655,11 +655,11 @@ impl Stream for AsyncClientReadResponse {
                     for e in resp.events {
                         if let Some(ev) = e.event {
                             // Propagate any conversion error using DCBResult.
-                            let event = match DCBEvent::try_from(ev) {
+                            let event = match DcbEvent::try_from(ev) {
                                 Ok(event) => event,
                                 Err(err) => return Poll::Ready(Some(Err(err))),
                             };
-                            buffered.push_back(DCBSequencedEvent {
+                            buffered.push_back(DcbSequencedEvent {
                                 position: e.position,
                                 event,
                             });
@@ -693,7 +693,7 @@ impl Stream for AsyncClientReadResponse {
 // Async subscribe response wrapper: similar to AsyncClientReadResponse but without head
 pub struct AsyncClientSubscribeResponse {
     stream: tonic::Streaming<umadb_proto::v1::SubscribeResponse>,
-    buffered: VecDeque<DCBSequencedEvent>,
+    buffered: VecDeque<DcbSequencedEvent>,
     ended: bool,
     cancel: watch::Receiver<()>,
 }
@@ -708,7 +708,7 @@ impl AsyncClientSubscribeResponse {
         }
     }
 
-    async fn fetch_next_if_needed(&mut self) -> DCBResult<()> {
+    async fn fetch_next_if_needed(&mut self) -> DcbResult<()> {
         if !self.buffered.is_empty() || self.ended {
             return Ok(());
         }
@@ -716,7 +716,7 @@ impl AsyncClientSubscribeResponse {
         tokio::select! {
             _ = self.cancel.changed() => {
                 self.ended = true;
-                return Err(DCBError::CancelledByUser());
+                return Err(DcbError::CancelledByUser());
             }
             msg = self.stream.message() => {
                 match msg {
@@ -724,8 +724,8 @@ impl AsyncClientSubscribeResponse {
                         let mut buffered = VecDeque::with_capacity(resp.events.len());
                         for e in resp.events {
                             if let Some(ev) = e.event {
-                                let event = DCBEvent::try_from(ev)?;
-                                buffered.push_back(DCBSequencedEvent { position: e.position, event });
+                                let event = DcbEvent::try_from(ev)?;
+                                buffered.push_back(DcbSequencedEvent { position: e.position, event });
                             }
                         }
                         self.buffered = buffered;
@@ -740,8 +740,8 @@ impl AsyncClientSubscribeResponse {
 }
 
 #[async_trait]
-impl DCBSubscriptionAsync for AsyncClientSubscribeResponse {
-    async fn next_batch(&mut self) -> DCBResult<Vec<DCBSequencedEvent>> {
+impl DcbSubscriptionAsync for AsyncClientSubscribeResponse {
+    async fn next_batch(&mut self) -> DcbResult<Vec<DcbSequencedEvent>> {
         if !self.buffered.is_empty() {
             return Ok(self.buffered.drain(..).collect());
         }
@@ -754,7 +754,7 @@ impl DCBSubscriptionAsync for AsyncClientSubscribeResponse {
 }
 
 impl Stream for AsyncClientSubscribeResponse {
-    type Item = DCBResult<DCBSequencedEvent>;
+    type Item = DcbResult<DcbSequencedEvent>;
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let this = self.get_mut();
@@ -772,11 +772,11 @@ impl Stream for AsyncClientSubscribeResponse {
                     let mut buffered = VecDeque::with_capacity(resp.events.len());
                     for e in resp.events {
                         if let Some(ev) = e.event {
-                            let event = match DCBEvent::try_from(ev) {
+                            let event = match DcbEvent::try_from(ev) {
                                 Ok(event) => event,
                                 Err(err) => return Poll::Ready(Some(Err(err))),
                             };
-                            buffered.push_back(DCBSequencedEvent {
+                            buffered.push_back(DcbSequencedEvent {
                                 position: e.position,
                                 event,
                             });

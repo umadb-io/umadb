@@ -2,7 +2,7 @@ use crate::common::Position;
 use crate::common::{PageID, Tsn};
 use bitflags::bitflags;
 use byteorder::{ByteOrder, LittleEndian};
-use umadb_dcb::{DCBError, DCBResult};
+use umadb_dcb::{DcbError, DcbResult};
 
 bitflags! {
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -108,9 +108,9 @@ impl HeaderNode {
     ///
     /// # Returns
     /// * `Result<Self>` - The deserialized HeaderNode or an error
-    pub fn from_slice(slice: &[u8]) -> DCBResult<Self> {
+    pub fn from_slice(slice: &[u8]) -> DcbResult<Self> {
         if slice.len() < 48 {
-            return Err(DCBError::DeserializationError(format!(
+            return Err(DcbError::DeserializationError(format!(
                 "Expected at least 48 bytes, got {}",
                 slice.len()
             )));
@@ -129,7 +129,7 @@ impl HeaderNode {
         };
         let flags = if slice.len() >= 54 {
             HeaderFlags::from_bits(LittleEndian::read_u16(&slice[52..54])).ok_or(
-                DCBError::DeserializationError("unknown flag bits set".to_string()),
+                DcbError::DeserializationError("unknown flag bits set".to_string()),
             )?
         } else {
             HeaderFlags::empty()
@@ -140,7 +140,7 @@ impl HeaderNode {
         if flags.contains(HeaderFlags::HAS_TRACKING_ROOT_ID) {
             required_len += 8;
             if slice.len() < required_len {
-                return Err(DCBError::DeserializationError(format!(
+                return Err(DcbError::DeserializationError(format!(
                     "Expected at least {required_len} bytes, got {}",
                     slice.len()
                 )));

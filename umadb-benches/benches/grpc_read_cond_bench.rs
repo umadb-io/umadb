@@ -10,7 +10,7 @@ use tokio::runtime::Builder as RtBuilder;
 use tokio::sync::oneshot;
 use umadb_client::{AsyncUmaDBClient, UmaDBClient};
 use umadb_core::db::UmaDB;
-use umadb_dcb::{DCBEvent, DCBEventStoreAsync, DCBEventStoreSync, DCBQuery, DCBQueryItem};
+use umadb_dcb::{DcbEvent, DcbEventStoreAsync, DcbEventStoreSync, DcbQuery, DcbQueryItem};
 use umadb_server::start_server;
 
 const EVENTS_PER_TAG: u32 = 10;
@@ -33,7 +33,7 @@ fn init_db_with_events() -> (tempfile::TempDir, String) {
     for _ in 0..EVENTS_PER_TAG {
         let mut events = Vec::with_capacity(NUM_TAGS as usize);
         for j in 0..NUM_TAGS {
-            let ev = DCBEvent {
+            let ev = DcbEvent {
                 event_type: "bench".to_string(),
                 data: format!("event-{}", j).into_bytes(),
                 tags: vec![format!("tag-{}", j).to_string()],
@@ -48,7 +48,7 @@ fn init_db_with_events() -> (tempfile::TempDir, String) {
 }
 
 pub fn grpc_read_cond_benchmark(c: &mut Criterion) {
-    let query = DCBQuery::new().item(DCBQueryItem::new().tags(["tag-500"]));
+    let query = DcbQuery::new().item(DcbQueryItem::new().tags(["tag-500"]));
 
     // Initialize DB and server with some events
     let (_tmp_dir, db_path) = init_db_with_events();

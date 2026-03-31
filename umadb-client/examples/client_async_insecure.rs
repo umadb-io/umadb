@@ -1,7 +1,7 @@
 use futures::StreamExt;
 use umadb_client::UmaDBClient;
 use umadb_dcb::{
-    DCBAppendCondition, DCBError, DCBEvent, DCBEventStoreAsync, DCBQuery, DCBQueryItem,
+    DcbAppendCondition, DcbError, DcbEvent, DcbEventStoreAsync, DcbQuery, DcbQueryItem,
     TrackingInfo,
 };
 use uuid::Uuid;
@@ -13,8 +13,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let client = UmaDBClient::new(url).connect_async().await?;
 
     // Define a consistency boundary
-    let boundary = DCBQuery::new().item(
-        DCBQueryItem::new()
+    let boundary = DcbQuery::new().item(
+        DcbQueryItem::new()
             .types(["example"])
             .tags(["tag1", "tag2"]),
     );
@@ -42,14 +42,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Last known position is: {:?}", last_known_position);
 
     // Produce new event
-    let event = DCBEvent::default()
+    let event = DcbEvent::default()
         .event_type("example")
         .tags(["tag1", "tag2"])
         .data(b"Hello, world!")
         .uuid(Uuid::new_v4());
 
     // Append event in consistency boundary
-    let append_condition = DCBAppendCondition {
+    let append_condition = DcbAppendCondition {
         fail_if_events_match: boundary.clone(),
         after: last_known_position,
     };
@@ -60,7 +60,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Appended event at position: {}", position1);
 
     // Append conflicting event - expect an error
-    let conflicting_event = DCBEvent::default()
+    let conflicting_event = DcbEvent::default()
         .event_type("example")
         .tags(["tag1", "tag2"])
         .data(b"Hello, world!")
@@ -76,7 +76,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Expect an integrity error
     match conflicting_result {
-        Err(DCBError::IntegrityError(integrity_error)) => {
+        Err(DcbError::IntegrityError(integrity_error)) => {
             println!("Conflicting event was rejected: {:?}", integrity_error);
         }
         other => panic!("Expected IntegrityError, got {:?}", other),
@@ -148,7 +148,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Expect an integrity error
     match conflicting_result {
-        Err(DCBError::IntegrityError(integrity_error)) => {
+        Err(DcbError::IntegrityError(integrity_error)) => {
             println!(
                 "Conflicting upstream position was rejected: {:?}",
                 integrity_error

@@ -13,7 +13,7 @@ use tokio::runtime::Builder as RtBuilder;
 use tokio::sync::oneshot;
 use umadb_client::{AsyncUmaDBClient, UmaDBClient};
 use umadb_core::db::UmaDB;
-use umadb_dcb::{DCBEvent, DCBEventStoreAsync, DCBEventStoreSync};
+use umadb_dcb::{DcbEvent, DcbEventStoreAsync, DcbEventStoreSync};
 use umadb_server::start_server;
 
 fn get_max_threads() -> Option<usize> {
@@ -36,7 +36,7 @@ fn init_db_with_events(num_events: usize) -> (tempfile::TempDir, String) {
         let current = remaining.min(batch_size);
         let mut events = Vec::with_capacity(current);
         for i in 0..current {
-            let ev = DCBEvent {
+            let ev = DcbEvent {
                 event_type: "bench".to_string(),
                 data: format!("event-{}", i).into_bytes(),
                 tags: vec!["tag1".to_string()],
@@ -122,8 +122,8 @@ pub fn grpc_read_with_writers_benchmark(c: &mut Criterion) {
     }
 
     // Prebuild a tiny event batch for each append
-    let writer_batch: Vec<DCBEvent> = (0..WRITER_EVENTS_PER_APPEND)
-        .map(|i| DCBEvent {
+    let writer_batch: Vec<DcbEvent> = (0..WRITER_EVENTS_PER_APPEND)
+        .map(|i| DcbEvent {
             event_type: "writer".to_string(),
             data: format!("w-{}", i).into_bytes(),
             tags: vec!["w".to_string()],

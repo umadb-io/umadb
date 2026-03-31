@@ -11,7 +11,7 @@ use tonic_health::pb::health_client::HealthClient;
 
 use umadb_client::UmaDBClient;
 use umadb_dcb::{
-    DCBAppendCondition, DCBEvent, DCBEventStoreAsync, DCBEventStoreSync, DCBQuery, DCBQueryItem,
+    DcbAppendCondition, DcbEvent, DcbEventStoreAsync, DcbEventStoreSync, DcbQuery, DcbQueryItem,
 };
 use umadb_server::start_server;
 use uuid::Uuid;
@@ -108,7 +108,7 @@ fn client_sync_covers_all_methods() {
 
     // Prepare some events
     let mk_event = |i: u8| {
-        DCBEvent::default()
+        DcbEvent::default()
             .event_type("ExampleEvent")
             .tags(["tagA", "tagB"])
             .data(vec![i])
@@ -159,7 +159,7 @@ fn client_sync_covers_all_methods() {
     assert_eq!(b2.len(), 1);
 
     // Exercise: read_with_head helper with a boundary and after parameter
-    let boundary = DCBQuery::new().item(DCBQueryItem::new().types(["ExampleEvent"]).tags(["tagA"]));
+    let boundary = DcbQuery::new().item(DcbQueryItem::new().types(["ExampleEvent"]).tags(["tagA"]));
     let (vec_events, head3) = client
         .read_with_head(Some(boundary.clone()), None, false, None)
         .unwrap();
@@ -167,7 +167,7 @@ fn client_sync_covers_all_methods() {
     assert_eq!(head3, Some(p3));
 
     // Now try conditional append using last-known head
-    let cond = DCBAppendCondition::new(boundary).after(head3);
+    let cond = DcbAppendCondition::new(boundary).after(head3);
     let e4 = mk_event(4);
     let p4 = client.append(vec![e4.clone()], Some(cond), None).unwrap();
     assert!(p4 > p3);
@@ -212,7 +212,7 @@ async fn client_async_covers_all_methods() {
 
     // Prepare events
     let mk_event = |i: u8| {
-        DCBEvent::default()
+        DcbEvent::default()
             .event_type("ExampleEvent")
             .tags(["tagA", "tagB"])
             .data(vec![i])
@@ -261,7 +261,7 @@ async fn client_async_covers_all_methods() {
     assert_eq!(head2, Some(p3));
 
     // Use a boundary and conditional append based on head
-    let boundary = DCBQuery::new().item(DCBQueryItem::new().types(["ExampleEvent"]).tags(["tagA"]));
+    let boundary = DcbQuery::new().item(DcbQueryItem::new().types(["ExampleEvent"]).tags(["tagA"]));
     let (evs_in_boundary, head3) = client
         .read_with_head(Some(boundary.clone()), None, false, None)
         .await
@@ -269,7 +269,7 @@ async fn client_async_covers_all_methods() {
     assert_eq!(evs_in_boundary.len(), 3);
     assert_eq!(head3, Some(p3));
 
-    let cond = DCBAppendCondition::new(boundary).after(head3);
+    let cond = DcbAppendCondition::new(boundary).after(head3);
     let p4 = client
         .append(vec![mk_event(4)], Some(cond), None)
         .await

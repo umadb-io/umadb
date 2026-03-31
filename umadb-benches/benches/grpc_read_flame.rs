@@ -14,7 +14,7 @@ fn main() -> std::io::Result<()> {
     use tokio::sync::oneshot;
     use umadb_client::AsyncUmaDBClient;
     use umadb_core::db::UmaDB;
-    use umadb_dcb::{DCBEvent, DCBEventStoreAsync, DCBEventStoreSync};
+    use umadb_dcb::{DcbEvent, DcbEventStoreAsync, DcbEventStoreSync};
     use umadb_server::start_server;
 
     fn init_db_with_events(num_events: usize) -> (tempfile::TempDir, String) {
@@ -31,7 +31,7 @@ fn main() -> std::io::Result<()> {
             let current = remaining.min(batch_size);
             let mut events = Vec::with_capacity(current);
             for i in 0..current {
-                let ev = DCBEvent {
+                let ev = DcbEvent {
                     event_type: "bench".to_string(),
                     data: format!("event-{}", i).into_bytes(),
                     tags: vec!["tag1".to_string()],

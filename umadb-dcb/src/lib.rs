@@ -11,102 +11,102 @@ use thiserror::Error;
 use uuid::Uuid;
 
 /// Non-async Rust interface for recording and retrieving events
-pub trait DCBEventStoreSync {
+pub trait DcbEventStoreSync {
     /// Reads events from the store based on the provided query and constraints
     ///
-    /// Returns a DCBReadResponseSync that provides an iterator over all events,
+    /// Returns a `DcbReadResponseSync` that provides an iterator over all events,
     /// unless 'from' is given then only those with position greater than 'after',
     /// and unless any query items are given, then only those that match at least one
     /// query item. An event matches a query item if its type is in the item types or
     /// there are no item types, and if all the item tags are in the event tags.
     fn read(
         &self,
-        query: Option<DCBQuery>,
+        query: Option<DcbQuery>,
         start: Option<u64>,
         backwards: bool,
         limit: Option<u32>,
         subscribe: bool, // Deprecated - remove in v1.0.
-    ) -> DCBResult<Box<dyn DCBReadResponseSync + Send + 'static>>;
+    ) -> DcbResult<Box<dyn DcbReadResponseSync + Send + 'static>>;
 
-    /// Reads events from the store and returns them as a tuple of (Vec<DCBSequencedEvent>, Option<u64>)
+    /// Reads events from the store and returns them as a tuple of `(Vec<DcbSequencedEvent>, Option<u64>)`
     fn read_with_head(
         &self,
-        query: Option<DCBQuery>,
+        query: Option<DcbQuery>,
         start: Option<u64>,
         backwards: bool,
         limit: Option<u32>,
-    ) -> DCBResult<(Vec<DCBSequencedEvent>, Option<u64>)> {
+    ) -> DcbResult<(Vec<DcbSequencedEvent>, Option<u64>)> {
         let mut response = self.read(query, start, backwards, limit, false)?;
         response.collect_with_head()
     }
 
     /// Returns the current head position of the event store, or None if empty
     ///
-    /// Returns the value of last_committed_position, or None if last_committed_position is zero
-    fn head(&self) -> DCBResult<Option<u64>>;
+    /// Returns the value of `last_committed_position`, or `None` if `last_committed_position` is zero
+    fn head(&self) -> DcbResult<Option<u64>>;
 
     /// Returns the greatest recorded upstream position for a tracking source, if any
-    fn get_tracking_info(&self, source: &str) -> DCBResult<Option<u64>>;
+    fn get_tracking_info(&self, source: &str) -> DcbResult<Option<u64>>;
 
     /// Appends given events to the event store, unless the condition fails
     ///
     /// Returns the position of the last appended event
     fn append(
         &self,
-        events: Vec<DCBEvent>,
-        condition: Option<DCBAppendCondition>,
+        events: Vec<DcbEvent>,
+        condition: Option<DcbAppendCondition>,
         tracking_info: Option<TrackingInfo>,
-    ) -> DCBResult<u64>;
+    ) -> DcbResult<u64>;
 }
 
 /// Response from a read operation, providing an iterator over sequenced events
-pub trait DCBReadResponseSync: Iterator<Item = DCBResult<DCBSequencedEvent>> + Send {
+pub trait DcbReadResponseSync: Iterator<Item = DcbResult<DcbSequencedEvent>> + Send {
     /// Returns the current head position of the event store, or None if empty
-    fn head(&mut self) -> DCBResult<Option<u64>>;
+    fn head(&mut self) -> DcbResult<Option<u64>>;
     /// Returns a vector of events with head
-    fn collect_with_head(&mut self) -> DCBResult<(Vec<DCBSequencedEvent>, Option<u64>)>;
+    fn collect_with_head(&mut self) -> DcbResult<(Vec<DcbSequencedEvent>, Option<u64>)>;
     /// Returns the next batch of events for this read. Implementations may buffer
     /// events per underlying transport message ("batch"). If there are no more
     /// events available, returns an empty Vec. The head() method should reflect
     /// the latest known head as reported by the underlying store.
-    fn next_batch(&mut self) -> DCBResult<Vec<DCBSequencedEvent>>;
+    fn next_batch(&mut self) -> DcbResult<Vec<DcbSequencedEvent>>;
 }
 
 /// Response from a subscribe operation, providing an iterator over sequenced events
-pub trait DCBSubscriptionSync: Iterator<Item = DCBResult<DCBSequencedEvent>> + Send {
+pub trait DcbSubscriptionSync: Iterator<Item = DcbResult<DcbSequencedEvent>> + Send {
     /// Returns the next batch of events for this read. Implementations may buffer
     /// events per underlying transport message ("batch"). If there are no more
     /// events available, returns an empty Vec.
-    fn next_batch(&mut self) -> DCBResult<Vec<DCBSequencedEvent>>;
+    fn next_batch(&mut self) -> DcbResult<Vec<DcbSequencedEvent>>;
 }
 
 /// Async Rust interface for recording and retrieving events
 #[async_trait]
-pub trait DCBEventStoreAsync: Send + Sync {
+pub trait DcbEventStoreAsync: Send + Sync {
     /// Reads events from the store based on the provided query and constraints
     ///
-    /// Returns a DCBReadResponseSync that provides an iterator over all events,
+    /// Returns a `DcbReadResponseSync` that provides an iterator over all events,
     /// unless 'after' is given then only those with position greater than 'after',
     /// and unless any query items are given, then only those that match at least one
     /// query item. An event matches a query item if its type is in the item types or
     /// there are no item types, and if all the item tags are in the event tags.
     async fn read<'a>(
         &'a self,
-        query: Option<DCBQuery>,
+        query: Option<DcbQuery>,
         start: Option<u64>,
         backwards: bool,
         limit: Option<u32>,
         subscribe: bool,
-    ) -> DCBResult<Box<dyn DCBReadResponseAsync + Send + 'static>>;
+    ) -> DcbResult<Box<dyn DcbReadResponseAsync + Send + 'static>>;
 
-    /// Reads events from the store and returns them as a tuple of (Vec<DCBSequencedEvent>, Option<u64>)
+    /// Reads events from the store and returns them as a tuple of `(Vec<DcbSequencedEvent>, Option<u64>)`
     async fn read_with_head<'a>(
         &'a self,
-        query: Option<DCBQuery>,
+        query: Option<DcbQuery>,
         after: Option<u64>,
         backwards: bool,
         limit: Option<u32>,
-    ) -> DCBResult<(Vec<DCBSequencedEvent>, Option<u64>)> {
+    ) -> DcbResult<(Vec<DcbSequencedEvent>, Option<u64>)> {
         let mut response = self.read(query, after, backwards, limit, false).await?;
         response.collect_with_head().await
     }
@@ -114,28 +114,28 @@ pub trait DCBEventStoreAsync: Send + Sync {
     /// Returns the current head position of the event store, or None if empty
     ///
     /// Returns the value of last_committed_position, or None if last_committed_position is zero
-    async fn head(&self) -> DCBResult<Option<u64>>;
+    async fn head(&self) -> DcbResult<Option<u64>>;
 
     /// Returns the greatest recorded upstream position for a tracking source, if any
-    async fn get_tracking_info(&self, source: &str) -> DCBResult<Option<u64>>;
+    async fn get_tracking_info(&self, source: &str) -> DcbResult<Option<u64>>;
 
     /// Appends given events to the event store, unless the condition fails
     ///
     /// Returns the position of the last appended event
     async fn append(
         &self,
-        events: Vec<DCBEvent>,
-        condition: Option<DCBAppendCondition>,
+        events: Vec<DcbEvent>,
+        condition: Option<DcbAppendCondition>,
         tracking_info: Option<TrackingInfo>,
-    ) -> DCBResult<u64>;
+    ) -> DcbResult<u64>;
 }
 
 /// Asynchronous response from a read operation, providing a stream of sequenced events
 #[async_trait]
-pub trait DCBReadResponseAsync: Stream<Item = DCBResult<DCBSequencedEvent>> + Send + Unpin {
-    async fn head(&mut self) -> DCBResult<Option<u64>>;
+pub trait DcbReadResponseAsync: Stream<Item = DcbResult<DcbSequencedEvent>> + Send + Unpin {
+    async fn head(&mut self) -> DcbResult<Option<u64>>;
 
-    async fn collect_with_head(&mut self) -> DCBResult<(Vec<DCBSequencedEvent>, Option<u64>)> {
+    async fn collect_with_head(&mut self) -> DcbResult<(Vec<DcbSequencedEvent>, Option<u64>)> {
         let mut events = Vec::new();
         while let Some(result) = self.next().await {
             events.push(result?); // propagate error from stream
@@ -145,26 +145,26 @@ pub trait DCBReadResponseAsync: Stream<Item = DCBResult<DCBSequencedEvent>> + Se
         Ok((events, head))
     }
 
-    async fn next_batch(&mut self) -> DCBResult<Vec<DCBSequencedEvent>>;
+    async fn next_batch(&mut self) -> DcbResult<Vec<DcbSequencedEvent>>;
 }
 
 /// Asynchronous response from a subscribe operation, providing a stream of sequenced events
 #[async_trait]
-pub trait DCBSubscriptionAsync: Stream<Item = DCBResult<DCBSequencedEvent>> + Send + Unpin {
-    async fn next_batch(&mut self) -> DCBResult<Vec<DCBSequencedEvent>>;
+pub trait DcbSubscriptionAsync: Stream<Item = DcbResult<DcbSequencedEvent>> + Send + Unpin {
+    async fn next_batch(&mut self) -> DcbResult<Vec<DcbSequencedEvent>>;
 }
 
 /// Represents a query item for filtering events
 #[derive(Debug, Clone, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct DCBQueryItem {
+pub struct DcbQueryItem {
     /// Event types to match
     pub types: Vec<String>,
     /// Tags that must all be present in the event
     pub tags: Vec<String>,
 }
 
-impl DCBQueryItem {
+impl DcbQueryItem {
     /// Creates a new query item
     pub fn new() -> Self {
         Self {
@@ -197,12 +197,12 @@ impl DCBQueryItem {
 /// A query composed of multiple query items
 #[derive(Debug, Clone, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct DCBQuery {
+pub struct DcbQuery {
     /// List of query items, where events matching any item are included in results
-    pub items: Vec<DCBQueryItem>,
+    pub items: Vec<DcbQueryItem>,
 }
 
-impl DCBQuery {
+impl DcbQuery {
     /// Creates a new empty query
     pub fn new() -> Self {
         Self { items: Vec::new() }
@@ -211,7 +211,7 @@ impl DCBQuery {
     /// Creates a query with the specified items
     pub fn with_items<I>(items: I) -> Self
     where
-        I: IntoIterator<Item = DCBQueryItem>,
+        I: IntoIterator<Item = DcbQueryItem>,
     {
         Self {
             items: items.into_iter().collect(),
@@ -219,7 +219,7 @@ impl DCBQuery {
     }
 
     /// Adds a query item to this query
-    pub fn item(mut self, item: DCBQueryItem) -> Self {
+    pub fn item(mut self, item: DcbQueryItem) -> Self {
         self.items.push(item);
         self
     }
@@ -227,7 +227,7 @@ impl DCBQuery {
     /// Adds multiple query items to this query
     pub fn items<I>(mut self, items: I) -> Self
     where
-        I: IntoIterator<Item = DCBQueryItem>,
+        I: IntoIterator<Item = DcbQueryItem>,
     {
         self.items.extend(items);
         self
@@ -237,16 +237,16 @@ impl DCBQuery {
 /// Conditions that must be satisfied for an append operation to succeed
 #[derive(Debug, Clone, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct DCBAppendCondition {
+pub struct DcbAppendCondition {
     /// Query that, if matching any events, will cause the append to fail
-    pub fail_if_events_match: DCBQuery,
+    pub fail_if_events_match: DcbQuery,
     /// Position after which to append; if None, append at the end
     pub after: Option<u64>,
 }
 
-impl DCBAppendCondition {
+impl DcbAppendCondition {
     /// Creates a new empty append condition
-    pub fn new(fail_if_events_match: DCBQuery) -> Self {
+    pub fn new(fail_if_events_match: DcbQuery) -> Self {
         Self {
             fail_if_events_match,
             after: None,
@@ -262,7 +262,7 @@ impl DCBAppendCondition {
 /// Represents an event in the event store
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct DCBEvent {
+pub struct DcbEvent {
     /// Type of the event
     pub event_type: String,
     /// Tags associated with the event
@@ -273,13 +273,13 @@ pub struct DCBEvent {
     pub uuid: Option<Uuid>,
 }
 
-impl Default for DCBEvent {
+impl Default for DcbEvent {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl DCBEvent {
+impl DcbEvent {
     /// Creates a new event
     pub fn new() -> Self {
         Self {
@@ -329,17 +329,17 @@ pub struct TrackingInfo {
 /// An event with its position in the event sequence
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct DCBSequencedEvent {
+pub struct DcbSequencedEvent {
     /// Position of the event in the sequence
     pub position: u64,
     /// The event
-    pub event: DCBEvent,
+    pub event: DcbEvent,
 }
 
 // Error types
 #[derive(Error, Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub enum DCBError {
+pub enum DcbError {
     // Generic/system errors
     #[error("io error: {0}")]
     #[cfg_attr(feature = "serde", serde(with = "serde_io_error"))]
@@ -385,7 +385,7 @@ pub enum DCBError {
     AuthenticationError(String),
 }
 
-pub type DCBResult<T> = Result<T, DCBError>;
+pub type DcbResult<T> = Result<T, DcbError>;
 
 #[cfg(feature = "serde")]
 mod serde_io_error {
@@ -516,13 +516,13 @@ mod tests {
 
     // A simple implementation of DCBReadResponseSync for testing
     struct TestReadResponse {
-        events: Vec<DCBSequencedEvent>,
+        events: Vec<DcbSequencedEvent>,
         current_index: usize,
         head_position: Option<u64>,
     }
 
     impl TestReadResponse {
-        fn new(events: Vec<DCBSequencedEvent>, head_position: Option<u64>) -> Self {
+        fn new(events: Vec<DcbSequencedEvent>, head_position: Option<u64>) -> Self {
             Self {
                 events,
                 current_index: 0,
@@ -532,7 +532,7 @@ mod tests {
     }
 
     impl Iterator for TestReadResponse {
-        type Item = DCBResult<DCBSequencedEvent>;
+        type Item = DcbResult<DcbSequencedEvent>;
 
         fn next(&mut self) -> Option<Self::Item> {
             if self.current_index < self.events.len() {
@@ -545,16 +545,16 @@ mod tests {
         }
     }
 
-    impl DCBReadResponseSync for TestReadResponse {
-        fn head(&mut self) -> DCBResult<Option<u64>> {
+    impl DcbReadResponseSync for TestReadResponse {
+        fn head(&mut self) -> DcbResult<Option<u64>> {
             Ok(self.head_position)
         }
 
-        fn collect_with_head(&mut self) -> DCBResult<(Vec<DCBSequencedEvent>, Option<u64>)> {
+        fn collect_with_head(&mut self) -> DcbResult<(Vec<DcbSequencedEvent>, Option<u64>)> {
             todo!()
         }
 
-        fn next_batch(&mut self) -> DCBResult<Vec<DCBSequencedEvent>> {
+        fn next_batch(&mut self) -> DcbResult<Vec<DcbSequencedEvent>> {
             let mut batch = Vec::new();
             while let Some(result) = self.next() {
                 match result {
@@ -571,26 +571,26 @@ mod tests {
     #[test]
     fn test_dcb_read_response() {
         // Create some test events
-        let event1 = DCBEvent {
+        let event1 = DcbEvent {
             event_type: "test_event".to_string(),
             data: vec![1, 2, 3],
             tags: vec!["tag1".to_string(), "tag2".to_string()],
             uuid: None,
         };
 
-        let event2 = DCBEvent {
+        let event2 = DcbEvent {
             event_type: "another_event".to_string(),
             data: vec![4, 5, 6],
             tags: vec!["tag2".to_string(), "tag3".to_string()],
             uuid: None,
         };
 
-        let seq_event1 = DCBSequencedEvent {
+        let seq_event1 = DcbSequencedEvent {
             event: event1,
             position: 1,
         };
 
-        let seq_event2 = DCBSequencedEvent {
+        let seq_event2 = DcbSequencedEvent {
             event: event2,
             position: 2,
         };
@@ -610,7 +610,7 @@ mod tests {
 
     #[test]
     fn test_event_new() {
-        let event1 = DCBEvent::default()
+        let event1 = DcbEvent::default()
             .event_type("type1")
             .data(b"data1")
             .tags(["tagX"]);
@@ -628,26 +628,26 @@ mod tests {
         assert_eq!(event1.uuid, None);
 
         // Test with multiple tags
-        let event2 = DCBEvent::default()
+        let event2 = DcbEvent::default()
             .event_type("type2")
             .data(b"data2")
             .tags(["tag1", "tag2", "tag3"]);
         assert_eq!(event2.tags.len(), 3);
 
         // Test without data or tags
-        let event3 = DCBEvent::default().event_type("type3");
+        let event3 = DcbEvent::default().event_type("type3");
         assert_eq!(event3.data.len(), 0);
         assert_eq!(event3.tags.len(), 0);
 
         // Test DCBQueryItem builder
-        let query_item = DCBQueryItem::new()
+        let query_item = DcbQueryItem::new()
             .types(["type1", "type2"])
             .tags(["tagA", "tagB"]);
         assert_eq!(query_item.types.len(), 2);
         assert_eq!(query_item.tags.len(), 2);
 
         // Test DCBQuery builder
-        let query = DCBQuery::new().item(query_item);
+        let query = DcbQuery::new().item(query_item);
         assert_eq!(query.items.len(), 1);
 
         println!("\nAll builder API tests passed!");

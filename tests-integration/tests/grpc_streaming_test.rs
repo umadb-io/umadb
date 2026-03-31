@@ -1,5 +1,5 @@
 use umadb_client::UmaDBClient;
-use umadb_dcb::{DCBEvent, DCBEventStoreAsync};
+use umadb_dcb::{DcbEvent, DcbEventStoreAsync};
 use umadb_server::start_server;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -23,8 +23,8 @@ async fn grpc_async_streams_large_reads_total_count() {
         .expect("client connect");
 
     // Append 1000 events
-    let events: Vec<DCBEvent> = (0..1000)
-        .map(|i| DCBEvent {
+    let events: Vec<DcbEvent> = (0..1000)
+        .map(|i| DcbEvent {
             event_type: "TestEvent".to_string(),
             data: format!("data-{i}").into_bytes(),
             tags: vec!["grpc-test".to_string()],
@@ -78,8 +78,8 @@ async fn grpc_async_does_not_stream_past_starting_head() {
         .expect("client connect");
 
     // Append initial 300 events
-    let initial_events: Vec<DCBEvent> = (0..300)
-        .map(|i| DCBEvent {
+    let initial_events: Vec<DcbEvent> = (0..300)
+        .map(|i| DcbEvent {
             event_type: "TestEvent".to_string(),
             data: format!("data-{i}").into_bytes(),
             tags: vec!["grpc-boundary".to_string()],
@@ -98,8 +98,8 @@ async fn grpc_async_does_not_stream_past_starting_head() {
         .expect("read_stream");
 
     // Append 50 more events AFTER the read has started
-    let new_events: Vec<DCBEvent> = (0..50)
-        .map(|i| DCBEvent {
+    let new_events: Vec<DcbEvent> = (0..50)
+        .map(|i| DcbEvent {
             event_type: "TestEvent2".to_string(),
             data: format!("new-{i}").into_bytes(),
             tags: vec!["grpc-boundary".to_string()],
@@ -148,8 +148,8 @@ async fn grpc_async_subscription_catch_up_and_continue() {
 
     // Append initial events
     let initial_count = 40usize;
-    let initial_events: Vec<DCBEvent> = (0..initial_count as u64)
-        .map(|i| DCBEvent {
+    let initial_events: Vec<DcbEvent> = (0..initial_count as u64)
+        .map(|i| DcbEvent {
             event_type: "SubTestEvent".to_string(),
             data: format!("init-{i}").into_bytes(),
             tags: vec!["grpc-sub".to_string()],
@@ -188,8 +188,8 @@ async fn grpc_async_subscription_catch_up_and_continue() {
 
     // Append more events and ensure they also arrive
     let new_count = 25usize;
-    let new_events: Vec<DCBEvent> = (0..new_count as u64)
-        .map(|i| DCBEvent {
+    let new_events: Vec<DcbEvent> = (0..new_count as u64)
+        .map(|i| DcbEvent {
             event_type: "SubTestEvent2".to_string(),
             data: format!("new-{i}").into_bytes(),
             tags: vec!["grpc-sub".to_string()],
@@ -244,8 +244,8 @@ async fn grpc_async_stream_catch_up_and_continue() {
 
     // Append initial events via async API
     let initial_count = 15usize;
-    let initial_events: Vec<DCBEvent> = (0..initial_count as u64)
-        .map(|i| DCBEvent {
+    let initial_events: Vec<DcbEvent> = (0..initial_count as u64)
+        .map(|i| DcbEvent {
             event_type: "AsyncEvent".to_string(),
             data: format!("init-{i}").into_bytes(),
             tags: vec!["grpc-async".to_string()],
@@ -279,8 +279,8 @@ async fn grpc_async_stream_catch_up_and_continue() {
 
     // Append more events via async API
     let new_count = 7usize;
-    let new_events: Vec<DCBEvent> = (0..new_count as u64)
-        .map(|i| DCBEvent {
+    let new_events: Vec<DcbEvent> = (0..new_count as u64)
+        .map(|i| DcbEvent {
             event_type: "AsyncEvent2".to_string(),
             data: format!("new-{i}").into_bytes(),
             tags: vec!["grpc-async".to_string()],

@@ -1,7 +1,7 @@
 use crate::common::PageID;
 use crate::node::Node;
 use std::ops::Range;
-use umadb_dcb::{DCBError, DCBResult};
+use umadb_dcb::{DcbError, DcbResult};
 
 // Page structure
 #[derive(Debug, Clone)]
@@ -29,15 +29,15 @@ impl Page {
     }
 
     /// Serialized page (header + body + zero padding) into `buf`.
-    pub fn serialize_into(&self, buf: &mut [u8]) -> DCBResult<()> {
+    pub fn serialize_into(&self, buf: &mut [u8]) -> DcbResult<()> {
         serialize_page_into(buf, &self.node)?;
         Ok(())
     }
 
     #[inline]
-    pub fn deserialize(page_id: PageID, page_data: &[u8]) -> DCBResult<Self> {
+    pub fn deserialize(page_id: PageID, page_data: &[u8]) -> DcbResult<Self> {
         if page_data.len() < PAGE_HEADER_SIZE {
-            return Err(DCBError::DatabaseCorrupted(
+            return Err(DcbError::DatabaseCorrupted(
                 "Page data too short".to_string(),
             ));
         }
@@ -50,7 +50,7 @@ impl Page {
             u32::from_le_bytes(header[HEADER_LAYOUT_BODY_LEN_BYTES].try_into().unwrap()) as usize;
 
         if PAGE_HEADER_SIZE + data_len > page_data.len() {
-            return Err(DCBError::DatabaseCorrupted(
+            return Err(DcbError::DatabaseCorrupted(
                 "Page data length mismatch".to_string(),
             ));
         }
@@ -62,7 +62,7 @@ impl Page {
         let calculated_crc = calc_crc(data);
 
         if calculated_crc != crc {
-            return Err(DCBError::DatabaseCorrupted(format!(
+            return Err(DcbError::DatabaseCorrupted(format!(
                 "CRC mismatch (page ID: {page_id:?})"
             )));
         }
@@ -74,14 +74,14 @@ impl Page {
     }
 }
 
-pub fn serialize_page_into(buf: &mut [u8], node_ref: &Node) -> DCBResult<()> {
+pub fn serialize_page_into(buf: &mut [u8], node_ref: &Node) -> DcbResult<()> {
     let body_len = serialize_page_node_into(buf, node_ref)?;
     serialize_page_header_into(buf, body_len, node_ref.get_type_byte());
     Ok(())
 }
 
 #[inline(always)]
-fn serialize_page_node_into(buf: &mut [u8], node_ref: &Node) -> DCBResult<usize> {
+fn serialize_page_node_into(buf: &mut [u8], node_ref: &Node) -> DcbResult<usize> {
     // Serialize body into the front of the body region using the space after header
     let body_len = {
         let body_slice = &mut buf[PAGE_HEADER_SIZE..];

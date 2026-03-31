@@ -4,13 +4,13 @@ use tokio::runtime::Builder as RtBuilder;
 use umadb_client::UmaDBClient;
 use umadb_core::db::UmaDB;
 use umadb_dcb::{
-    DCBAppendCondition, DCBError, DCBEvent, DCBEventStoreSync, DCBQuery, DCBQueryItem,
+    DcbAppendCondition, DcbError, DcbEvent, DcbEventStoreSync, DcbQuery, DcbQueryItem,
 };
 use umadb_server::start_server;
 use uuid::Uuid;
 
 // Helper function to run the test with implementations of the DCBEventStoreSync trait
-pub fn dcb_event_store_test<T: DCBEventStoreSync>(event_store: &T) {
+pub fn dcb_event_store_test<T: DcbEventStoreSync>(event_store: &T) {
     // Test head() method on empty store
     let head_position = event_store.head().unwrap();
     assert_eq!(None, head_position);
@@ -26,7 +26,7 @@ pub fn dcb_event_store_test<T: DCBEventStoreSync>(event_store: &T) {
     assert_eq!(None, head);
 
     // Append one event.
-    let event1 = DCBEvent {
+    let event1 = DcbEvent {
         event_type: "type1".to_string(),
         data: b"data1".to_vec(),
         tags: vec!["tagX".to_string()],
@@ -116,8 +116,8 @@ pub fn dcb_event_store_test<T: DCBEventStoreSync>(event_store: &T) {
     assert_eq!(None, head);
 
     // Read events with type1, expect 1 event.
-    let query_type1 = DCBQuery {
-        items: vec![DCBQueryItem {
+    let query_type1 = DcbQuery {
+        items: vec![DcbQueryItem {
             types: vec!["type1".to_string()],
             tags: vec![],
         }],
@@ -138,8 +138,8 @@ pub fn dcb_event_store_test<T: DCBEventStoreSync>(event_store: &T) {
     assert_eq!(Some(1), head);
 
     // Read events with type2, expect no events.
-    let query_type2 = DCBQuery {
-        items: vec![DCBQueryItem {
+    let query_type2 = DcbQuery {
+        items: vec![DcbQueryItem {
             types: vec!["type2".to_string()],
             tags: vec![],
         }],
@@ -158,8 +158,8 @@ pub fn dcb_event_store_test<T: DCBEventStoreSync>(event_store: &T) {
     assert_eq!(Some(1), head);
 
     // Read events with tagX, expect one event.
-    let query_tag_x = DCBQuery {
-        items: vec![DCBQueryItem {
+    let query_tag_x = DcbQuery {
+        items: vec![DcbQueryItem {
             types: vec![],
             tags: vec!["tagX".to_string()],
         }],
@@ -180,8 +180,8 @@ pub fn dcb_event_store_test<T: DCBEventStoreSync>(event_store: &T) {
     assert_eq!(Some(1), head);
 
     // Read events with tagY, expect no events.
-    let query_tag_y = DCBQuery {
-        items: vec![DCBQueryItem {
+    let query_tag_y = DcbQuery {
+        items: vec![DcbQueryItem {
             types: vec![],
             tags: vec!["tagY".to_string()],
         }],
@@ -199,8 +199,8 @@ pub fn dcb_event_store_test<T: DCBEventStoreSync>(event_store: &T) {
     assert_eq!(Some(1), head);
 
     // Read events with type1 and tagX, expect one event.
-    let query_type1_tag_x = DCBQuery {
-        items: vec![DCBQueryItem {
+    let query_type1_tag_x = DcbQuery {
+        items: vec![DcbQueryItem {
             types: vec!["type1".to_string()],
             tags: vec!["tagX".to_string()],
         }],
@@ -219,8 +219,8 @@ pub fn dcb_event_store_test<T: DCBEventStoreSync>(event_store: &T) {
     assert_eq!(Some(1), head);
 
     // Read events with type1 and tagY, expect no events.
-    let query_type1_tag_y = DCBQuery {
-        items: vec![DCBQueryItem {
+    let query_type1_tag_y = DcbQuery {
+        items: vec![DcbQueryItem {
             types: vec!["type1".to_string()],
             tags: vec!["tagY".to_string()],
         }],
@@ -238,8 +238,8 @@ pub fn dcb_event_store_test<T: DCBEventStoreSync>(event_store: &T) {
     assert_eq!(Some(1), head);
 
     // Read events with type2 and tagX, expect no events.
-    let query_type2_tag_x = DCBQuery {
-        items: vec![DCBQueryItem {
+    let query_type2_tag_x = DcbQuery {
+        items: vec![DcbQueryItem {
             types: vec!["type2".to_string()],
             tags: vec!["tagX".to_string()],
         }],
@@ -257,13 +257,13 @@ pub fn dcb_event_store_test<T: DCBEventStoreSync>(event_store: &T) {
     assert_eq!(Some(1), head);
 
     // Append two more events.
-    let event2 = DCBEvent {
+    let event2 = DcbEvent {
         event_type: "type2".to_string(),
         data: b"data2".to_vec(),
         tags: vec!["tagA".to_string(), "tagB".to_string()],
         uuid: None,
     };
-    let event3 = DCBEvent {
+    let event3 = DcbEvent {
         event_type: "type3".to_string(),
         data: b"data3".to_vec(),
         tags: vec!["tagA".to_string(), "tagC".to_string()],
@@ -426,8 +426,8 @@ pub fn dcb_event_store_test<T: DCBEventStoreSync>(event_store: &T) {
     assert_eq!(Some(3), head);
 
     // Read events with tagA, expect two events.
-    let query_tag_a = DCBQuery {
-        items: vec![DCBQueryItem {
+    let query_tag_a = DcbQuery {
+        items: vec![DcbQueryItem {
             types: vec![],
             tags: vec!["tagA".to_string()],
         }],
@@ -450,8 +450,8 @@ pub fn dcb_event_store_test<T: DCBEventStoreSync>(event_store: &T) {
     assert_eq!(Some(3), head);
 
     // Read events with tagA and tagB, expect one event.
-    let query_tag_a_and_b = DCBQuery {
-        items: vec![DCBQueryItem {
+    let query_tag_a_and_b = DcbQuery {
+        items: vec![DcbQueryItem {
             types: vec![],
             tags: vec!["tagA".to_string(), "tagB".to_string()],
         }],
@@ -472,13 +472,13 @@ pub fn dcb_event_store_test<T: DCBEventStoreSync>(event_store: &T) {
     assert_eq!(Some(3), head);
 
     // Read events with tagB or tagC, expect two events.
-    let query_tag_b_or_c = DCBQuery {
+    let query_tag_b_or_c = DcbQuery {
         items: vec![
-            DCBQueryItem {
+            DcbQueryItem {
                 types: vec![],
                 tags: vec!["tagB".to_string()],
             },
-            DCBQueryItem {
+            DcbQueryItem {
                 types: vec![],
                 tags: vec!["tagC".to_string()],
             },
@@ -502,13 +502,13 @@ pub fn dcb_event_store_test<T: DCBEventStoreSync>(event_store: &T) {
     assert_eq!(Some(3), head);
 
     // Read events with tagX or tagY, expect one event.
-    let query_tag_x_or_y = DCBQuery {
+    let query_tag_x_or_y = DcbQuery {
         items: vec![
-            DCBQueryItem {
+            DcbQueryItem {
                 types: vec![],
                 tags: vec!["tagX".to_string()],
             },
-            DCBQueryItem {
+            DcbQueryItem {
                 types: vec![],
                 tags: vec!["tagY".to_string()],
             },
@@ -530,8 +530,8 @@ pub fn dcb_event_store_test<T: DCBEventStoreSync>(event_store: &T) {
     assert_eq!(Some(3), head);
 
     // Read events with type2 and tagA, expect one event.
-    let query_type2_tag_a = DCBQuery {
-        items: vec![DCBQueryItem {
+    let query_type2_tag_a = DcbQuery {
+        items: vec![DcbQueryItem {
             types: vec!["type2".to_string()],
             tags: vec!["tagA".to_string()],
         }],
@@ -567,13 +567,13 @@ pub fn dcb_event_store_test<T: DCBEventStoreSync>(event_store: &T) {
     assert_eq!(Some(3), head);
 
     // Read events with type2 and tagB, or with type3 and tagC, expect two events.
-    let query_type2_tag_b_or_type3_tagc = DCBQuery {
+    let query_type2_tag_b_or_type3_tagc = DcbQuery {
         items: vec![
-            DCBQueryItem {
+            DcbQueryItem {
                 types: vec!["type2".to_string()],
                 tags: vec!["tagB".to_string()],
             },
-            DCBQueryItem {
+            DcbQueryItem {
                 types: vec!["type3".to_string()],
                 tags: vec!["tagC".to_string()],
             },
@@ -620,13 +620,13 @@ pub fn dcb_event_store_test<T: DCBEventStoreSync>(event_store: &T) {
     assert_eq!(Some(3), head);
 
     // Repeat with query items in different order, expect events in ascending order.
-    let query_type3_tag_c_or_type2_tag_b = DCBQuery {
+    let query_type3_tag_c_or_type2_tag_b = DcbQuery {
         items: vec![
-            DCBQueryItem {
+            DcbQueryItem {
                 types: vec!["type3".to_string()],
                 tags: vec!["tagC".to_string()],
             },
-            DCBQueryItem {
+            DcbQueryItem {
                 types: vec!["type2".to_string()],
                 tags: vec!["tagB".to_string()],
             },
@@ -673,7 +673,7 @@ pub fn dcb_event_store_test<T: DCBEventStoreSync>(event_store: &T) {
     assert_eq!(Some(3), head);
 
     // Append must fail if recorded events match condition.
-    let event4 = DCBEvent {
+    let event4 = DcbEvent {
         event_type: "type4".to_string(),
         data: b"data4".to_vec(),
         tags: vec![],
@@ -682,137 +682,137 @@ pub fn dcb_event_store_test<T: DCBEventStoreSync>(event_store: &T) {
 
     // Fail because condition matches all.
     let new = vec![event4.clone()];
-    let result = event_store.append(new.clone(), Some(DCBAppendCondition::default()), None);
-    assert!(matches!(result, Err(DCBError::IntegrityError(_))));
+    let result = event_store.append(new.clone(), Some(DcbAppendCondition::default()), None);
+    assert!(matches!(result, Err(DcbError::IntegrityError(_))));
 
     // Fail because condition matches all after 1.
     let result = event_store.append(
         new.clone(),
-        Some(DCBAppendCondition {
-            fail_if_events_match: DCBQuery::default(),
+        Some(DcbAppendCondition {
+            fail_if_events_match: DcbQuery::default(),
             after: Some(1),
         }),
         None,
     );
-    assert!(matches!(result, Err(DCBError::IntegrityError(_))));
+    assert!(matches!(result, Err(DcbError::IntegrityError(_))));
 
     // Fail because condition matches type1.
     let result = event_store.append(
         new.clone(),
-        Some(DCBAppendCondition {
+        Some(DcbAppendCondition {
             fail_if_events_match: query_type1.clone(),
             after: None,
         }),
         None,
     );
-    assert!(matches!(result, Err(DCBError::IntegrityError(_))));
+    assert!(matches!(result, Err(DcbError::IntegrityError(_))));
 
     // Fail because condition matches type2 after 1.
     let result = event_store.append(
         new.clone(),
-        Some(DCBAppendCondition {
+        Some(DcbAppendCondition {
             fail_if_events_match: query_type2.clone(),
             after: Some(1),
         }),
         None,
     );
-    assert!(matches!(result, Err(DCBError::IntegrityError(_))));
+    assert!(matches!(result, Err(DcbError::IntegrityError(_))));
 
     // Fail because condition matches tagX.
     let result = event_store.append(
         new.clone(),
-        Some(DCBAppendCondition {
+        Some(DcbAppendCondition {
             fail_if_events_match: query_tag_x.clone(),
             after: None,
         }),
         None,
     );
-    assert!(matches!(result, Err(DCBError::IntegrityError(_))));
+    assert!(matches!(result, Err(DcbError::IntegrityError(_))));
 
     // Fail because condition matches tagA after 1.
     let result = event_store.append(
         new.clone(),
-        Some(DCBAppendCondition {
+        Some(DcbAppendCondition {
             fail_if_events_match: query_tag_a.clone(),
             after: Some(1),
         }),
         None,
     );
-    assert!(matches!(result, Err(DCBError::IntegrityError(_))));
+    assert!(matches!(result, Err(DcbError::IntegrityError(_))));
 
     // Fail because condition matches type1 and tagX.
     let result = event_store.append(
         new.clone(),
-        Some(DCBAppendCondition {
+        Some(DcbAppendCondition {
             fail_if_events_match: query_type1_tag_x.clone(),
             after: None,
         }),
         None,
     );
-    assert!(matches!(result, Err(DCBError::IntegrityError(_))));
+    assert!(matches!(result, Err(DcbError::IntegrityError(_))));
 
     // Fail because condition matches type2 and tagA after 1.
     let result = event_store.append(
         new.clone(),
-        Some(DCBAppendCondition {
+        Some(DcbAppendCondition {
             fail_if_events_match: query_type2_tag_a.clone(),
             after: Some(1),
         }),
         None,
     );
-    assert!(matches!(result, Err(DCBError::IntegrityError(_))));
+    assert!(matches!(result, Err(DcbError::IntegrityError(_))));
 
     // Fail because condition matches tagA and tagB.
     let result = event_store.append(
         new.clone(),
-        Some(DCBAppendCondition {
+        Some(DcbAppendCondition {
             fail_if_events_match: query_tag_a_and_b.clone(),
             after: None,
         }),
         None,
     );
-    assert!(matches!(result, Err(DCBError::IntegrityError(_))));
+    assert!(matches!(result, Err(DcbError::IntegrityError(_))));
 
     // Fail because condition matches tagB or tagC.
     let result = event_store.append(
         new.clone(),
-        Some(DCBAppendCondition {
+        Some(DcbAppendCondition {
             fail_if_events_match: query_tag_b_or_c.clone(),
             after: None,
         }),
         None,
     );
-    assert!(matches!(result, Err(DCBError::IntegrityError(_))));
+    assert!(matches!(result, Err(DcbError::IntegrityError(_))));
 
     // Fail because condition matches tagX or tagY.
     let result = event_store.append(
         new.clone(),
-        Some(DCBAppendCondition {
+        Some(DcbAppendCondition {
             fail_if_events_match: query_tag_x_or_y.clone(),
             after: None,
         }),
         None,
     );
-    assert!(matches!(result, Err(DCBError::IntegrityError(_))));
+    assert!(matches!(result, Err(DcbError::IntegrityError(_))));
 
     // Fail because condition matches with type2 and tagB, or with type3 and tagC.
     let result = event_store.append(
         new.clone(),
-        Some(DCBAppendCondition {
+        Some(DcbAppendCondition {
             fail_if_events_match: query_type2_tag_b_or_type3_tagc.clone(),
             after: None,
         }),
         None,
     );
-    assert!(matches!(result, Err(DCBError::IntegrityError(_))));
+    assert!(matches!(result, Err(DcbError::IntegrityError(_))));
 
     // Can append after 3.
     let position = event_store.append(new.clone(), None, None).unwrap();
     assert_eq!(4, position);
 
     // Can append match type_n.
-    let query_type_n = DCBQuery {
-        items: vec![DCBQueryItem {
+    let query_type_n = DcbQuery {
+        items: vec![DcbQueryItem {
             types: vec!["typeN".to_string()],
             tags: vec![],
         }],
@@ -820,7 +820,7 @@ pub fn dcb_event_store_test<T: DCBEventStoreSync>(event_store: &T) {
     let position = event_store
         .append(
             new.clone(),
-            Some(DCBAppendCondition {
+            Some(DcbAppendCondition {
                 fail_if_events_match: query_type_n,
                 after: None,
             }),
@@ -833,7 +833,7 @@ pub fn dcb_event_store_test<T: DCBEventStoreSync>(event_store: &T) {
     let position = event_store
         .append(
             new.clone(),
-            Some(DCBAppendCondition {
+            Some(DcbAppendCondition {
                 fail_if_events_match: query_tag_y.clone(),
                 after: None,
             }),
@@ -846,7 +846,7 @@ pub fn dcb_event_store_test<T: DCBEventStoreSync>(event_store: &T) {
     let position = event_store
         .append(
             new.clone(),
-            Some(DCBAppendCondition {
+            Some(DcbAppendCondition {
                 fail_if_events_match: query_type1.clone(),
                 after: Some(1),
             }),
@@ -859,7 +859,7 @@ pub fn dcb_event_store_test<T: DCBEventStoreSync>(event_store: &T) {
     let position = event_store
         .append(
             new.clone(),
-            Some(DCBAppendCondition {
+            Some(DcbAppendCondition {
                 fail_if_events_match: query_tag_x.clone(),
                 after: Some(1),
             }),
@@ -872,7 +872,7 @@ pub fn dcb_event_store_test<T: DCBEventStoreSync>(event_store: &T) {
     let position = event_store
         .append(
             new.clone(),
-            Some(DCBAppendCondition {
+            Some(DcbAppendCondition {
                 fail_if_events_match: query_type1_tag_x.clone(),
                 after: Some(1),
             }),
@@ -885,7 +885,7 @@ pub fn dcb_event_store_test<T: DCBEventStoreSync>(event_store: &T) {
     let position = event_store
         .append(
             new.clone(),
-            Some(DCBAppendCondition {
+            Some(DcbAppendCondition {
                 fail_if_events_match: query_tag_x.clone(),
                 after: Some(1),
             }),
@@ -896,7 +896,7 @@ pub fn dcb_event_store_test<T: DCBEventStoreSync>(event_store: &T) {
 
     // Check it works with course subscription consistency boundaries and events.
     let student_id = format!("student1-{}", Uuid::new_v4());
-    let student_registered = DCBEvent {
+    let student_registered = DcbEvent {
         event_type: "StudentRegistered".to_string(),
         data: format!(r#"{{"name": "Student1", "max_courses": 10}}"#).into_bytes(),
         tags: vec![student_id.clone()],
@@ -904,14 +904,14 @@ pub fn dcb_event_store_test<T: DCBEventStoreSync>(event_store: &T) {
     };
 
     let course_id = format!("course1-{}", Uuid::new_v4());
-    let course_registered = DCBEvent {
+    let course_registered = DcbEvent {
         event_type: "CourseRegistered".to_string(),
         data: format!(r#"{{"name": "Course1", "places": 10}}"#).into_bytes(),
         tags: vec![course_id.clone()],
         uuid: None,
     };
 
-    let student_joined_course = DCBEvent {
+    let student_joined_course = DcbEvent {
         event_type: "StudentJoinedCourse".to_string(),
         data: format!(
             r#"{{"student_id": "{}", "course_id": "{}"}}"#,
@@ -925,9 +925,9 @@ pub fn dcb_event_store_test<T: DCBEventStoreSync>(event_store: &T) {
     let _position = event_store
         .append(
             vec![student_registered.clone()],
-            Some(DCBAppendCondition {
-                fail_if_events_match: DCBQuery {
-                    items: vec![DCBQueryItem {
+            Some(DcbAppendCondition {
+                fail_if_events_match: DcbQuery {
+                    items: vec![DcbQueryItem {
                         types: vec!["StudentRegistered".to_string()],
                         tags: student_registered.tags.clone(),
                     }],
@@ -941,9 +941,9 @@ pub fn dcb_event_store_test<T: DCBEventStoreSync>(event_store: &T) {
     let _position = event_store
         .append(
             vec![course_registered.clone()],
-            Some(DCBAppendCondition {
-                fail_if_events_match: DCBQuery {
-                    items: vec![DCBQueryItem {
+            Some(DcbAppendCondition {
+                fail_if_events_match: DcbQuery {
+                    items: vec![DcbQueryItem {
                         types: vec![],
                         tags: course_registered.tags.clone(),
                     }],
@@ -957,9 +957,9 @@ pub fn dcb_event_store_test<T: DCBEventStoreSync>(event_store: &T) {
     let _position = event_store
         .append(
             vec![student_joined_course.clone()],
-            Some(DCBAppendCondition {
-                fail_if_events_match: DCBQuery {
-                    items: vec![DCBQueryItem {
+            Some(DcbAppendCondition {
+                fail_if_events_match: DcbQuery {
+                    items: vec![DcbQueryItem {
                         types: vec![],
                         tags: student_joined_course.tags.clone(),
                     }],
@@ -1004,8 +1004,8 @@ pub fn dcb_event_store_test<T: DCBEventStoreSync>(event_store: &T) {
     // Read student
     let (result, head) = event_store
         .read_with_head(
-            Some(DCBQuery {
-                items: vec![DCBQueryItem {
+            Some(DcbQuery {
+                items: vec![DcbQueryItem {
                     types: vec![],
                     tags: vec![student_id.clone()],
                 }],
@@ -1023,8 +1023,8 @@ pub fn dcb_event_store_test<T: DCBEventStoreSync>(event_store: &T) {
     // Read student backwards
     let (result, head) = event_store
         .read_with_head(
-            Some(DCBQuery {
-                items: vec![DCBQueryItem {
+            Some(DcbQuery {
+                items: vec![DcbQueryItem {
                     types: vec![],
                     tags: vec![student_id.clone()],
                 }],
@@ -1042,8 +1042,8 @@ pub fn dcb_event_store_test<T: DCBEventStoreSync>(event_store: &T) {
     // Read course
     let (result, head) = event_store
         .read_with_head(
-            Some(DCBQuery {
-                items: vec![DCBQueryItem {
+            Some(DcbQuery {
+                items: vec![DcbQueryItem {
                     types: vec![],
                     tags: vec![course_id.clone()],
                 }],
@@ -1061,8 +1061,8 @@ pub fn dcb_event_store_test<T: DCBEventStoreSync>(event_store: &T) {
     // Read course backwards
     let (result, head) = event_store
         .read_with_head(
-            Some(DCBQuery {
-                items: vec![DCBQueryItem {
+            Some(DcbQuery {
+                items: vec![DcbQueryItem {
                     types: vec![],
                     tags: vec![course_id.clone()],
                 }],
@@ -1079,8 +1079,8 @@ pub fn dcb_event_store_test<T: DCBEventStoreSync>(event_store: &T) {
 
     let (result, head) = event_store
         .read_with_head(
-            Some(DCBQuery {
-                items: vec![DCBQueryItem {
+            Some(DcbQuery {
+                items: vec![DcbQueryItem {
                     types: vec![],
                     tags: vec![
                         student_joined_course.tags[0].clone(),
@@ -1099,8 +1099,8 @@ pub fn dcb_event_store_test<T: DCBEventStoreSync>(event_store: &T) {
     // Read student start position 3
     let (result, head) = event_store
         .read_with_head(
-            Some(DCBQuery {
-                items: vec![DCBQueryItem {
+            Some(DcbQuery {
+                items: vec![DcbQueryItem {
                     types: vec![],
                     tags: vec![student_id.clone()],
                 }],
@@ -1116,8 +1116,8 @@ pub fn dcb_event_store_test<T: DCBEventStoreSync>(event_store: &T) {
     // Read student backwards start position 3
     let (result, head) = event_store
         .read_with_head(
-            Some(DCBQuery {
-                items: vec![DCBQueryItem {
+            Some(DcbQuery {
+                items: vec![DcbQueryItem {
                     types: vec![],
                     tags: vec![student_id.clone()],
                 }],
@@ -1133,8 +1133,8 @@ pub fn dcb_event_store_test<T: DCBEventStoreSync>(event_store: &T) {
     // Read course start position 3
     let (result, head) = event_store
         .read_with_head(
-            Some(DCBQuery {
-                items: vec![DCBQueryItem {
+            Some(DcbQuery {
+                items: vec![DcbQueryItem {
                     types: vec![],
                     tags: vec![course_id.clone()],
                 }],
@@ -1150,8 +1150,8 @@ pub fn dcb_event_store_test<T: DCBEventStoreSync>(event_store: &T) {
     // Read course backwards start position 3
     let (result, head) = event_store
         .read_with_head(
-            Some(DCBQuery {
-                items: vec![DCBQueryItem {
+            Some(DcbQuery {
+                items: vec![DcbQueryItem {
                     types: vec![],
                     tags: vec![course_id.clone()],
                 }],
@@ -1167,8 +1167,8 @@ pub fn dcb_event_store_test<T: DCBEventStoreSync>(event_store: &T) {
     // Read joined course start position 3
     let (result, head) = event_store
         .read_with_head(
-            Some(DCBQuery {
-                items: vec![DCBQueryItem {
+            Some(DcbQuery {
+                items: vec![DcbQueryItem {
                     types: vec![],
                     tags: vec![
                         student_joined_course.tags[0].clone(),
@@ -1187,8 +1187,8 @@ pub fn dcb_event_store_test<T: DCBEventStoreSync>(event_store: &T) {
     // Read joined course backwards start position 3
     let (result, head) = event_store
         .read_with_head(
-            Some(DCBQuery {
-                items: vec![DCBQueryItem {
+            Some(DcbQuery {
+                items: vec![DcbQueryItem {
                     types: vec![],
                     tags: vec![
                         student_joined_course.tags[0].clone(),
@@ -1207,8 +1207,8 @@ pub fn dcb_event_store_test<T: DCBEventStoreSync>(event_store: &T) {
     // Read student start position 3 limit 1
     let (result, head) = event_store
         .read_with_head(
-            Some(DCBQuery {
-                items: vec![DCBQueryItem {
+            Some(DcbQuery {
+                items: vec![DcbQueryItem {
                     types: vec![],
                     tags: vec![student_id.clone()],
                 }],
@@ -1224,8 +1224,8 @@ pub fn dcb_event_store_test<T: DCBEventStoreSync>(event_store: &T) {
     // Read student backwards start position 13 limit 1
     let (result, head) = event_store
         .read_with_head(
-            Some(DCBQuery {
-                items: vec![DCBQueryItem {
+            Some(DcbQuery {
+                items: vec![DcbQueryItem {
                     types: vec![],
                     tags: vec![student_id.clone()],
                 }],
@@ -1241,8 +1241,8 @@ pub fn dcb_event_store_test<T: DCBEventStoreSync>(event_store: &T) {
     // Read course start position 3 limit 1
     let (result, head) = event_store
         .read_with_head(
-            Some(DCBQuery {
-                items: vec![DCBQueryItem {
+            Some(DcbQuery {
+                items: vec![DcbQueryItem {
                     types: vec![],
                     tags: vec![course_id.clone()],
                 }],
@@ -1258,8 +1258,8 @@ pub fn dcb_event_store_test<T: DCBEventStoreSync>(event_store: &T) {
     // Read course backwards start position 13 limit 1
     let (result, head) = event_store
         .read_with_head(
-            Some(DCBQuery {
-                items: vec![DCBQueryItem {
+            Some(DcbQuery {
+                items: vec![DcbQueryItem {
                     types: vec![],
                     tags: vec![course_id.clone()],
                 }],
@@ -1275,8 +1275,8 @@ pub fn dcb_event_store_test<T: DCBEventStoreSync>(event_store: &T) {
     // Read joined course start position 3 limit 1
     let (result, head) = event_store
         .read_with_head(
-            Some(DCBQuery {
-                items: vec![DCBQueryItem {
+            Some(DcbQuery {
+                items: vec![DcbQueryItem {
                     types: vec![],
                     tags: vec![
                         student_joined_course.tags[0].clone(),
@@ -1295,8 +1295,8 @@ pub fn dcb_event_store_test<T: DCBEventStoreSync>(event_store: &T) {
     // Read joined course backwards start position 13 limit 1
     let (result, head) = event_store
         .read_with_head(
-            Some(DCBQuery {
-                items: vec![DCBQueryItem {
+            Some(DcbQuery {
+                items: vec![DcbQueryItem {
                     types: vec![],
                     tags: vec![
                         student_joined_course.tags[0].clone(),
@@ -1313,16 +1313,16 @@ pub fn dcb_event_store_test<T: DCBEventStoreSync>(event_store: &T) {
     assert_eq!(Some(13), head);
 
     // Read both students
-    let consistency_boundary = DCBQuery {
+    let consistency_boundary = DcbQuery {
         items: vec![
-            DCBQueryItem {
+            DcbQueryItem {
                 types: vec![
                     "StudentRegistered".to_string(),
                     "StudentJoinedCourse".to_string(),
                 ],
                 tags: vec![student_id.clone()],
             },
-            DCBQueryItem {
+            DcbQueryItem {
                 types: vec![
                     "CourseRegistered".to_string(),
                     "StudentJoinedCourse".to_string(),
@@ -1355,7 +1355,7 @@ pub fn dcb_event_store_test<T: DCBEventStoreSync>(event_store: &T) {
     assert_eq!(Some(13), head_position);
 
     // Test UUID attribute is maintained.
-    let event5 = DCBEvent {
+    let event5 = DcbEvent {
         event_type: "type5".to_string(),
         data: b"data5".to_vec(),
         tags: vec!["tag5".to_string()],
@@ -1365,9 +1365,9 @@ pub fn dcb_event_store_test<T: DCBEventStoreSync>(event_store: &T) {
     let commit_position5 = event_store
         .append(
             vec![event5.clone()],
-            Some(DCBAppendCondition {
-                fail_if_events_match: DCBQuery {
-                    items: vec![DCBQueryItem {
+            Some(DcbAppendCondition {
+                fail_if_events_match: DcbQuery {
+                    items: vec![DcbQueryItem {
                         types: vec![],
                         tags: event5.tags.clone(),
                     }],
@@ -1380,8 +1380,8 @@ pub fn dcb_event_store_test<T: DCBEventStoreSync>(event_store: &T) {
 
     let (result, head) = event_store
         .read_with_head(
-            Some(DCBQuery {
-                items: vec![DCBQueryItem {
+            Some(DcbQuery {
+                items: vec![DcbQueryItem {
                     types: vec![],
                     tags: event5.tags.clone(),
                 }],
@@ -1400,9 +1400,9 @@ pub fn dcb_event_store_test<T: DCBEventStoreSync>(event_store: &T) {
     let commit_position6 = event_store
         .append(
             vec![event5.clone()],
-            Some(DCBAppendCondition {
-                fail_if_events_match: DCBQuery {
-                    items: vec![DCBQueryItem {
+            Some(DcbAppendCondition {
+                fail_if_events_match: DcbQuery {
+                    items: vec![DcbQueryItem {
                         types: vec![],
                         tags: event5.tags.clone(),
                     }],
@@ -1417,8 +1417,8 @@ pub fn dcb_event_store_test<T: DCBEventStoreSync>(event_store: &T) {
 
     let (result, head) = event_store
         .read_with_head(
-            Some(DCBQuery {
-                items: vec![DCBQueryItem {
+            Some(DcbQuery {
+                items: vec![DcbQueryItem {
                     types: vec![],
                     tags: event5.tags.clone(),
                 }],
@@ -1501,13 +1501,13 @@ fn test_tag_hash_collision() {
     let store = UmaDB::new(temp_dir.path()).unwrap();
 
     // Append two events, one per colliding tag
-    let ev_student = DCBEvent {
+    let ev_student = DcbEvent {
         event_type: "StudentEvent".to_string(),
         data: b"student-data".to_vec(),
         tags: vec![student_tag.clone()],
         uuid: None,
     };
-    let ev_course = DCBEvent {
+    let ev_course = DcbEvent {
         event_type: "CourseEvent".to_string(),
         data: b"course-data".to_vec(),
         tags: vec![course_tag.clone()],
@@ -1520,8 +1520,8 @@ fn test_tag_hash_collision() {
     // Query by student tag: should return only the student event
     let (result, _head) = store
         .read_with_head(
-            Some(DCBQuery {
-                items: vec![DCBQueryItem {
+            Some(DcbQuery {
+                items: vec![DcbQueryItem {
                     types: vec![],
                     tags: vec![student_tag.clone()],
                 }],
@@ -1542,8 +1542,8 @@ fn test_tag_hash_collision() {
     // Query by course tag: should return only the course event
     let (result, _head) = store
         .read_with_head(
-            Some(DCBQuery {
-                items: vec![DCBQueryItem {
+            Some(DcbQuery {
+                items: vec![DcbQueryItem {
                     types: vec![],
                     tags: vec![course_tag.clone()],
                 }],
@@ -1564,13 +1564,13 @@ fn test_tag_hash_collision() {
     // Query with two items (student tag OR course tag): should return both events
     let (result, _head) = store
         .read_with_head(
-            Some(DCBQuery {
+            Some(DcbQuery {
                 items: vec![
-                    DCBQueryItem {
+                    DcbQueryItem {
                         types: vec![],
                         tags: vec![student_tag.clone()],
                     },
-                    DCBQueryItem {
+                    DcbQueryItem {
                         types: vec![],
                         tags: vec![course_tag.clone()],
                     },

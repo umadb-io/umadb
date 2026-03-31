@@ -1,7 +1,7 @@
 use serial_test::serial;
 use tempfile::tempdir;
 use umadb_core::db::UmaDB;
-use umadb_dcb::{DCBAppendCondition, DCBEvent, DCBEventStoreSync, TrackingInfo};
+use umadb_dcb::{DcbAppendCondition, DcbEvent, DcbEventStoreSync, TrackingInfo};
 
 #[test]
 #[serial]
@@ -11,7 +11,7 @@ fn append_batch_with_per_item_tracking_enforces_monotonicity() {
     let store = UmaDB::new(&db_path).unwrap();
 
     // simple helper to make an event
-    let mk = |t: &str| DCBEvent {
+    let mk = |t: &str| DcbEvent {
         event_type: t.to_string(),
         data: b"x".to_vec(),
         tags: vec!["t".into()],
@@ -25,7 +25,7 @@ fn append_batch_with_per_item_tracking_enforces_monotonicity() {
     let items = vec![
         (
             vec![mk("A1")],
-            None::<DCBAppendCondition>,
+            None::<DcbAppendCondition>,
             Some(TrackingInfo {
                 source: "S".into(),
                 position: 5,
@@ -59,7 +59,7 @@ fn append_batch_with_per_item_tracking_enforces_monotonicity() {
     }
     // 2) Err(IntegrityError)
     match &results[1] {
-        Err(e) => assert!(matches!(e, umadb_dcb::DCBError::IntegrityError(_))),
+        Err(e) => assert!(matches!(e, umadb_dcb::DcbError::IntegrityError(_))),
         other => panic!("expected IntegrityError, got {:?}", other),
     }
     // 3) Ok(last = 2)

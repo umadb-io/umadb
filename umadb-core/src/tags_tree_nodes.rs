@@ -1,7 +1,7 @@
 use crate::common::{PageID, Position};
 use byteorder::{ByteOrder, LittleEndian};
 use std::sync::atomic::{AtomicUsize, Ordering};
-use umadb_dcb::{DCBError, DCBResult};
+use umadb_dcb::{DcbError, DcbResult};
 
 /// Length in bytes of the hashed tag key used in-memory for TagHash
 pub const TAG_HASH_LEN: usize = 16;
@@ -95,10 +95,10 @@ impl TagsLeafNode {
         i
     }
 
-    pub fn from_slice(slice: &[u8]) -> DCBResult<Self> {
+    pub fn from_slice(slice: &[u8]) -> DcbResult<Self> {
         let slice_len = slice.len();
         if slice_len < 2 {
-            return Err(DCBError::DeserializationError(format!(
+            return Err(DcbError::DeserializationError(format!(
                 "Expected at least 2 bytes, got {}",
                 slice_len
             )));
@@ -111,7 +111,7 @@ impl TagsLeafNode {
         let keyw = get_tag_key_width();
         let keys_bytes = 2 + keys_len * keyw;
         if slice_len < keys_bytes {
-            return Err(DCBError::DeserializationError(format!(
+            return Err(DcbError::DeserializationError(format!(
                 "Expected at least {} bytes for keys, got {}",
                 keys_bytes, slice_len
             )));
@@ -134,7 +134,7 @@ impl TagsLeafNode {
             if offset + need > slice_len {
                 let key_number = i + 1;
                 let shortfall = offset + need - slice_len;
-                return Err(DCBError::DeserializationError(format!(
+                return Err(DcbError::DeserializationError(format!(
                     "Unexpected end of data while reading tags leaf value header for key {key_number}/{keys_len}: shortfall: {shortfall}, slice len: {slice_len}, offset: {offset}, need: {need}"
                 )));
             }
@@ -151,7 +151,7 @@ impl TagsLeafNode {
             if offset + need > slice_len {
                 let key_number = i + 1;
                 let shortfall = offset + need - slice_len;
-                return Err(DCBError::DeserializationError(format!(
+                return Err(DcbError::DeserializationError(format!(
                     "Unexpected end of data while reading tags leaf value positions for key {key_number}/{keys_len}: shortfall: {shortfall}, slice len: {slice_len}, offset: {offset}, need: {need}"
                 )));
             }
@@ -169,15 +169,15 @@ impl TagsLeafNode {
         Ok(TagsLeafNode { keys, values })
     }
 
-    pub fn pop_last_key_and_value(&mut self) -> DCBResult<(TagHash, TagsLeafValue)> {
+    pub fn pop_last_key_and_value(&mut self) -> DcbResult<(TagHash, TagsLeafValue)> {
         let last_key = self
             .keys
             .pop()
-            .ok_or_else(|| DCBError::DeserializationError("No keys to pop".to_string()))?;
+            .ok_or_else(|| DcbError::DeserializationError("No keys to pop".to_string()))?;
         let last_value = self
             .values
             .pop()
-            .ok_or_else(|| DCBError::DeserializationError("No values to pop".to_string()))?;
+            .ok_or_else(|| DcbError::DeserializationError("No values to pop".to_string()))?;
         Ok((last_key, last_value))
     }
 }
@@ -216,9 +216,9 @@ impl TagsInternalNode {
         i
     }
 
-    pub fn from_slice(slice: &[u8]) -> DCBResult<Self> {
+    pub fn from_slice(slice: &[u8]) -> DcbResult<Self> {
         if slice.len() < 2 {
-            return Err(DCBError::DeserializationError(format!(
+            return Err(DcbError::DeserializationError(format!(
                 "Expected at least 2 bytes, got {}",
                 slice.len()
             )));
@@ -227,7 +227,7 @@ impl TagsInternalNode {
         let keyw = get_tag_key_width();
         let keys_bytes = 2 + keys_len * keyw;
         if slice.len() < keys_bytes {
-            return Err(DCBError::DeserializationError(format!(
+            return Err(DcbError::DeserializationError(format!(
                 "Expected at least {} bytes for keys, got {}",
                 keys_bytes,
                 slice.len()
@@ -244,7 +244,7 @@ impl TagsInternalNode {
         let child_ids_len = keys_len + 1;
         let need = child_ids_len * 8;
         if slice.len() < keys_bytes + need {
-            return Err(DCBError::DeserializationError(format!(
+            return Err(DcbError::DeserializationError(format!(
                 "Expected at least {} bytes for child_ids, got {}",
                 keys_bytes + need,
                 slice.len()
@@ -260,13 +260,13 @@ impl TagsInternalNode {
         Ok(TagsInternalNode { keys, child_ids })
     }
 
-    pub fn replace_last_child_id(&mut self, old_id: PageID, new_id: PageID) -> DCBResult<()> {
+    pub fn replace_last_child_id(&mut self, old_id: PageID, new_id: PageID) -> DcbResult<()> {
         let last_idx = self.child_ids.len() - 1;
         if self.child_ids[last_idx] == old_id {
             self.child_ids[last_idx] = new_id;
             Ok(())
         } else {
-            Err(DCBError::DatabaseCorrupted("Child ID mismatch".to_string()))
+            Err(DcbError::DatabaseCorrupted("Child ID mismatch".to_string()))
         }
     }
 
@@ -274,18 +274,18 @@ impl TagsInternalNode {
         &mut self,
         promoted_key: TagHash,
         promoted_page_id: PageID,
-    ) -> DCBResult<()> {
+    ) -> DcbResult<()> {
         self.keys.push(promoted_key);
         self.child_ids.push(promoted_page_id);
         Ok(())
     }
 
-    pub(crate) fn split_off(&mut self) -> DCBResult<(TagHash, Vec<TagHash>, Vec<PageID>)> {
+    pub(crate) fn split_off(&mut self) -> DcbResult<(TagHash, Vec<TagHash>, Vec<PageID>)> {
         // Split by moving half of the child_ids to a new node.
         // Promote the separator key which is the minimum key of the new right subtree.
         let total_children = self.child_ids.len();
         if total_children < 4 || self.keys.len() + 1 != total_children {
-            return Err(DCBError::DatabaseCorrupted(
+            return Err(DcbError::DatabaseCorrupted(
                 "Cannot split internal node with insufficient arity".to_string(),
             ));
         }
@@ -328,9 +328,9 @@ impl TagLeafNode {
         i
     }
 
-    pub fn from_slice(slice: &[u8]) -> DCBResult<Self> {
+    pub fn from_slice(slice: &[u8]) -> DcbResult<Self> {
         if slice.len() < 2 {
-            return Err(DCBError::DeserializationError(format!(
+            return Err(DcbError::DeserializationError(format!(
                 "Expected at least 2 bytes, got {}",
                 slice.len()
             )));
@@ -339,7 +339,7 @@ impl TagLeafNode {
         let positions_len = LittleEndian::read_u16(&slice[0..2]) as usize;
         let need = positions_len * 8;
         if slice.len() < 2 + need {
-            return Err(DCBError::DeserializationError(format!(
+            return Err(DcbError::DeserializationError(format!(
                 "Expected at least {} bytes for positions, got {}",
                 2 + need,
                 slice.len()
@@ -354,10 +354,10 @@ impl TagLeafNode {
         Ok(TagLeafNode { positions })
     }
 
-    pub fn pop_last_position(&mut self) -> DCBResult<Position> {
+    pub fn pop_last_position(&mut self) -> DcbResult<Position> {
         self.positions
             .pop()
-            .ok_or_else(|| DCBError::DeserializationError("No positions to pop".to_string()))
+            .ok_or_else(|| DcbError::DeserializationError("No positions to pop".to_string()))
     }
 }
 
@@ -390,9 +390,9 @@ impl TagInternalNode {
         i
     }
 
-    pub fn from_slice(slice: &[u8]) -> DCBResult<Self> {
+    pub fn from_slice(slice: &[u8]) -> DcbResult<Self> {
         if slice.len() < 2 {
-            return Err(DCBError::DeserializationError(format!(
+            return Err(DcbError::DeserializationError(format!(
                 "Expected at least 2 bytes, got {}",
                 slice.len()
             )));
@@ -400,7 +400,7 @@ impl TagInternalNode {
         let keys_len = LittleEndian::read_u16(&slice[0..2]) as usize;
         let keys_bytes = 2 + keys_len * 8;
         if slice.len() < keys_bytes {
-            return Err(DCBError::DeserializationError(format!(
+            return Err(DcbError::DeserializationError(format!(
                 "Expected at least {} bytes for keys, got {}",
                 keys_bytes,
                 slice.len()
@@ -416,7 +416,7 @@ impl TagInternalNode {
         let child_ids_len = keys_len + 1;
         let need = child_ids_len * 8;
         if slice.len() < keys_bytes + need {
-            return Err(DCBError::DeserializationError(format!(
+            return Err(DcbError::DeserializationError(format!(
                 "Expected at least {} bytes for child_ids, got {}",
                 keys_bytes + need,
                 slice.len()
@@ -591,12 +591,12 @@ mod tests {
 }
 
 impl TagInternalNode {
-    pub(crate) fn split_off(&mut self) -> DCBResult<(Position, Vec<Position>, Vec<PageID>)> {
+    pub(crate) fn split_off(&mut self) -> DcbResult<(Position, Vec<Position>, Vec<PageID>)> {
         // Split by moving half of the child_ids to a new node.
         // Promote the separator key which is the minimum key of the new right subtree.
         let total_children = self.child_ids.len();
         if total_children < 4 || self.keys.len() + 1 != total_children {
-            return Err(DCBError::DatabaseCorrupted(
+            return Err(DcbError::DatabaseCorrupted(
                 "Cannot split internal node with insufficient arity".to_string(),
             ));
         }

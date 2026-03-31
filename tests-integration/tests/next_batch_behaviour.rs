@@ -9,7 +9,7 @@ use tonic_health::pb::health_check_response::ServingStatus as PbServingStatus;
 use tonic_health::pb::health_client::HealthClient;
 
 use umadb_client::UmaDBClient;
-use umadb_dcb::{DCBEvent, DCBEventStoreAsync};
+use umadb_dcb::{DcbEvent, DcbEventStoreAsync};
 use umadb_server::start_server;
 use uuid::Uuid;
 
@@ -101,7 +101,7 @@ async fn next_batch_returns_all_then_empty_when_unlimited_and_large_batch_size()
 
     // Append 3 events
     let mk_event = |i: u8| {
-        DCBEvent::default()
+        DcbEvent::default()
             .event_type("ExampleEvent")
             .tags(["tagA", "tagB"]) // any tags
             .data(vec![i])

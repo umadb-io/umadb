@@ -5,7 +5,7 @@ use rcgen::generate_simple_self_signed;
 use tempfile::tempdir;
 use tokio::time::sleep;
 use umadb_client::{AsyncUmaDBClient, ClientTlsOptions};
-use umadb_dcb::{DCBEvent, DCBEventStoreAsync};
+use umadb_dcb::{DcbEvent, DcbEventStoreAsync};
 use umadb_server::start_server_secure;
 
 // Helper to pick a free localhost port
@@ -90,8 +90,8 @@ async fn secure_grpc_end_to_end_append_and_read() {
     };
 
     // Append a handful of events
-    let events: Vec<DCBEvent> = (0..25)
-        .map(|i| DCBEvent {
+    let events: Vec<DcbEvent> = (0..25)
+        .map(|i| DcbEvent {
             event_type: "SecureTest".to_string(),
             data: format!("tls-data-{}", i).into_bytes(),
             tags: vec!["secure".to_string()],

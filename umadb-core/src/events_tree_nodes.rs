@@ -2,8 +2,8 @@ use crate::common::PageID;
 use crate::common::Position;
 use bitflags::bitflags;
 use byteorder::{ByteOrder, LittleEndian};
-use umadb_dcb::DCBError;
-use umadb_dcb::DCBResult;
+use umadb_dcb::DcbError;
+use umadb_dcb::DcbResult;
 use uuid::Uuid;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -216,10 +216,10 @@ impl EventLeafNode {
         i
     }
 
-    pub fn from_slice(slice: &[u8]) -> DCBResult<Self> {
+    pub fn from_slice(slice: &[u8]) -> DcbResult<Self> {
         // Check if the slice has at least 2 bytes for keys_len
         if slice.len() < 2 {
-            return Err(DCBError::DeserializationError(format!(
+            return Err(DcbError::DeserializationError(format!(
                 "Expected at least 2 bytes, got {}",
                 slice.len()
             )));
@@ -231,7 +231,7 @@ impl EventLeafNode {
         // Calculate the minimum expected size for the keys
         let min_expected_size = 2 + (keys_len * 8);
         if slice.len() < min_expected_size {
-            return Err(DCBError::DeserializationError(format!(
+            return Err(DcbError::DeserializationError(format!(
                 "Expected at least {} bytes for keys, got {}",
                 min_expected_size,
                 slice.len()
@@ -253,33 +253,33 @@ impl EventLeafNode {
         for _ in 0..keys_len {
             // Read discriminator (1 byte)
             if offset + 1 > slice.len() {
-                return Err(DCBError::DeserializationError(
+                return Err(DcbError::DeserializationError(
                     "Unexpected end of data while reading value kind".to_string(),
                 ));
             }
 
             let flags = EventValueFlags::from_bits(slice[offset]).ok_or(
-                DCBError::DeserializationError("unknown flag bits set".to_string()),
+                DcbError::DeserializationError("unknown flag bits set".to_string()),
             )?;
             offset += 1;
 
             // Extract event_type length (2 bytes)
             if offset + 2 > slice.len() {
-                return Err(DCBError::DeserializationError(
+                return Err(DcbError::DeserializationError(
                     "Unexpected end of data while reading event_type length".to_string(),
                 ));
             }
             let event_type_len = LittleEndian::read_u16(&slice[offset..offset + 2]) as usize;
             offset += 2;
             if offset + event_type_len > slice.len() {
-                return Err(DCBError::DeserializationError(
+                return Err(DcbError::DeserializationError(
                     "Unexpected end of data while reading event_type".to_string(),
                 ));
             }
             let event_type = match std::str::from_utf8(&slice[offset..offset + event_type_len]) {
                 Ok(s) => s.to_string(),
                 Err(_) => {
-                    return Err(DCBError::DeserializationError(
+                    return Err(DcbError::DeserializationError(
                         "Invalid UTF-8 sequence in event_type".to_string(),
                     ));
                 }
@@ -292,14 +292,14 @@ impl EventLeafNode {
             if !overflow {
                 // Inline: data_len u16 + data bytes
                 if offset + 2 > slice.len() {
-                    return Err(DCBError::DeserializationError(
+                    return Err(DcbError::DeserializationError(
                         "Unexpected end of data while reading data length".to_string(),
                     ));
                 }
                 let data_len = LittleEndian::read_u16(&slice[offset..offset + 2]) as usize;
                 offset += 2;
                 if offset + data_len > slice.len() {
-                    return Err(DCBError::DeserializationError(
+                    return Err(DcbError::DeserializationError(
                         "Unexpected end of data while reading data".to_string(),
                     ));
                 }
@@ -308,7 +308,7 @@ impl EventLeafNode {
 
                 // num tags
                 if offset + 2 > slice.len() {
-                    return Err(DCBError::DeserializationError(
+                    return Err(DcbError::DeserializationError(
                         "Unexpected end of data while reading number of tags".to_string(),
                     ));
                 }
@@ -317,21 +317,21 @@ impl EventLeafNode {
                 let mut tags = Vec::with_capacity(num_tags);
                 for _ in 0..num_tags {
                     if offset + 2 > slice.len() {
-                        return Err(DCBError::DeserializationError(
+                        return Err(DcbError::DeserializationError(
                             "Unexpected end of data while reading tag length".to_string(),
                         ));
                     }
                     let tag_len = LittleEndian::read_u16(&slice[offset..offset + 2]) as usize;
                     offset += 2;
                     if offset + tag_len > slice.len() {
-                        return Err(DCBError::DeserializationError(
+                        return Err(DcbError::DeserializationError(
                             "Unexpected end of data while reading tag".to_string(),
                         ));
                     }
                     let tag = match std::str::from_utf8(&slice[offset..offset + tag_len]) {
                         Ok(s) => s.to_string(),
                         Err(_) => {
-                            return Err(DCBError::DeserializationError(
+                            return Err(DcbError::DeserializationError(
                                 "Invalid UTF-8 sequence in tag".to_string(),
                             ));
                         }
@@ -343,7 +343,7 @@ impl EventLeafNode {
                 let uuid = {
                     if has_uuid {
                         if offset + 16 > slice.len() {
-                            return Err(DCBError::DeserializationError(
+                            return Err(DcbError::DeserializationError(
                                 "Unexpected end of data while reading UUID".to_string(),
                             ));
                         }
@@ -354,7 +354,7 @@ impl EventLeafNode {
                                 Some(uuid)
                             }
                             Err(err) => {
-                                return Err(DCBError::DeserializationError(
+                                return Err(DcbError::DeserializationError(
                                     format!("Invalid UUID sequence: {err} ").to_string(),
                                 ));
                             }
@@ -373,7 +373,7 @@ impl EventLeafNode {
             } else {
                 // Overflow: data_len u64 + tags + root_id
                 if offset + 8 > slice.len() {
-                    return Err(DCBError::DeserializationError(
+                    return Err(DcbError::DeserializationError(
                         "Unexpected end of data while reading overflow data_len".to_string(),
                     ));
                 }
@@ -381,7 +381,7 @@ impl EventLeafNode {
                 offset += 8;
 
                 if offset + 2 > slice.len() {
-                    return Err(DCBError::DeserializationError(
+                    return Err(DcbError::DeserializationError(
                         "Unexpected end of data while reading number of tags".to_string(),
                     ));
                 }
@@ -390,21 +390,21 @@ impl EventLeafNode {
                 let mut tags = Vec::with_capacity(num_tags);
                 for _ in 0..num_tags {
                     if offset + 2 > slice.len() {
-                        return Err(DCBError::DeserializationError(
+                        return Err(DcbError::DeserializationError(
                             "Unexpected end of data while reading tag length".to_string(),
                         ));
                     }
                     let tag_len = LittleEndian::read_u16(&slice[offset..offset + 2]) as usize;
                     offset += 2;
                     if offset + tag_len > slice.len() {
-                        return Err(DCBError::DeserializationError(
+                        return Err(DcbError::DeserializationError(
                             "Unexpected end of data while reading tag".to_string(),
                         ));
                     }
                     let tag = match std::str::from_utf8(&slice[offset..offset + tag_len]) {
                         Ok(s) => s.to_string(),
                         Err(_) => {
-                            return Err(DCBError::DeserializationError(
+                            return Err(DcbError::DeserializationError(
                                 "Invalid UTF-8 sequence in tag".to_string(),
                             ));
                         }
@@ -413,7 +413,7 @@ impl EventLeafNode {
                     tags.push(tag);
                 }
                 if offset + 8 > slice.len() {
-                    return Err(DCBError::DeserializationError(
+                    return Err(DcbError::DeserializationError(
                         "Unexpected end of data while reading overflow root_id".to_string(),
                     ));
                 }
@@ -423,7 +423,7 @@ impl EventLeafNode {
                 let uuid = {
                     if has_uuid {
                         if offset + 16 > slice.len() {
-                            return Err(DCBError::DeserializationError(
+                            return Err(DcbError::DeserializationError(
                                 "Unexpected end of data while reading UUID".to_string(),
                             ));
                         }
@@ -434,7 +434,7 @@ impl EventLeafNode {
                                 Some(uuid)
                             }
                             Err(err) => {
-                                return Err(DCBError::DeserializationError(
+                                return Err(DcbError::DeserializationError(
                                     format!("Invalid UUID sequence: {err} ").to_string(),
                                 ));
                             }
@@ -457,7 +457,7 @@ impl EventLeafNode {
         Ok(EventLeafNode { keys, values })
     }
 
-    pub fn pop_last_key_and_value(&mut self) -> DCBResult<(Position, EventValue)> {
+    pub fn pop_last_key_and_value(&mut self) -> DcbResult<(Position, EventValue)> {
         let last_key = self
             .keys
             .pop()
@@ -489,9 +489,9 @@ impl EventOverflowNode {
         size
     }
 
-    pub fn from_slice(slice: &[u8]) -> DCBResult<Self> {
+    pub fn from_slice(slice: &[u8]) -> DcbResult<Self> {
         if slice.len() < 8 {
-            return Err(DCBError::DeserializationError(
+            return Err(DcbError::DeserializationError(
                 "Overflow node too small".to_string(),
             ));
         }
@@ -521,7 +521,7 @@ impl EventInternalNode {
         total_size
     }
 
-    pub fn serialize_into(&self, buf: &mut [u8]) -> DCBResult<usize> {
+    pub fn serialize_into(&self, buf: &mut [u8]) -> DcbResult<usize> {
         let mut i = 0usize;
         let klen = self.keys.len() as u16;
         buf[i..i + 2].copy_from_slice(&klen.to_le_bytes());
@@ -537,10 +537,10 @@ impl EventInternalNode {
         Ok(i)
     }
 
-    pub fn from_slice(slice: &[u8]) -> DCBResult<Self> {
+    pub fn from_slice(slice: &[u8]) -> DcbResult<Self> {
         // Check if the slice has at least 2 bytes for keys_len
         if slice.len() < 2 {
-            return Err(DCBError::DeserializationError(format!(
+            return Err(DcbError::DeserializationError(format!(
                 "Expected at least 2 bytes, got {}",
                 slice.len()
             )));
@@ -552,7 +552,7 @@ impl EventInternalNode {
         // Calculate the minimum expected size for the keys
         let min_expected_size = 2 + (keys_len * 8);
         if slice.len() < min_expected_size {
-            return Err(DCBError::DeserializationError(format!(
+            return Err(DcbError::DeserializationError(format!(
                 "Expected at least {} bytes for keys, got {}",
                 min_expected_size,
                 slice.len()
@@ -576,7 +576,7 @@ impl EventInternalNode {
         // Calculate the minimum expected size for the child_ids
         let min_expected_size = offset + (child_ids_len * 8);
         if slice.len() < min_expected_size {
-            return Err(DCBError::DeserializationError(format!(
+            return Err(DcbError::DeserializationError(format!(
                 "Expected at least {} bytes for child_ids, got {}",
                 min_expected_size,
                 slice.len()
@@ -593,13 +593,13 @@ impl EventInternalNode {
 
         Ok(EventInternalNode { keys, child_ids })
     }
-    pub fn replace_last_child_id(&mut self, old_id: PageID, new_id: PageID) -> DCBResult<()> {
+    pub fn replace_last_child_id(&mut self, old_id: PageID, new_id: PageID) -> DcbResult<()> {
         // Replace the last child ID.
         let last_idx = self.child_ids.len() - 1;
         if self.child_ids[last_idx] == old_id {
             self.child_ids[last_idx] = new_id;
         } else {
-            return Err(DCBError::DatabaseCorrupted("Child ID mismatch".to_string()));
+            return Err(DcbError::DatabaseCorrupted("Child ID mismatch".to_string()));
         }
         Ok(())
     }
@@ -607,12 +607,12 @@ impl EventInternalNode {
         &mut self,
         promoted_key: Position,
         promoted_page_id: PageID,
-    ) -> DCBResult<()> {
+    ) -> DcbResult<()> {
         self.keys.push(promoted_key);
         self.child_ids.push(promoted_page_id);
         Ok(())
     }
-    pub fn split_off(&mut self) -> DCBResult<(Position, Vec<Position>, Vec<PageID>)> {
+    pub fn split_off(&mut self) -> DcbResult<(Position, Vec<Position>, Vec<PageID>)> {
         let middle_idx = self.keys.len() - 2;
         let promoted_key = self.keys.remove(middle_idx);
         let new_keys = self.keys.split_off(middle_idx);

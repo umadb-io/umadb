@@ -8,14 +8,14 @@ use crate::node::Node;
 use crate::page::{PAGE_HEADER_SIZE, Page};
 use std::borrow::Cow;
 use std::collections::HashMap;
-use umadb_dcb::{DCBError, DCBResult};
+use umadb_dcb::{DcbError, DcbResult};
 
 // Helpers for storing large event data across overflow pages
-fn write_overflow_chain(mvcc: &Mvcc, writer: &mut Writer, data: &[u8]) -> DCBResult<PageID> {
+fn write_overflow_chain(mvcc: &Mvcc, writer: &mut Writer, data: &[u8]) -> DcbResult<PageID> {
     // Maximum payload per overflow page: page_size - header - next pointer (8 bytes)
     let payload_cap = mvcc.page_size.saturating_sub(PAGE_HEADER_SIZE + 8);
     if payload_cap == 0 {
-        return Err(DCBError::DatabaseCorrupted(
+        return Err(DcbError::DatabaseCorrupted(
             "Page size too small to store overflow data".to_string(),
         ));
     }
@@ -57,7 +57,7 @@ fn read_overflow_chain(
     mvcc: &Mvcc,
     dirty: &HashMap<PageID, Page>,
     mut page_id: PageID,
-) -> DCBResult<Vec<u8>> {
+) -> DcbResult<Vec<u8>> {
     let mut out: Vec<u8> = Vec::new();
     while page_id.0 != 0 {
         // Prefer the dirty (unflushed) page if present; otherwise read from disk
@@ -72,7 +72,7 @@ fn read_overflow_chain(
                 page_id = node.next;
             }
             _ => {
-                return Err(DCBError::DatabaseCorrupted(
+                return Err(DcbError::DatabaseCorrupted(
                     "Expected EventOverflow node".to_string(),
                 ));
             }
@@ -85,7 +85,7 @@ fn materialize_event_value(
     mvcc: &Mvcc,
     dirty: &HashMap<PageID, Page>,
     value: &EventValue,
-) -> DCBResult<EventRecord> {
+) -> DcbResult<EventRecord> {
     match value {
         EventValue::Inline(rec) => Ok(rec.clone()),
         EventValue::Overflow {
@@ -97,7 +97,7 @@ fn materialize_event_value(
         } => {
             let data = read_overflow_chain(mvcc, dirty, *root_id)?;
             if (data.len() as u64) != *data_len {
-                return Err(DCBError::DatabaseCorrupted(
+                return Err(DcbError::DatabaseCorrupted(
                     "Overflow data length mismatch".to_string(),
                 ));
             }
@@ -121,7 +121,7 @@ pub fn event_tree_append(
     writer: &mut Writer,
     event: EventRecord,
     position: Position,
-) -> DCBResult<()> {
+) -> DcbResult<()> {
     let verbose = mvcc.verbose;
     if verbose {
         println!("Appending event: {position:?} {event:?}");
@@ -147,7 +147,7 @@ pub fn event_tree_append(
                 .last()
                 .expect("Internal node should have some children");
         } else {
-            return Err(DCBError::DatabaseCorrupted(
+            return Err(DcbError::DatabaseCorrupted(
                 "Expected EventInternal node".to_string(),
             ));
         }
@@ -205,14 +205,14 @@ pub fn event_tree_append(
                         }
                         popped = Some((last_key, last_value));
                     } else {
-                        return Err(DCBError::DatabaseCorrupted(
+                        return Err(DcbError::DatabaseCorrupted(
                             "Expected EventLeaf node".to_string(),
                         ));
                     }
                 }
             }
             _ => {
-                return Err(DCBError::DatabaseCorrupted(
+                return Err(DcbError::DatabaseCorrupted(
                     "Expected EventLeaf node at event tree root".to_string(),
                 ));
             }
@@ -295,7 +295,7 @@ pub fn event_tree_append(
                 println!("Nothing to replace in {dirty_page_id:?}")
             }
         } else {
-            return Err(DCBError::DatabaseCorrupted(
+            return Err(DcbError::DatabaseCorrupted(
                 "Expected EventInternal node".to_string(),
             ));
         }
@@ -312,7 +312,7 @@ pub fn event_tree_append(
                     );
                 }
             } else {
-                return Err(DCBError::DatabaseCorrupted(
+                return Err(DcbError::DatabaseCorrupted(
                     "Expected EventInternal node".to_string(),
                 ));
             }
@@ -328,7 +328,7 @@ pub fn event_tree_append(
                 // Split the internal node
                 // Ensure we have at least 3 keys and 4 child IDs before splitting
                 if dirty_internal_node.keys.len() < 3 || dirty_internal_node.child_ids.len() < 4 {
-                    return Err(DCBError::DatabaseCorrupted(
+                    return Err(DcbError::DatabaseCorrupted(
                         "Cannot split internal node with too few keys/children".to_string(),
                     ));
                 }
@@ -367,7 +367,7 @@ pub fn event_tree_append(
 
                 split_info = Some((promoted_key, new_internal_page_id));
             } else {
-                return Err(DCBError::DatabaseCorrupted(
+                return Err(DcbError::DatabaseCorrupted(
                     "Expected EventInternal node".to_string(),
                 ));
             }
@@ -384,7 +384,7 @@ pub fn event_tree_append(
                 println!("Replaced root {old_id:?} with {new_id:?}");
             }
         } else {
-            return Err(DCBError::RootIDMismatch(old_id.0, new_id.0));
+            return Err(DcbError::RootIDMismatch(old_id.0, new_id.0));
         }
     }
 
@@ -416,7 +416,7 @@ pub fn event_tree_lookup(
     dirty: &HashMap<PageID, Page>,
     events_tree_root_id: PageID,
     position: Position,
-) -> DCBResult<EventRecord> {
+) -> DcbResult<EventRecord> {
     let mut current_page_id: PageID = events_tree_root_id;
     loop {
         // Prefer the dirty (unflushed) page if present; otherwise read from disk
@@ -433,7 +433,7 @@ pub fn event_tree_lookup(
                     Err(i) => i,
                 };
                 if idx >= internal.child_ids.len() {
-                    return Err(DCBError::DatabaseCorrupted(
+                    return Err(DcbError::DatabaseCorrupted(
                         "Child index out of bounds in event tree".to_string(),
                     ));
                 }
@@ -445,13 +445,13 @@ pub fn event_tree_lookup(
                         let rec = materialize_event_value(mvcc, dirty, &leaf.values[i])?;
                         Ok(rec)
                     }
-                    Err(_) => Err(DCBError::DatabaseCorrupted(format!(
+                    Err(_) => Err(DcbError::DatabaseCorrupted(format!(
                         "Event at position {position:?} not found",
                     ))),
                 };
             }
             _ => {
-                return Err(DCBError::DatabaseCorrupted(format!(
+                return Err(DcbError::DatabaseCorrupted(format!(
                     "Expected EventInternal or EventLeaf node in event tree, got {}",
                     page.node.type_name()
                 )));
@@ -488,7 +488,7 @@ impl<'a> EventIterator<'a> {
         }
     }
 
-    pub fn next_batch(&mut self, batch_size: u32) -> DCBResult<Vec<(Position, EventRecord)>> {
+    pub fn next_batch(&mut self, batch_size: u32) -> DcbResult<Vec<(Position, EventRecord)>> {
         let mut result: Vec<(Position, EventRecord)> = Vec::with_capacity(batch_size as usize);
         if batch_size == 0 {
             return Ok(result);
@@ -649,7 +649,7 @@ impl<'a> EventIterator<'a> {
                         }
                     }
                     _ => {
-                        return Err(DCBError::DatabaseCorrupted(format!(
+                        return Err(DcbError::DatabaseCorrupted(format!(
                             "Expected EventInternal or EventLeaf node in event tree, got {}",
                             page_ref.node.type_name()
                         )));

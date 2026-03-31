@@ -1,7 +1,7 @@
 use futures::StreamExt;
 use umadb_client::UmaDBClient;
 use umadb_dcb::{
-    DCBAppendCondition, DCBError, DCBEvent, DCBEventStoreAsync, DCBQuery, DCBQueryItem,
+    DcbAppendCondition, DcbError, DcbEvent, DcbEventStoreAsync, DcbQuery, DcbQueryItem,
     TrackingInfo,
 };
 use uuid::Uuid;
@@ -17,8 +17,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .await?;
 
     // Define a consistency boundary
-    let cb = DCBQuery {
-        items: vec![DCBQueryItem {
+    let cb = DcbQuery {
+        items: vec![DcbQueryItem {
             types: vec!["example".to_string()],
             tags: vec!["tag1".to_string(), "tag2".to_string()],
         }],
@@ -47,7 +47,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Last known position is: {:?}", last_known_position);
 
     // Produce new event
-    let event = DCBEvent {
+    let event = DcbEvent {
         event_type: "example".to_string(),
         tags: vec!["tag1".to_string(), "tag2".to_string()],
         data: b"Hello, world!".to_vec(),
@@ -58,7 +58,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let commit_position1 = client
         .append(
             vec![event.clone()],
-            Some(DCBAppendCondition {
+            Some(DcbAppendCondition {
                 fail_if_events_match: cb.clone(),
                 after: last_known_position,
             }),
@@ -68,7 +68,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Appended event at position: {}", commit_position1);
 
     // Append conflicting event - expect an error
-    let conflicting_event = DCBEvent {
+    let conflicting_event = DcbEvent {
         event_type: "example".to_string(),
         tags: vec!["tag1".to_string(), "tag2".to_string()],
         data: b"Hello, world!".to_vec(),
@@ -77,7 +77,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let conflicting_result = client
         .append(
             vec![conflicting_event.clone()],
-            Some(DCBAppendCondition {
+            Some(DcbAppendCondition {
                 fail_if_events_match: cb.clone(),
                 after: last_known_position,
             }),
@@ -87,7 +87,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Expect an integrity error
     match conflicting_result {
-        Err(DCBError::IntegrityError(integrity_error)) => {
+        Err(DcbError::IntegrityError(integrity_error)) => {
             println!("Conflicting event was rejected: {:?}", integrity_error);
         }
         other => panic!("Expected IntegrityError, got {:?}", other),
@@ -101,7 +101,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let commit_position2 = client
         .append(
             vec![event.clone()],
-            Some(DCBAppendCondition {
+            Some(DcbAppendCondition {
                 fail_if_events_match: cb.clone(),
                 after: last_known_position,
             }),
@@ -169,7 +169,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Expect an integrity error
     match conflicting_result {
-        Err(DCBError::IntegrityError(integrity_error)) => {
+        Err(DcbError::IntegrityError(integrity_error)) => {
             println!(
                 "Conflicting upstream position was rejected: {:?}",
                 integrity_error

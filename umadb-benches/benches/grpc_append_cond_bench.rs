@@ -11,7 +11,7 @@ use tokio::sync::oneshot;
 use umadb_client::{AsyncUmaDBClient, UmaDBClient};
 use umadb_core::db::UmaDB;
 use umadb_dcb::{
-    DCBAppendCondition, DCBEvent, DCBEventStoreAsync, DCBEventStoreSync, DCBQuery, DCBQueryItem,
+    DcbAppendCondition, DcbEvent, DcbEventStoreAsync, DcbEventStoreSync, DcbQuery, DcbQueryItem,
 };
 use umadb_server::start_server;
 
@@ -43,7 +43,7 @@ fn init_db_with_events(num_events: usize) -> (tempfile::TempDir, String, u64) {
         let current = remaining.min(batch_size);
         let mut events = Vec::with_capacity(current);
         for i in 0..current {
-            let ev = DCBEvent {
+            let ev = DcbEvent {
                 event_type: "bench-init".to_string(),
                 data: format!("init-{}", i).into_bytes(),
                 tags: vec!["init".to_string()],
@@ -149,8 +149,8 @@ pub fn grpc_append_cond_benchmark(c: &mut Criterion) {
             let clients = clients.clone();
             b.iter(|| {
                 // Build the batch of events per iteration (per task)
-                let events: Vec<DCBEvent> = (0..events_per_request)
-                    .map(|i| DCBEvent {
+                let events: Vec<DcbEvent> = (0..events_per_request)
+                    .map(|i| DcbEvent {
                         event_type: "bench-append".to_string(),
                         data: format!("data-{i}").into_bytes(),
                         tags: vec!["append".to_string()],
@@ -166,9 +166,9 @@ pub fn grpc_append_cond_benchmark(c: &mut Criterion) {
                         let evs = events.clone();
                         async move {
                             // Build append condition: fail if any "init" tagged events exist after last_init_pos
-                            let condition = DCBAppendCondition {
-                                fail_if_events_match: DCBQuery {
-                                    items: vec![DCBQueryItem {
+                            let condition = DcbAppendCondition {
+                                fail_if_events_match: DcbQuery {
+                                    items: vec![DcbQueryItem {
                                         types: vec![],
                                         tags: vec!["init".to_string()],
                                     }],

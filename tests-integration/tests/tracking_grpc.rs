@@ -1,5 +1,5 @@
 use umadb_client::UmaDBClient;
-use umadb_dcb::{DCBError, DCBEvent, DCBEventStoreAsync, TrackingInfo};
+use umadb_dcb::{DcbError, DcbEvent, DcbEventStoreAsync, TrackingInfo};
 use umadb_server::start_server;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -25,7 +25,7 @@ async fn grpc_append_with_tracking_enforces_monotonicity() {
         .expect("client connect");
 
     // Build a simple event
-    let ev = DCBEvent {
+    let ev = DcbEvent {
         event_type: "TrackEvt".to_string(),
         data: b"d".to_vec(),
         tags: vec!["t".to_string()],
@@ -66,7 +66,7 @@ async fn grpc_append_with_tracking_enforces_monotonicity() {
         .err()
         .expect("expected integrity error on non-increasing tracking");
     match err {
-        DCBError::IntegrityError(msg) => {
+        DcbError::IntegrityError(msg) => {
             assert!(msg.contains("non-increasing tracking position"))
         }
         other => panic!("unexpected error: {:?}", other),

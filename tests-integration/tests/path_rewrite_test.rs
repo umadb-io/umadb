@@ -3,7 +3,7 @@ use std::net::TcpListener;
 use tempfile::tempdir;
 use tokio::runtime::Builder as RtBuilder;
 use umadb_client::UmaDBClient;
-use umadb_dcb::DCBEvent;
+use umadb_dcb::DcbEvent;
 use umadb_proto::v1::HeadRequest;
 use umadb_server::start_server;
 
@@ -71,21 +71,21 @@ fn test_path_rewrite_umadbservice_to_dcb() {
     };
 
     // Append some events using the normal client
-    use umadb_dcb::DCBEventStoreSync;
+    use umadb_dcb::DcbEventStoreSync;
     let events = vec![
-        DCBEvent {
+        DcbEvent {
             event_type: "TestEvent".to_string(),
             data: b"test data 1".to_vec(),
             tags: vec!["tag1".to_string()],
             uuid: None,
         },
-        DCBEvent {
+        DcbEvent {
             event_type: "TestEvent".to_string(),
             data: b"test data 2".to_vec(),
             tags: vec!["tag2".to_string()],
             uuid: None,
         },
-        DCBEvent {
+        DcbEvent {
             event_type: "TestEvent".to_string(),
             data: b"test data 3".to_vec(),
             tags: vec!["tag3".to_string()],

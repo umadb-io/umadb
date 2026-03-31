@@ -9,8 +9,8 @@ use pyo3_stub_gen::derive::*;
 use std::sync::{Arc, Mutex};
 use umadb_client::{SyncUmaDBClient, UmaDBClient, trigger_cancel};
 use umadb_dcb::{
-    DCBAppendCondition, DCBError, DCBEvent, DCBEventStoreSync, DCBQuery, DCBQueryItem,
-    DCBSequencedEvent, TrackingInfo,
+    DcbAppendCondition, DcbEvent, DcbEventStoreSync, DcbQuery, DcbQueryItem, DcbSequencedEvent,
+    DcbError, TrackingInfo,
 };
 use uuid::Uuid;
 
@@ -21,25 +21,25 @@ create_exception!(umadb, TransportError, PyRuntimeError);
 create_exception!(umadb, CorruptionError, PyRuntimeError);
 create_exception!(umadb, AuthenticationError, PyPermissionError);
 
-/// Convert DCBError to Python exception
-fn dcb_error_to_py_err(err: DCBError) -> PyErr {
+/// Convert `DcbError` to Python exception
+fn dcb_error_to_py_err(err: DcbError) -> PyErr {
     match err {
-        DCBError::InvalidArgument(msg) => PyValueError::new_err(msg),
-        DCBError::IntegrityError(msg) => IntegrityError::new_err(msg),
-        DCBError::TransportError(msg) => TransportError::new_err(msg),
-        DCBError::Corruption(msg) => CorruptionError::new_err(msg),
-        DCBError::CancelledByUser() => PyKeyboardInterrupt::new_err(()),
-        DCBError::AuthenticationError(msg) => AuthenticationError::new_err(msg),
+        DcbError::InvalidArgument(msg) => PyValueError::new_err(msg),
+        DcbError::IntegrityError(msg) => IntegrityError::new_err(msg),
+        DcbError::TransportError(msg) => TransportError::new_err(msg),
+        DcbError::Corruption(msg) => CorruptionError::new_err(msg),
+        DcbError::CancelledByUser() => PyKeyboardInterrupt::new_err(()),
+        DcbError::AuthenticationError(msg) => AuthenticationError::new_err(msg),
         other => PyException::new_err(format!("{}", other)),
     }
 }
 
-/// Python wrapper for DCBEvent
+/// Python wrapper for `DcbEvent`
 #[gen_stub_pyclass]
 #[pyclass(name = "Event")]
 #[derive(Clone)]
 pub struct PyEvent {
-    inner: DCBEvent,
+    inner: DcbEvent,
 }
 
 #[gen_stub_pymethods]
@@ -63,7 +63,7 @@ impl PyEvent {
         };
 
         Ok(PyEvent {
-            inner: DCBEvent {
+            inner: DcbEvent {
                 event_type,
                 data,
                 tags: tags.unwrap_or_default(),
@@ -103,11 +103,11 @@ impl PyEvent {
     }
 }
 
-/// Python wrapper for DCBSequencedEvent
+/// Python wrapper for `DcbSequencedEvent`
 #[gen_stub_pyclass]
 #[pyclass(name = "SequencedEvent")]
 pub struct PySequencedEvent {
-    inner: DCBSequencedEvent,
+    inner: DcbSequencedEvent,
 }
 
 #[gen_stub_pyclass]
@@ -168,12 +168,12 @@ impl PySequencedEvent {
     }
 }
 
-/// Python wrapper for DCBQueryItem
+/// Python wrapper for `DcbQueryItem`
 #[gen_stub_pyclass]
 #[pyclass(name = "QueryItem")]
 #[derive(Clone)]
 pub struct PyQueryItem {
-    inner: DCBQueryItem,
+    inner: DcbQueryItem,
 }
 
 #[gen_stub_pymethods]
@@ -183,7 +183,7 @@ impl PyQueryItem {
     #[pyo3(signature = (types=None, tags=None))]
     fn new(types: Option<Vec<String>>, tags: Option<Vec<String>>) -> Self {
         PyQueryItem {
-            inner: DCBQueryItem {
+            inner: DcbQueryItem {
                 types: types.unwrap_or_default(),
                 tags: tags.unwrap_or_default(),
             },
@@ -198,12 +198,12 @@ impl PyQueryItem {
     }
 }
 
-/// Python wrapper for DCBQuery
+/// Python wrapper for `DcbQuery`
 #[gen_stub_pyclass]
 #[pyclass(name = "Query")]
 #[derive(Clone)]
 pub struct PyQuery {
-    inner: DCBQuery,
+    inner: DcbQuery,
 }
 
 #[gen_stub_pymethods]
@@ -219,7 +219,7 @@ impl PyQuery {
             .collect();
 
         PyQuery {
-            inner: DCBQuery { items: query_items },
+            inner: DcbQuery { items: query_items },
         }
     }
 
@@ -228,12 +228,12 @@ impl PyQuery {
     }
 }
 
-/// Python wrapper for DCBAppendCondition
+/// Python wrapper for `DcbAppendCondition`
 #[gen_stub_pyclass]
 #[pyclass(name = "AppendCondition")]
 #[derive(Clone)]
 pub struct PyAppendCondition {
-    inner: DCBAppendCondition,
+    inner: DcbAppendCondition,
 }
 
 #[gen_stub_pymethods]
@@ -243,7 +243,7 @@ impl PyAppendCondition {
     #[pyo3(signature = (fail_if_events_match, after=None))]
     fn new(fail_if_events_match: PyQuery, after: Option<u64>) -> Self {
         PyAppendCondition {
-            inner: DCBAppendCondition {
+            inner: DcbAppendCondition {
                 fail_if_events_match: fail_if_events_match.inner,
                 after,
             },
@@ -259,7 +259,7 @@ impl PyAppendCondition {
 #[gen_stub_pyclass]
 #[pyclass(name = "ReadResponse")]
 pub struct PyReadResponse {
-    inner: Arc<Mutex<Box<dyn umadb_dcb::DCBReadResponseSync + Send + 'static>>>,
+    inner: Arc<Mutex<Box<dyn umadb_dcb::DcbReadResponseSync + Send + 'static>>>,
 }
 
 #[gen_stub_pymethods()]
@@ -331,7 +331,7 @@ impl PyReadResponse {
 #[gen_stub_pyclass]
 #[pyclass(name = "Subscription")]
 pub struct PySubscription {
-    inner: Arc<Mutex<Box<dyn umadb_dcb::DCBSubscriptionSync + Send + 'static>>>,
+    inner: Arc<Mutex<Box<dyn umadb_dcb::DcbSubscriptionSync + Send + 'static>>>,
 }
 
 #[gen_stub_pymethods()]
@@ -515,7 +515,7 @@ impl PyUmaDBClient {
         condition: Option<PyAppendCondition>,
         tracking_info: Option<PyTrackingInfo>,
     ) -> PyResult<u64> {
-        let dcb_events: Vec<DCBEvent> = events.into_iter().map(|e| e.inner).collect();
+        let dcb_events: Vec<DcbEvent> = events.into_iter().map(|e| e.inner).collect();
         let dcb_condition = condition.map(|c| c.inner);
         let dcb_tracking_info = tracking_info.map(|t| t.inner);
         let inner = self.inner.clone();

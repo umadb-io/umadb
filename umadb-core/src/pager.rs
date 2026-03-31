@@ -10,7 +10,7 @@ use std::os::fd::{AsRawFd, RawFd};
 use std::os::unix::fs::FileExt;
 use std::path::Path;
 use std::sync::{Arc, RwLock};
-use umadb_dcb::{DCBError, DCBResult};
+use umadb_dcb::{DcbError, DcbResult};
 
 // Pager for file I/O
 #[derive(Debug)]
@@ -36,7 +36,7 @@ impl Drop for Pager {
 
 // Implementation for Pager
 impl Pager {
-    pub fn new(path: &Path, page_size: usize) -> DCBResult<Self> {
+    pub fn new(path: &Path, page_size: usize) -> DcbResult<Self> {
         let is_file_new = !path.exists();
 
         let file = match if is_file_new {
@@ -51,7 +51,7 @@ impl Pager {
         } {
             Ok(file) => file,
             Err(err) => {
-                return Err(DCBError::InitializationError(format!(
+                return Err(DcbError::InitializationError(format!(
                     "Couldn't open database file {}: {}",
                     path.display(),
                     err
@@ -65,12 +65,12 @@ impl Pager {
         if let Err(err) = Fs2FileExt::try_lock_exclusive(&file) {
             use std::io::ErrorKind;
             if err.kind() == ErrorKind::WouldBlock {
-                return Err(DCBError::InitializationError(format!(
+                return Err(DcbError::InitializationError(format!(
                     "Database file {} is already locked (another process/container may be using it).",
                     path.display()
                 )));
             } else {
-                return Err(DCBError::InitializationError(format!(
+                return Err(DcbError::InitializationError(format!(
                     "Failed to acquire exclusive lock on database file {}: {}",
                     path.display(),
                     err
@@ -356,10 +356,10 @@ impl Pager {
         })
     }
 
-    pub fn write_page(&self, page_id: PageID, page_data: &[u8]) -> DCBResult<()> {
+    pub fn write_page(&self, page_id: PageID, page_data: &[u8]) -> DcbResult<()> {
         // Check the page doesn't overflow the page size.
         if page_data.len() != self.page_size {
-            return Err(DCBError::InternalError(format!(
+            return Err(DcbError::InternalError(format!(
                 "Page size mismatch: page_id={:?} size={} > PAGE_SIZE={}",
                 page_id,
                 page_data.len(),
@@ -375,7 +375,7 @@ impl Pager {
                 (self.mmap_pages_per_map * self.page_size) as u64,
             )
         {
-            return Err(DCBError::Io(err));
+            return Err(DcbError::Io(err));
         }
 
         // Write the page data
@@ -539,7 +539,7 @@ mod tests {
     use crate::common::PageID;
     use std::path::PathBuf;
     use tempfile::tempdir;
-    use umadb_dcb::DCBError;
+    use umadb_dcb::DcbError;
 
     fn temp_file_path(name: &str) -> PathBuf {
         let dir = tempdir().expect("tempdir");
@@ -555,7 +555,7 @@ mod tests {
         let data1 = vec![1u8; 100];
 
         let err = pager.write_page(PageID(0), &data1);
-        assert!(matches!(err, Err(DCBError::InternalError(_))));
+        assert!(matches!(err, Err(DcbError::InternalError(_))));
     }
 
     #[test]
@@ -688,7 +688,7 @@ mod tests {
         // While pager is open, attempting to open a second Pager should fail with InitializationError
         let err = Pager::new(&path, page_size).unwrap_err();
         match err {
-            DCBError::InitializationError(msg) => {
+            DcbError::InitializationError(msg) => {
                 assert!(msg.contains("already locked"), "unexpected error: {}", msg);
             }
             other => panic!("expected InitializationError, got {:?}", other),

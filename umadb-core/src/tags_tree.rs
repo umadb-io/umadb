@@ -6,7 +6,7 @@ use crate::tags_tree_nodes::{
     TagHash, TagInternalNode, TagLeafNode, TagsInternalNode, TagsLeafNode, TagsLeafValue,
 };
 use std::collections::HashMap;
-use umadb_dcb::{DCBError, DCBResult};
+use umadb_dcb::{DcbError, DcbResult};
 
 /// Insert a Position into the tags tree at the given TagHash key.
 ///
@@ -21,7 +21,7 @@ pub fn tags_tree_insert(
     writer: &mut Writer,
     tag: TagHash,
     pos: Position,
-) -> DCBResult<()> {
+) -> DcbResult<()> {
     let verbose = mvcc.verbose;
     if verbose {
         println!("Inserting position {pos:?} for tag {tag:?}");
@@ -52,7 +52,7 @@ pub fn tags_tree_insert(
                 current_page_id = internal_node.child_ids[child_idx];
             }
             _ => {
-                return Err(DCBError::DatabaseCorrupted(
+                return Err(DcbError::DatabaseCorrupted(
                     "Invalid node type in tags tree (expected TagsInternal/TagsLeaf)".to_string(),
                 ));
             }
@@ -112,7 +112,7 @@ pub fn tags_tree_insert(
                 }
             }
             _ => {
-                return Err(DCBError::DatabaseCorrupted(
+                return Err(DcbError::DatabaseCorrupted(
                     "Expected TagsLeaf node".to_string(),
                 ));
             }
@@ -135,11 +135,11 @@ pub fn tags_tree_insert(
                 let leaf_page = writer.get_mut_dirty(dirty_leaf_page_id)?;
                 if let Node::TagsLeaf(leaf) = &mut leaf_page.node {
                     let idx = leaf.keys.binary_search(&tag).map_err(|_| {
-                        DCBError::DatabaseCorrupted("Tag key not found after COW".to_string())
+                        DcbError::DatabaseCorrupted("Tag key not found after COW".to_string())
                     })?;
                     leaf.values[idx].root_id = tag_root_id;
                 } else {
-                    return Err(DCBError::DatabaseCorrupted(
+                    return Err(DcbError::DatabaseCorrupted(
                         "Expected TagsLeaf node".to_string(),
                     ));
                 }
@@ -163,7 +163,7 @@ pub fn tags_tree_insert(
                     }
                     Node::TagLeaf(_) => break,
                     _ => {
-                        return Err(DCBError::DatabaseCorrupted(
+                        return Err(DcbError::DatabaseCorrupted(
                             "Expected per-tag TagInternal/TagLeaf".to_string(),
                         ));
                     }
@@ -190,7 +190,7 @@ pub fn tags_tree_insert(
                             // Move last pos to a new right leaf
                             let last_pos = tleaf
                                 .pop_last_position()
-                                .map_err(|e| DCBError::DatabaseCorrupted(format!("{e}")))?;
+                                .map_err(|e| DcbError::DatabaseCorrupted(format!("{e}")))?;
                             let right_id = {
                                 let id = writer.alloc_page_id();
                                 let page = Page::new(
@@ -206,7 +206,7 @@ pub fn tags_tree_insert(
                         }
                     }
                     _ => {
-                        return Err(DCBError::DatabaseCorrupted(
+                        return Err(DcbError::DatabaseCorrupted(
                             "Expected TagLeaf at per-tag insert".to_string(),
                         ));
                     }
@@ -230,12 +230,12 @@ pub fn tags_tree_insert(
                         if internal.child_ids[child_idx] == old_id {
                             internal.child_ids[child_idx] = new_id;
                         } else {
-                            return Err(DCBError::DatabaseCorrupted(
+                            return Err(DcbError::DatabaseCorrupted(
                                 "Per-tag parent did not contain expected child id".to_string(),
                             ));
                         }
                     } else {
-                        return Err(DCBError::DatabaseCorrupted(
+                        return Err(DcbError::DatabaseCorrupted(
                             "Expected TagInternal".to_string(),
                         ));
                     }
@@ -248,7 +248,7 @@ pub fn tags_tree_insert(
                         internal.keys.insert(child_idx, promoted_key);
                         internal.child_ids.insert(child_idx + 1, new_child_id);
                     } else {
-                        return Err(DCBError::DatabaseCorrupted(
+                        return Err(DcbError::DatabaseCorrupted(
                             "Expected TagInternal".to_string(),
                         ));
                     }
@@ -260,7 +260,7 @@ pub fn tags_tree_insert(
                 if needs_split {
                     if let Node::TagInternal(internal) = &mut parent_page.node {
                         if internal.keys.len() < 3 || internal.child_ids.len() < 4 {
-                            return Err(DCBError::DatabaseCorrupted(
+                            return Err(DcbError::DatabaseCorrupted(
                                 "Cannot split per-tag internal with too few keys/children"
                                     .to_string(),
                             ));
@@ -276,7 +276,7 @@ pub fn tags_tree_insert(
                         writer.insert_dirty(new_internal_page)?;
                         split_info = Some((promote_up, new_internal_id));
                     } else {
-                        return Err(DCBError::DatabaseCorrupted(
+                        return Err(DcbError::DatabaseCorrupted(
                             "Expected TagInternal".to_string(),
                         ));
                     }
@@ -291,7 +291,7 @@ pub fn tags_tree_insert(
                 if tag_root_id == old_id {
                     tag_root_id = new_id;
                 } else {
-                    return Err(DCBError::RootIDMismatch(old_id.0, new_id.0));
+                    return Err(DcbError::RootIDMismatch(old_id.0, new_id.0));
                 }
             }
 
@@ -311,13 +311,13 @@ pub fn tags_tree_insert(
             let leaf_page = writer.get_mut_dirty(dirty_leaf_page_id)?;
             if let Node::TagsLeaf(leaf) = &mut leaf_page.node {
                 let idx = leaf.keys.binary_search(&tag).map_err(|_| {
-                    DCBError::DatabaseCorrupted(
+                    DcbError::DatabaseCorrupted(
                         "Tag key not found after per-tag insert".to_string(),
                     )
                 })?;
                 leaf.values[idx].root_id = tag_root_id;
             } else {
-                return Err(DCBError::DatabaseCorrupted(
+                return Err(DcbError::DatabaseCorrupted(
                     "Expected TagsLeaf node".to_string(),
                 ));
             }
@@ -339,7 +339,7 @@ pub fn tags_tree_insert(
                 if let Node::TagsLeaf(leaf) = &mut leaf_page.node {
                     std::mem::take(&mut leaf.values[i].positions)
                 } else {
-                    return Err(DCBError::DatabaseCorrupted(
+                    return Err(DcbError::DatabaseCorrupted(
                         "Expected TagsLeaf node".to_string(),
                     ));
                 }
@@ -363,7 +363,7 @@ pub fn tags_tree_insert(
                 } else {
                     // Split: move the last position to the right leaf and create an internal root
                     let last_pos = pos_vec.pop().ok_or_else(|| {
-                        DCBError::DatabaseCorrupted("No positions to split".to_string())
+                        DcbError::DatabaseCorrupted("No positions to split".to_string())
                     })?;
                     let left_bytes = crate::page::PAGE_HEADER_SIZE
                         + TagLeafNode {
@@ -371,7 +371,7 @@ pub fn tags_tree_insert(
                         }
                         .calc_serialized_size();
                     if left_bytes > mvcc.page_size {
-                        return Err(DCBError::DatabaseCorrupted(
+                        return Err(DcbError::DatabaseCorrupted(
                             "Recursive per-tag split not implemented".to_string(),
                         ));
                     }
@@ -409,7 +409,7 @@ pub fn tags_tree_insert(
             if let Node::TagsLeaf(leaf) = &mut leaf_page.node {
                 leaf.values[i].root_id = new_root_id;
             } else {
-                return Err(DCBError::DatabaseCorrupted(
+                return Err(DcbError::DatabaseCorrupted(
                     "Expected TagsLeaf node".to_string(),
                 ));
             }
@@ -477,7 +477,7 @@ pub fn tags_tree_insert(
                         );
                     }
                 } else {
-                    return Err(DCBError::DatabaseCorrupted(
+                    return Err(DcbError::DatabaseCorrupted(
                         "Parent did not contain expected child id".to_string(),
                     ));
                 }
@@ -485,7 +485,7 @@ pub fn tags_tree_insert(
                 println!("No child replacement needed in {dirty_parent_page_id:?}");
             }
         } else {
-            return Err(DCBError::DatabaseCorrupted(
+            return Err(DcbError::DatabaseCorrupted(
                 "Expected TagsInternal node".to_string(),
             ));
         }
@@ -503,7 +503,7 @@ pub fn tags_tree_insert(
                     );
                 }
             } else {
-                return Err(DCBError::DatabaseCorrupted(
+                return Err(DcbError::DatabaseCorrupted(
                     "Expected TagsInternal node".to_string(),
                 ));
             }
@@ -517,7 +517,7 @@ pub fn tags_tree_insert(
                     println!("Splitting TagsInternal {dirty_parent_page_id:?}...");
                 }
                 if internal.keys.len() < 3 || internal.child_ids.len() < 4 {
-                    return Err(DCBError::DatabaseCorrupted(
+                    return Err(DcbError::DatabaseCorrupted(
                         "Cannot split internal node with too few keys/children".to_string(),
                     ));
                 }
@@ -537,7 +537,7 @@ pub fn tags_tree_insert(
                 writer.insert_dirty(new_internal_page)?;
                 split_info = Some((promote_up, new_internal_id));
             } else {
-                return Err(DCBError::DatabaseCorrupted(
+                return Err(DcbError::DatabaseCorrupted(
                     "Expected TagsInternal node".to_string(),
                 ));
             }
@@ -557,7 +557,7 @@ pub fn tags_tree_insert(
                 println!("Replaced Tags root {old_id:?} -> {new_id:?}");
             }
         } else {
-            return Err(DCBError::RootIDMismatch(old_id.0, new_id.0));
+            return Err(DcbError::RootIDMismatch(old_id.0, new_id.0));
         }
     }
 
@@ -868,7 +868,7 @@ impl<'a> TagsTreeIterator<'a> {
         false
     }
 
-    fn get_page_cached(&mut self, page_id: PageID) -> DCBResult<&Page> {
+    fn get_page_cached(&mut self, page_id: PageID) -> DcbResult<&Page> {
         if let Some(p) = self.dirty.get(&page_id) {
             return Ok(p);
         }
@@ -937,7 +937,7 @@ mod tests {
         tag: TagHash,
         from: Position,
         backwards: bool,
-    ) -> DCBResult<Vec<Position>> {
+    ) -> DcbResult<Vec<Position>> {
         // Reuse the iterator to traverse and collect all positions for the tag
         let dirty = HashMap::new();
         let iter = TagsTreeIterator::new(mvcc, &dirty, tags_root_id, tag, Some(from), backwards);

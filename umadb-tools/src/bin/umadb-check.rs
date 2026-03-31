@@ -11,7 +11,7 @@ use umadb_core::tags_tree_nodes::{
     TAG_HASH_LEN, TagsLeafNode, get_tag_key_width, normalize_tag_hash_for_current_width,
     set_tag_key_width,
 };
-use umadb_dcb::{DCBError, DCBEvent, DCBQuery, DCBResult};
+use umadb_dcb::{DcbError, DcbEvent, DcbQuery, DcbResult};
 
 fn type_name_from_byte(b: u8) -> Option<&'static str> {
     match b {
@@ -87,15 +87,15 @@ fn parse_args() -> Result<Args, String> {
 fn main() {
     if let Err(e) = real_main() {
         match e {
-            DCBError::InternalError(s) => eprintln!("Error: {}", s),
+            DcbError::InternalError(s) => eprintln!("Error: {}", s),
             other => eprintln!("Error: {}", other),
         }
         std::process::exit(2);
     }
 }
 
-fn real_main() -> DCBResult<()> {
-    let args = parse_args().map_err(DCBError::InternalError)?;
+fn real_main() -> DcbResult<()> {
+    let args = parse_args().map_err(DcbError::InternalError)?;
 
     let path = args.path.unwrap();
     let p = if path.is_dir() {
@@ -106,7 +106,7 @@ fn real_main() -> DCBResult<()> {
 
     // Quick existence check so we can fail fast with a friendly message
     if !p.exists() {
-        return Err(DCBError::InternalError(format!(
+        return Err(DcbError::InternalError(format!(
             "Database file not found: {}",
             p.display()
         )));
@@ -173,10 +173,10 @@ fn real_main() -> DCBResult<()> {
                         let type_str = type_name_from_byte(bytes[0]).unwrap_or("unknown");
                         *counts.entry(type_str).or_insert(0) += 1;
                         let msg = match &err {
-                            DCBError::DeserializationError(_) => {
+                            DcbError::DeserializationError(_) => {
                                 format!("Page {}: {} {:?}", pid, type_str, err)
                             }
-                            DCBError::DatabaseCorrupted(s) => {
+                            DcbError::DatabaseCorrupted(s) => {
                                 format!("Page {}: {} {}", pid, type_str, s)
                             }
                             other => format!("Page {}: {} {:?}", pid, type_str, other),
@@ -289,11 +289,11 @@ fn real_main() -> DCBResult<()> {
                     }
 
                     let msg = match &err {
-                        DCBError::DeserializationError(_) => {
+                        DcbError::DeserializationError(_) => {
                             // Show the variant and message using Debug formatting
                             format!("Page {}: {} {:?}", pid, type_str, err)
                         }
-                        DCBError::DatabaseCorrupted(s) => {
+                        DcbError::DatabaseCorrupted(s) => {
                             // Keep only the human-readable message for corruption
                             format!("Page {}: {} {}", pid, type_str, s)
                         }
@@ -313,7 +313,7 @@ fn real_main() -> DCBResult<()> {
     let reader_file = mvcc.pager.file.clone();
     let file_len = reader_file
         .metadata()
-        .map_err(|e| DCBError::InternalError(format!("Failed to read file metadata: {}", e)))?
+        .map_err(|e| DcbError::InternalError(format!("Failed to read file metadata: {}", e)))?
         .len();
     let page_size_u64 = page_size as u64;
     let mut pid = total_pages; // start at next_page_id
@@ -389,10 +389,10 @@ fn real_main() -> DCBResult<()> {
                     });
                 }
                 let msg = match &err {
-                    DCBError::DeserializationError(_) => {
+                    DcbError::DeserializationError(_) => {
                         format!("Page {}: {} {:?}", pid, type_str, err)
                     }
-                    DCBError::DatabaseCorrupted(s) => format!("Page {}: {} {}", pid, type_str, s),
+                    DcbError::DatabaseCorrupted(s) => format!("Page {}: {} {}", pid, type_str, s),
                     other => format!("Page {}: {} {:?}", pid, type_str, other),
                 };
                 if args.verbose {
@@ -443,7 +443,7 @@ fn real_main() -> DCBResult<()> {
     let mut start = Some(Position(1));
     let mut total_events_read: u64 = 0;
     // Cache of events by position for Stage 4 analysis
-    let mut events_by_position: HashMap<u64, DCBEvent> = HashMap::new();
+    let mut events_by_position: HashMap<u64, DcbEvent> = HashMap::new();
     let empty_dirty: HashMap<PageID, Page> = HashMap::new();
     loop {
         // Read a batch of events sequentially using empty query (all events)
@@ -452,7 +452,7 @@ fn real_main() -> DCBResult<()> {
             &empty_dirty,
             header.events_tree_root_id,
             header.tags_tree_root_id,
-            DCBQuery { items: vec![] },
+            DcbQuery { items: vec![] },
             start,
             false,
             Some(1024),
@@ -503,7 +503,7 @@ fn real_main() -> DCBResult<()> {
                     // Cache event by position for Stage 4
                     events_by_position.insert(
                         ev.position,
-                        DCBEvent {
+                        DcbEvent {
                             event_type: ev.event.event_type.clone(),
                             data: ev.event.data.clone(),
                             tags: ev.event.tags.clone(),
@@ -532,7 +532,7 @@ fn real_main() -> DCBResult<()> {
         &empty_dirty,
         header.events_tree_root_id,
         header.tags_tree_root_id,
-        DCBQuery { items: vec![] },
+        DcbQuery { items: vec![] },
         None,    // no start -> let iterator pick end when backwards
         true,    // backwards: start from the end
         Some(1), // only need the last event
@@ -764,7 +764,7 @@ fn real_main() -> DCBResult<()> {
         fn analyze_entries(
             entries: &Vec<([u8; TAG_HASH_LEN], Vec<u64>)>,
             used_w: usize,
-            events_by_position: &HashMap<u64, DCBEvent>,
+            events_by_position: &HashMap<u64, DcbEvent>,
         ) -> (usize, usize, usize, Vec<String>) {
             let mut total_positions = 0usize;
             let mut pos_with_event = 0usize;
@@ -903,7 +903,7 @@ fn real_main() -> DCBResult<()> {
         println!("Integrity: OK");
         Ok(())
     } else {
-        Err(DCBError::InternalError(
+        Err(DcbError::InternalError(
             "Integrity check failed".to_string(),
         ))
     }

@@ -5,7 +5,7 @@ use crate::free_lists_tree_nodes::{
 use crate::header_node::HeaderNode;
 use crate::tags_tree_nodes::{TagInternalNode, TagLeafNode, TagsInternalNode, TagsLeafNode};
 use crate::tracking_tree_nodes::{TrackingInternalNode, TrackingLeafNode};
-use umadb_dcb::{DCBError, DCBResult};
+use umadb_dcb::{DcbError, DcbResult};
 
 // Constants for serialization
 const PAGE_TYPE_HEADER: u8 = b'1';
@@ -103,7 +103,7 @@ impl Node {
     /// No-allocation serialization into a provided buffer slice.
     /// Returns the number of bytes written.
     /// Implemented for key node types; for others it falls back to allocate-and-copy.
-    pub fn serialize_into(&self, buf: &mut [u8]) -> DCBResult<usize> {
+    pub fn serialize_into(&self, buf: &mut [u8]) -> DcbResult<usize> {
         match self {
             Node::Header(node) => {
                 let n = node.serialize_into(buf);
@@ -164,7 +164,7 @@ impl Node {
         }
     }
 
-    pub fn deserialize(node_type: u8, data: &[u8]) -> DCBResult<Self> {
+    pub fn deserialize(node_type: u8, data: &[u8]) -> DcbResult<Self> {
         match node_type {
             PAGE_TYPE_HEADER => {
                 let node = HeaderNode::from_slice(data)?;
@@ -222,7 +222,7 @@ impl Node {
                 let node = TrackingInternalNode::from_slice(data)?;
                 Ok(Node::TrackingInternal(node))
             }
-            _ => Err(DCBError::DatabaseCorrupted(format!(
+            _ => Err(DcbError::DatabaseCorrupted(format!(
                 "Invalid node type: {node_type}"
             ))),
         }

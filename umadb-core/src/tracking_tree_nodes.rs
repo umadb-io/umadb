@@ -1,6 +1,6 @@
 use crate::common::{PageID, Position};
 use byteorder::{ByteOrder, LittleEndian};
-use umadb_dcb::{DCBError, DCBResult};
+use umadb_dcb::{DcbError, DcbResult};
 
 /// A simple leaf-only node for the tracking tree.
 /// Keys are UTF-8 source strings; values are positions.
@@ -58,29 +58,29 @@ impl TrackingLeafNode {
         needed
     }
 
-    pub fn from_slice(slice: &[u8]) -> DCBResult<Self> {
+    pub fn from_slice(slice: &[u8]) -> DcbResult<Self> {
         if slice.is_empty() {
-            return Err(DCBError::DeserializationError(
+            return Err(DcbError::DeserializationError(
                 "tracking leaf too small".to_string(),
             ));
         }
         let ver = slice[0];
         let (mut off, count): (usize, usize) = if ver == 0 {
             if slice.len() < 5 {
-                return Err(DCBError::DeserializationError(
+                return Err(DcbError::DeserializationError(
                     "tracking leaf too small (v0)".to_string(),
                 ));
             }
             let cnt_u32 = LittleEndian::read_u32(&slice[1..5]);
             if cnt_u32 > u16::MAX as u32 {
-                return Err(DCBError::DeserializationError(
+                return Err(DcbError::DeserializationError(
                     "v0 tracking leaf count exceeds u16".to_string(),
                 ));
             }
             (5, cnt_u32 as usize)
         } else {
             if slice.len() < 3 {
-                return Err(DCBError::DeserializationError(
+                return Err(DcbError::DeserializationError(
                     "tracking leaf too small (v1)".to_string(),
                 ));
             }
@@ -90,43 +90,43 @@ impl TrackingLeafNode {
         for _ in 0..count {
             if ver == 0 {
                 if off + 4 > slice.len() {
-                    return Err(DCBError::DeserializationError(
+                    return Err(DcbError::DeserializationError(
                         "tracking leaf truncated klen (v0)".to_string(),
                     ));
                 }
                 let klen_u32 = LittleEndian::read_u32(&slice[off..off + 4]);
                 if klen_u32 > u8::MAX as u32 {
-                    return Err(DCBError::DeserializationError(
+                    return Err(DcbError::DeserializationError(
                         "v0 tracking leaf key length exceeds u8".to_string(),
                     ));
                 }
                 let klen = klen_u32 as usize;
                 off += 4;
                 if off + klen > slice.len() {
-                    return Err(DCBError::DeserializationError(
+                    return Err(DcbError::DeserializationError(
                         "tracking leaf truncated key (v0)".to_string(),
                     ));
                 }
                 let k = std::str::from_utf8(&slice[off..off + klen])
-                    .map_err(|e| DCBError::DeserializationError(format!("invalid utf8: {e}")))?
+                    .map_err(|e| DcbError::DeserializationError(format!("invalid utf8: {e}")))?
                     .to_string();
                 off += klen;
                 keys.push(k);
             } else {
                 if off + 1 > slice.len() {
-                    return Err(DCBError::DeserializationError(
+                    return Err(DcbError::DeserializationError(
                         "tracking leaf truncated klen (v1)".to_string(),
                     ));
                 }
                 let klen = slice[off] as usize;
                 off += 1;
                 if off + klen > slice.len() {
-                    return Err(DCBError::DeserializationError(
+                    return Err(DcbError::DeserializationError(
                         "tracking leaf truncated key (v1)".to_string(),
                     ));
                 }
                 let k = std::str::from_utf8(&slice[off..off + klen])
-                    .map_err(|e| DCBError::DeserializationError(format!("invalid utf8: {e}")))?
+                    .map_err(|e| DcbError::DeserializationError(format!("invalid utf8: {e}")))?
                     .to_string();
                 off += klen;
                 keys.push(k);
@@ -135,7 +135,7 @@ impl TrackingLeafNode {
         let mut values = Vec::with_capacity(count);
         for _ in 0..count {
             if off + 8 > slice.len() {
-                return Err(DCBError::DeserializationError(
+                return Err(DcbError::DeserializationError(
                     "tracking leaf truncated value".to_string(),
                 ));
             }
@@ -172,7 +172,7 @@ impl TrackingLeafNode {
         source: &str,
         pos: Position,
         page_body_capacity: usize,
-    ) -> DCBResult<()> {
+    ) -> DcbResult<()> {
         match self.keys.binary_search_by(|k| k.as_str().cmp(source)) {
             Ok(idx) => {
                 // Key exists; update value in place
@@ -186,7 +186,7 @@ impl TrackingLeafNode {
                 let additional = key_len + 8;
                 let current = self.calc_serialized_size();
                 if current + additional > page_body_capacity {
-                    return Err(DCBError::InternalError(
+                    return Err(DcbError::InternalError(
                         "not implemented: tracking split".to_string(),
                     ));
                 }
@@ -217,14 +217,14 @@ impl TrackingInternalNode {
         idx: usize,
         old_id: PageID,
         new_id: PageID,
-    ) -> DCBResult<()> {
+    ) -> DcbResult<()> {
         if idx >= self.child_ids.len() {
-            return Err(DCBError::DatabaseCorrupted(
+            return Err(DcbError::DatabaseCorrupted(
                 "child index out of bounds".to_string(),
             ));
         }
         if self.child_ids[idx] != old_id {
-            return Err(DCBError::DatabaseCorrupted("Child ID mismatch".to_string()));
+            return Err(DcbError::DatabaseCorrupted("Child ID mismatch".to_string()));
         }
         self.child_ids[idx] = new_id;
         Ok(())
@@ -236,9 +236,9 @@ impl TrackingInternalNode {
     }
 
     /// Split this internal node around the middle key. Returns (promoted_key, right_keys, right_child_ids).
-    pub fn split_off(&mut self) -> DCBResult<(String, Vec<String>, Vec<PageID>)> {
+    pub fn split_off(&mut self) -> DcbResult<(String, Vec<String>, Vec<PageID>)> {
         if self.child_ids.len() < 4 || self.keys.len() + 1 != self.child_ids.len() {
-            return Err(DCBError::DatabaseCorrupted(
+            return Err(DcbError::DatabaseCorrupted(
                 "Cannot split tracking internal with insufficient arity".to_string(),
             ));
         }
@@ -301,20 +301,20 @@ impl TrackingInternalNode {
         needed
     }
 
-    pub fn from_slice(slice: &[u8]) -> DCBResult<Self> {
+    pub fn from_slice(slice: &[u8]) -> DcbResult<Self> {
         if slice.is_empty() {
-            return Err(DCBError::DeserializationError(
+            return Err(DcbError::DeserializationError(
                 "tracking internal too small".to_string(),
             ));
         }
         let ver = slice[0];
         if ver == 0 {
-            return Err(DCBError::DeserializationError(
+            return Err(DcbError::DeserializationError(
                 "unsupported tracking internal version 0".to_string(),
             ));
         }
         if slice.len() < 3 {
-            return Err(DCBError::DeserializationError(
+            return Err(DcbError::DeserializationError(
                 "tracking internal too small (v1)".to_string(),
             ));
         }
@@ -323,19 +323,19 @@ impl TrackingInternalNode {
         let mut keys = Vec::with_capacity(count);
         for _ in 0..count {
             if off + 1 > slice.len() {
-                return Err(DCBError::DeserializationError(
+                return Err(DcbError::DeserializationError(
                     "tracking internal truncated klen (v1)".to_string(),
                 ));
             }
             let klen = slice[off] as usize;
             off += 1;
             if off + klen > slice.len() {
-                return Err(DCBError::DeserializationError(
+                return Err(DcbError::DeserializationError(
                     "tracking internal truncated key (v1)".to_string(),
                 ));
             }
             let k = std::str::from_utf8(&slice[off..off + klen])
-                .map_err(|e| DCBError::DeserializationError(format!("invalid utf8: {e}")))?
+                .map_err(|e| DcbError::DeserializationError(format!("invalid utf8: {e}")))?
                 .to_string();
             off += klen;
             keys.push(k);
@@ -344,7 +344,7 @@ impl TrackingInternalNode {
         let child_count = keys.len() + 1;
         let need = off + 8 * child_count;
         if slice.len() < need {
-            return Err(DCBError::DeserializationError(
+            return Err(DcbError::DeserializationError(
                 "tracking internal truncated children".to_string(),
             ));
         }
@@ -432,7 +432,7 @@ mod tests {
             .upsert_no_split("x", Position(9), small_capacity)
             .unwrap_err();
         match err {
-            DCBError::InternalError(s) => assert!(s.contains("tracking split")),
+            DcbError::InternalError(s) => assert!(s.contains("tracking split")),
             _ => panic!("unexpected error type"),
         }
     }
@@ -475,7 +475,7 @@ mod tests {
         buf.truncate(buf.len() - 4); // remove less than 8 to force error path
         let err = TrackingInternalNode::from_slice(&buf).unwrap_err();
         match err {
-            DCBError::DeserializationError(_) => {}
+            DcbError::DeserializationError(_) => {}
             _ => panic!("expected DeserializationError"),
         }
     }

@@ -3,7 +3,7 @@ use std::io::Write;
 use std::sync::Arc;
 use std::time::Instant;
 use umadb_client::{AsyncUmaDBClient, UmaDBClient};
-use umadb_dcb::{DCBEvent, DCBEventStoreAsync};
+use umadb_dcb::{DcbEvent, DcbEventStoreAsync};
 use uuid::Uuid;
 
 use clap::{CommandFactory, FromArgMatches, Parser};
@@ -80,8 +80,8 @@ async fn do_some_work(
     // Append 9800 batches of 10 events each
     for _ in 0..99 {
         let tag = format!("tag-{}", Uuid::new_v4());
-        let events: Vec<DCBEvent> = (0..1000)
-            .map(|_| DCBEvent {
+        let events: Vec<DcbEvent> = (0..1000)
+            .map(|_| DcbEvent {
                 event_type: "batch-type".to_string(),
                 data: "batch-data".to_string().into_bytes(),
                 tags: vec![tag.clone()],
@@ -101,7 +101,7 @@ async fn do_some_work(
     let start = Instant::now();
     for _ in 0..1000 {
         let tag = format!("tag-{}", Uuid::new_v4());
-        let event = DCBEvent {
+        let event = DcbEvent {
             event_type: "batch-type".to_string(),
             data: "batch-data".to_string().into_bytes(),
             tags: vec![tag.clone()],

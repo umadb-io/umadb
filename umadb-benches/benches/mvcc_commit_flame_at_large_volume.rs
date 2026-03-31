@@ -3,7 +3,7 @@
 use std::fs;
 use std::path::Path;
 use umadb_core::db::unconditional_append;
-use umadb_dcb::DCBEvent;
+use umadb_dcb::DcbEvent;
 use uuid::Uuid;
 
 fn main() -> std::io::Result<()> {
@@ -60,7 +60,7 @@ fn main() -> std::io::Result<()> {
             let start = Instant::now();
             for _ in 0..1000 {
                 let mut w = db.writer();
-                let event = DCBEvent {
+                let event = DcbEvent {
                     event_type: "batch-type".to_string(),
                     data: "batch-data".to_string().into_bytes(),
                     tags: vec![format!("tag-{}", Uuid::new_v4())],
@@ -85,7 +85,7 @@ fn main() -> std::io::Result<()> {
 
             for _ in 0..1000 {
                 let mut w = db.writer();
-                let event = DCBEvent {
+                let event = DcbEvent {
                     event_type: "batch-type".to_string(),
                     data: "batch-data".to_string().into_bytes(),
                     tags: vec![format!("tag-{}", Uuid::new_v4())],

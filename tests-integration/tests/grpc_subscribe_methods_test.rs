@@ -2,7 +2,7 @@ use std::net::TcpListener;
 use tempfile::tempdir;
 use tokio::time::{Duration as TokioDuration, sleep};
 use umadb_client::UmaDBClient;
-use umadb_dcb::{DCBEvent, DCBEventStoreAsync, DCBEventStoreSync};
+use umadb_dcb::{DcbEvent, DcbEventStoreAsync, DcbEventStoreSync};
 use umadb_server::start_server;
 
 // ----------------------
@@ -32,8 +32,8 @@ async fn grpc_async_subscribe_catch_up_and_continue() {
 
     // Append initial events
     let initial_count = 30usize;
-    let initial_events: Vec<DCBEvent> = (0..initial_count as u64)
-        .map(|i| DCBEvent {
+    let initial_events: Vec<DcbEvent> = (0..initial_count as u64)
+        .map(|i| DcbEvent {
             event_type: "AsyncSubEvent".to_string(),
             data: format!("init-{i}").into_bytes(),
             tags: vec!["grpc-async-sub".to_string()],
@@ -68,8 +68,8 @@ async fn grpc_async_subscribe_catch_up_and_continue() {
 
     // Append more events and ensure they arrive on the same subscription
     let new_count = 12usize;
-    let new_events: Vec<DCBEvent> = (0..new_count as u64)
-        .map(|i| DCBEvent {
+    let new_events: Vec<DcbEvent> = (0..new_count as u64)
+        .map(|i| DcbEvent {
             event_type: "AsyncSubEvent2".to_string(),
             data: format!("new-{i}").into_bytes(),
             tags: vec!["grpc-async-sub".to_string()],
@@ -122,8 +122,8 @@ async fn grpc_async_subscribe_with_after_position() {
 
     // Append A initial events
     let a = 20usize;
-    let initial_events: Vec<DCBEvent> = (0..a as u64)
-        .map(|i| DCBEvent {
+    let initial_events: Vec<DcbEvent> = (0..a as u64)
+        .map(|i| DcbEvent {
             event_type: "AsyncSubStartEvent".to_string(),
             data: format!("init-{i}").into_bytes(),
             tags: vec!["grpc-async-sub-start".to_string()],
@@ -163,8 +163,8 @@ async fn grpc_async_subscribe_with_after_position() {
 
     // Append M new events and ensure they arrive
     let m = 9usize;
-    let new_events: Vec<DCBEvent> = (0..m as u64)
-        .map(|i| DCBEvent {
+    let new_events: Vec<DcbEvent> = (0..m as u64)
+        .map(|i| DcbEvent {
             event_type: "AsyncSubStartEvent2".to_string(),
             data: format!("new-{i}").into_bytes(),
             tags: vec!["grpc-async-sub-start".to_string()],
@@ -250,8 +250,8 @@ fn grpc_sync_subscribe_catch_up_and_continue() {
 
     // Append initial events via sync API
     let initial_count = 20usize;
-    let initial_events: Vec<DCBEvent> = (0..initial_count as u64)
-        .map(|i| DCBEvent {
+    let initial_events: Vec<DcbEvent> = (0..initial_count as u64)
+        .map(|i| DcbEvent {
             event_type: "SyncSubEvent".to_string(),
             data: format!("init-{i}").into_bytes(),
             tags: vec!["grpc-sync-sub".to_string()],
@@ -274,8 +274,8 @@ fn grpc_sync_subscribe_catch_up_and_continue() {
 
     // Append more and ensure they arrive
     let new_count = 11usize;
-    let new_events: Vec<DCBEvent> = (0..new_count as u64)
-        .map(|i| DCBEvent {
+    let new_events: Vec<DcbEvent> = (0..new_count as u64)
+        .map(|i| DcbEvent {
             event_type: "SyncSubEvent2".to_string(),
             data: format!("new-{i}").into_bytes(),
             tags: vec!["grpc-sync-sub".to_string()],

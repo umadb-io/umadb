@@ -7,7 +7,7 @@ pub mod bench_api {
     use umadb_core::mvcc::{Mvcc, Writer};
     use umadb_core::node::Node;
     use umadb_core::page::{PAGE_HEADER_SIZE, Page};
-    use umadb_dcb::DCBResult;
+    use umadb_dcb::DcbResult;
 
     /// Minimal public wrapper to allow Criterion benches to measure commit paths
     pub struct BenchDb {
@@ -15,13 +15,13 @@ pub mod bench_api {
     }
 
     impl BenchDb {
-        pub fn new(path: &Path, page_size: usize) -> DCBResult<Self> {
+        pub fn new(path: &Path, page_size: usize) -> DcbResult<Self> {
             let mvcc = Mvcc::new(path, page_size, false)?;
             Ok(BenchDb { mvcc })
         }
 
         /// Commit with no dirty pages: exercises header write + flush.
-        pub fn commit_empty(&self) -> DCBResult<()> {
+        pub fn commit_empty(&self) -> DcbResult<()> {
             let mut w = self.mvcc.writer()?;
             self.mvcc.commit(&mut w)
         }
@@ -30,7 +30,7 @@ pub mod bench_api {
             self.mvcc.writer().unwrap()
         }
 
-        pub fn insert_dirty_pages(&self, w: &mut Writer, n: usize) -> DCBResult<()> {
+        pub fn insert_dirty_pages(&self, w: &mut Writer, n: usize) -> DcbResult<()> {
             // Populate each dirty page with an EventLeaf that has many keys/values
             const KEYS_PER_LEAF: usize = 70; // "lots" of keys/values per leaf
             const TAGS_PER: usize = 3;
@@ -70,7 +70,7 @@ pub mod bench_api {
             Ok(())
         }
 
-        pub fn commit_with_dirty(&self, w: &mut Writer) -> DCBResult<()> {
+        pub fn commit_with_dirty(&self, w: &mut Writer) -> DcbResult<()> {
             self.mvcc.commit(w)
         }
     }
@@ -117,7 +117,7 @@ pub mod bench_api {
             self.last_size
         }
 
-        pub fn deserialize_check(&self) -> DCBResult<EventLeafNode> {
+        pub fn deserialize_check(&self) -> DcbResult<EventLeafNode> {
             let size = self.last_size.min(self.buf.len());
             let out = EventLeafNode::from_slice(&self.buf[..size])?;
             Ok(out)
@@ -166,7 +166,7 @@ pub mod bench_api {
             self.last_size
         }
 
-        pub fn deserialize_check(&self) -> DCBResult<EventLeafNode> {
+        pub fn deserialize_check(&self) -> DcbResult<EventLeafNode> {
             let size = self.last_size.min(self.buf.len());
             let out = EventLeafNode::from_slice(&self.buf[..size])?;
             Ok(out)

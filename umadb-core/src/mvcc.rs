@@ -19,8 +19,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::sleep;
 use std::time::Duration;
-use umadb_dcb::DCBError::InternalError;
-use umadb_dcb::{DCBError, DCBQuery, DCBResult};
+use umadb_dcb::DcbError::InternalError;
+use umadb_dcb::{DcbQuery, DcbResult, DcbError};
 
 const GET_LATEST_HEADER_RETRIES: usize = 5;
 const GET_LATEST_HEADER_DELAY: Duration = Duration::from_millis(10);
@@ -45,7 +45,7 @@ pub struct Mvcc {
 }
 
 impl Mvcc {
-    pub fn new(path: &Path, page_size: usize, verbose: bool) -> DCBResult<Self> {
+    pub fn new(path: &Path, page_size: usize, verbose: bool) -> DcbResult<Self> {
         let pager = Pager::new(path, page_size)?;
 
         let mvcc = Self {
@@ -229,7 +229,7 @@ impl Mvcc {
                         &empty_dirty,
                         header_latest.events_tree_root_id,
                         header_latest.tags_tree_root_id,
-                        DCBQuery { items: vec![] },
+                        DcbQuery { items: vec![] },
                         None,
                         true,
                         Some(1),
@@ -279,7 +279,7 @@ impl Mvcc {
         Ok(mvcc)
     }
 
-    pub fn get_latest_header(&self) -> DCBResult<(PageID, HeaderNode)> {
+    pub fn get_latest_header(&self) -> DcbResult<(PageID, HeaderNode)> {
         for attempt in 0..GET_LATEST_HEADER_RETRIES {
             let h0 = self.read_header(HEADER_PAGE_ID_0);
             let h1 = self.read_header(HEADER_PAGE_ID_1);
@@ -311,7 +311,7 @@ impl Mvcc {
                         sleep(GET_LATEST_HEADER_DELAY);
                         continue;
                     } else {
-                        return Err(DCBError::DatabaseCorrupted(format!(
+                        return Err(DcbError::DatabaseCorrupted(format!(
                             "Both header pages appear corrupted after {} attempts: ({:?}) and ({:?})",
                             GET_LATEST_HEADER_RETRIES, e0, e1
                         )));
@@ -320,16 +320,16 @@ impl Mvcc {
             }
         }
         // Unreachable due to returns in match and final error, but keep to satisfy type checker
-        Err(DCBError::DatabaseCorrupted(
+        Err(DcbError::DatabaseCorrupted(
             "Unable to read a valid header".to_string(),
         ))
     }
 
-    pub fn read_header(&self, page_id: PageID) -> DCBResult<HeaderNode> {
+    pub fn read_header(&self, page_id: PageID) -> DcbResult<HeaderNode> {
         let page = self.read_page(page_id)?;
         match page.node {
             Node::Header(node) => Ok(node),
-            _ => Err(DCBError::DatabaseCorrupted(
+            _ => Err(DcbError::DatabaseCorrupted(
                 "Invalid header node type".to_string(),
             )),
         }
@@ -345,7 +345,7 @@ impl Mvcc {
         tracking_tree_root_id: PageID,
         next_page_id: PageID,
         next_position: Position,
-    ) -> DCBResult<()> {
+    ) -> DcbResult<()> {
         let mut headers = self.headers.lock().unwrap();
         let headers_idx = { if page_id == HEADER_PAGE_ID_0 { 0 } else { 1 } };
         let header = &mut headers[headers_idx];
@@ -370,7 +370,7 @@ impl Mvcc {
         }
     }
 
-    pub fn read_page(&self, page_id: PageID) -> DCBResult<Page> {
+    pub fn read_page(&self, page_id: PageID) -> DcbResult<Page> {
         let mapped = self.pager.read_page_mmap_slice(page_id)?;
         if self.verbose {
             println!("Read {page_id:?} from file, deserializing...");
@@ -378,12 +378,12 @@ impl Mvcc {
         Page::deserialize(page_id, mapped.as_slice())
     }
 
-    pub fn fsync(&self) -> DCBResult<()> {
+    pub fn fsync(&self) -> DcbResult<()> {
         self.pager.fsync()?;
         Ok(())
     }
 
-    pub fn reader(&self) -> DCBResult<Reader> {
+    pub fn reader(&self) -> DcbResult<Reader> {
         let (header_page_id, header_node) = self.get_latest_header()?;
 
         // Generate a unique ID for this reader using the counter (lock-free)
@@ -407,7 +407,7 @@ impl Mvcc {
         Ok(reader)
     }
 
-    pub fn writer(&self) -> DCBResult<Writer> {
+    pub fn writer(&self) -> DcbResult<Writer> {
         if self.verbose {
             println!();
             println!("Constructing writer...");
@@ -441,7 +441,7 @@ impl Mvcc {
 
     /// Write one or more pages to disk using the shared preallocated page buffer.
     /// Returns the number of pages written.
-    pub fn write_pages<'a, I>(&self, pages: I) -> DCBResult<usize>
+    pub fn write_pages<'a, I>(&self, pages: I) -> DcbResult<usize>
     where
         I: IntoIterator<Item = &'a Page>,
     {
@@ -495,7 +495,7 @@ impl Mvcc {
     //     count
     // }
 
-    pub fn commit(&self, writer: &mut Writer) -> DCBResult<()> {
+    pub fn commit(&self, writer: &mut Writer) -> DcbResult<()> {
         // Process reused and freed page IDs
         if self.verbose {
             println!();
@@ -637,8 +637,8 @@ impl Writer {
     ///
     /// # Returns
     ///
-    /// A `DCBResult` containing a reference to the page if found, or an error if the page could not be found.
-    pub fn get_page_ref(&mut self, mvcc: &Mvcc, page_id: PageID) -> DCBResult<&Page> {
+    /// A `DcbResult` containing a reference to the page if found, or an error if the page could not be found.
+    pub fn get_page_ref(&mut self, mvcc: &Mvcc, page_id: PageID) -> DcbResult<&Page> {
         // Check the dirty pages first
         if self.dirty.contains_key(&page_id) {
             return Ok(self.dirty.get(&page_id).unwrap());
@@ -657,11 +657,11 @@ impl Writer {
         Ok(self.deserialized.get(&page_id).unwrap())
     }
 
-    pub fn get_mut_dirty(&mut self, page_id: PageID) -> DCBResult<&mut Page> {
+    pub fn get_mut_dirty(&mut self, page_id: PageID) -> DcbResult<&mut Page> {
         if let Some(page) = self.dirty.get_mut(&page_id) {
             Ok(page)
         } else {
-            Err(DCBError::DirtyPageNotFound(page_id.0))
+            Err(DcbError::DirtyPageNotFound(page_id.0))
         }
     }
 
@@ -669,12 +669,12 @@ impl Writer {
         self.deserialized.insert(page.page_id, page);
     }
 
-    pub fn insert_dirty(&mut self, page: Page) -> DCBResult<()> {
+    pub fn insert_dirty(&mut self, page: Page) -> DcbResult<()> {
         if self.freed_page_ids.contains(&page.page_id) {
-            return Err(DCBError::PageAlreadyFreed(page.page_id.0));
+            return Err(DcbError::PageAlreadyFreed(page.page_id.0));
         }
         if self.dirty.contains_key(&page.page_id) {
-            return Err(DCBError::PageAlreadyDirty(page.page_id.0));
+            return Err(DcbError::PageAlreadyDirty(page.page_id.0));
         }
         self.dirty.insert(page.page_id, page);
         Ok(())
@@ -691,7 +691,7 @@ impl Writer {
         next_page_id
     }
 
-    pub fn get_dirty_page_id(&mut self, page_id: PageID) -> DCBResult<PageID> {
+    pub fn get_dirty_page_id(&mut self, page_id: PageID) -> DcbResult<PageID> {
         let mut dirty_page_id = page_id;
         if !self.freed_page_ids.iter().any(|&id| id == page_id) {
             if !self.dirty.contains_key(&page_id) {
@@ -717,7 +717,7 @@ impl Writer {
                 println!("{page_id:?} is already dirty");
             }
         } else {
-            return Err(DCBError::PageAlreadyFreed(page_id.0));
+            return Err(DcbError::PageAlreadyFreed(page_id.0));
         }
         Ok(dirty_page_id)
     }
@@ -741,7 +741,7 @@ impl Writer {
         }
     }
 
-    pub fn find_reusable_page_ids(&mut self, mvcc: &Mvcc) -> DCBResult<()> {
+    pub fn find_reusable_page_ids(&mut self, mvcc: &Mvcc) -> DcbResult<()> {
         let verbose = self.verbose;
         let mut reusable_page_ids: VecDeque<(PageID, Tsn)> = VecDeque::new();
         // Get free page IDs
@@ -770,7 +770,7 @@ impl Writer {
                 match self.get_page_ref(mvcc, page_id) {
                     Ok(p) => p.node.clone(),
                     Err(e) => {
-                        return Err(DCBError::DatabaseCorrupted(format!(
+                        return Err(DcbError::DatabaseCorrupted(format!(
                             "Free list page {:?} load error: {:?}",
                             page_id, e
                         )));
@@ -825,7 +825,7 @@ impl Writer {
                                     match self.get_page_ref(mvcc, sub_id) {
                                         Ok(p) => p.node.clone(),
                                         Err(e) => {
-                                            return Err(DCBError::DatabaseCorrupted(format!(
+                                            return Err(DcbError::DatabaseCorrupted(format!(
                                                 "TSN subtree page {:?} load error: {:?}",
                                                 sub_id, e
                                             )));
@@ -846,7 +846,7 @@ impl Writer {
                                         }
                                     }
                                     other => {
-                                        return Err(DCBError::DatabaseCorrupted(format!(
+                                        return Err(DcbError::DatabaseCorrupted(format!(
                                             "Invalid node type in TSN subtree: {}",
                                             other.type_name()
                                         )));
@@ -857,7 +857,7 @@ impl Writer {
                     }
                 }
                 _ => {
-                    return Err(DCBError::DatabaseCorrupted(
+                    return Err(DcbError::DatabaseCorrupted(
                         "Invalid node type in free list tree".to_string(),
                     ));
                 }
@@ -877,7 +877,7 @@ impl Writer {
         mvcc: &Mvcc,
         tsn: Tsn,
         freed_page_id: PageID,
-    ) -> DCBResult<()> {
+    ) -> DcbResult<()> {
         let verbose = self.verbose;
         if verbose {
             println!("Inserting {freed_page_id:?} for {tsn:?}");
@@ -895,7 +895,7 @@ impl Writer {
                 let len_keys = leaf_node.keys.len();
                 if len_keys == 0 {
                     if !leaf_node.would_fit_new_tsn_and_page_id(mvcc.max_node_size) {
-                        return Err(DCBError::InternalError("Page size too small".to_string()));
+                        return Err(DcbError::InternalError("Page size too small".to_string()));
                     }
                     plan = FreePageIDInsertStrategy::PushTsnOntoFreeListLeaf;
                 } else {
@@ -921,7 +921,7 @@ impl Writer {
                         }
                     } else {
                         // We assume freed page IDs are always inserted for the last TSN
-                        return Err(DCBError::InternalError(
+                        return Err(DcbError::InternalError(
                             "Insertion only supported for last TSN in leaf".to_string(),
                         ));
                     }
@@ -938,7 +938,7 @@ impl Writer {
                     .last()
                     .expect("FreeListInternal node should have a child");
             } else {
-                return Err(DCBError::DatabaseCorrupted(
+                return Err(DcbError::DatabaseCorrupted(
                     "Expected FreeListInternal node".to_string(),
                 ));
             }
@@ -964,14 +964,14 @@ impl Writer {
                 // Read leaf immutably to find last_idx and current root_id
                 let leaf_snapshot = { self.get_page_ref(mvcc, dirty_leaf_page_id)? };
                 let Node::FreeListLeaf(leaf_ro) = &leaf_snapshot.node else {
-                    return Err(DCBError::DatabaseCorrupted(
+                    return Err(DcbError::DatabaseCorrupted(
                         "Expected FreeListLeaf node".to_string(),
                     ));
                 };
                 let last_idx = leaf_ro.keys.len() - 1;
                 let tsn_root_id = leaf_ro.values[last_idx].root_id;
                 if tsn_root_id == PageID(0) {
-                    return Err(DCBError::DatabaseCorrupted(
+                    return Err(DcbError::DatabaseCorrupted(
                         "Expected TSN-subtree root_id to be set".to_string(),
                     ));
                 }
@@ -980,7 +980,7 @@ impl Writer {
                     // Now mutate the freelist leaf to update root_id
                     let dirty_leaf_page = self.get_mut_dirty(dirty_leaf_page_id)?;
                     let Node::FreeListLeaf(dirty_leaf_node2) = &mut dirty_leaf_page.node else {
-                        return Err(DCBError::DatabaseCorrupted(
+                        return Err(DcbError::DatabaseCorrupted(
                             "Expected FreeListLeaf node".to_string(),
                         ));
                     };
@@ -991,7 +991,7 @@ impl Writer {
                 // Read leaf immutably to capture inline page_ids
                 let leaf_snapshot = { self.get_page_ref(mvcc, dirty_leaf_page_id)? };
                 let Node::FreeListLeaf(leaf_ro) = &leaf_snapshot.node else {
-                    return Err(DCBError::DatabaseCorrupted(
+                    return Err(DcbError::DatabaseCorrupted(
                         "Expected FreeListLeaf node".to_string(),
                     ));
                 };
@@ -1019,7 +1019,7 @@ impl Writer {
                     }
                 }
                 if initial_ids.is_empty() {
-                    return Err(DCBError::InternalError(
+                    return Err(DcbError::InternalError(
                         "Page size too small for TSN-subtree leaf with one PageID".to_string(),
                     ));
                 }
@@ -1035,7 +1035,7 @@ impl Writer {
                 // Now mutate the freelist leaf to clear inline and set root
                 let dirty_leaf_page = self.get_mut_dirty(dirty_leaf_page_id)?;
                 let Node::FreeListLeaf(dirty_leaf_node2) = &mut dirty_leaf_page.node else {
-                    return Err(DCBError::DatabaseCorrupted(
+                    return Err(DcbError::DatabaseCorrupted(
                         "Expected FreeListLeaf node".to_string(),
                     ));
                 };
@@ -1137,7 +1137,7 @@ impl Writer {
                 }
             }
         } else {
-            return Err(DCBError::DatabaseCorrupted(
+            return Err(DcbError::DatabaseCorrupted(
                 "Expected FreeListLeaf node".to_string(),
             ));
         }
@@ -1168,7 +1168,7 @@ impl Writer {
                     println!("Nothing to replace in {dirty_page_id:?}")
                 }
             } else {
-                return Err(DCBError::DatabaseCorrupted(
+                return Err(DcbError::DatabaseCorrupted(
                     "Expected FreeListInternal node".to_string(),
                 ));
             }
@@ -1185,7 +1185,7 @@ impl Writer {
                         );
                     }
                 } else {
-                    return Err(DCBError::DatabaseCorrupted(
+                    return Err(DcbError::DatabaseCorrupted(
                         "Expected FreeListInternal node".to_string(),
                     ));
                 }
@@ -1202,7 +1202,7 @@ impl Writer {
                     // Ensure we have at least 3 keys and 4 child IDs before splitting
                     if dirty_internal_node.keys.len() < 3 || dirty_internal_node.child_ids.len() < 4
                     {
-                        return Err(DCBError::DatabaseCorrupted(
+                        return Err(DcbError::DatabaseCorrupted(
                             "Cannot split internal node with too few keys/children".to_string(),
                         ));
                     }
@@ -1244,7 +1244,7 @@ impl Writer {
 
                     split_info = Some((promoted_key, new_internal_page_id));
                 } else {
-                    return Err(DCBError::DatabaseCorrupted(
+                    return Err(DcbError::DatabaseCorrupted(
                         "Expected FreeListInternal node".to_string(),
                     ));
                 }
@@ -1261,7 +1261,7 @@ impl Writer {
                     println!("Replaced root {old_id:?} with {new_id:?}");
                 }
             } else {
-                return Err(DCBError::RootIDMismatch(old_id.0, new_id.0));
+                return Err(DcbError::RootIDMismatch(old_id.0, new_id.0));
             }
         }
 
@@ -1296,7 +1296,7 @@ impl Writer {
         mvcc: &Mvcc,
         root_id: PageID,
         key: PageID,
-    ) -> DCBResult<PageID> {
+    ) -> DcbResult<PageID> {
         let verbose = self.verbose;
         let mut stack: Vec<(PageID, usize)> = Vec::new();
         let mut current_id = root_id;
@@ -1314,7 +1314,7 @@ impl Writer {
                     current_id = next_id;
                 }
                 other => {
-                    return Err(DCBError::DatabaseCorrupted(format!(
+                    return Err(DcbError::DatabaseCorrupted(format!(
                         "Unexpected node type in TSN-subtree during insert: {}",
                         other.type_name()
                     )));
@@ -1327,7 +1327,7 @@ impl Writer {
         {
             let leaf_page = self.get_mut_dirty(current_id)?;
             let Node::FreeListTsnLeaf(ref mut leaf) = leaf_page.node else {
-                return Err(DCBError::DatabaseCorrupted(
+                return Err(DcbError::DatabaseCorrupted(
                     "Expected TSN-subtree leaf".to_string(),
                 ));
             };
@@ -1365,7 +1365,7 @@ impl Writer {
                             let parent_page = self.get_mut_dirty(parent_id)?;
                             let Node::FreeListTsnInternal(ref mut parent_node) = parent_page.node
                             else {
-                                return Err(DCBError::DatabaseCorrupted(
+                                return Err(DcbError::DatabaseCorrupted(
                                     "Expected TSN-subtree internal".to_string(),
                                 ));
                             };
@@ -1395,13 +1395,13 @@ impl Writer {
                             let right_child_ids: Vec<PageID> =
                                 parent_node.child_ids[mid + 1..].to_vec();
                             if right_child_ids.len() != right_keys.len() + 1 {
-                                return Err(DCBError::DatabaseCorrupted(
+                                return Err(DcbError::DatabaseCorrupted(
                                     "TSN-subtree internal split produced invalid right arity"
                                         .to_string(),
                                 ));
                             }
                             if left_child_ids.len() != left_keys.len() + 1 {
-                                return Err(DCBError::DatabaseCorrupted(
+                                return Err(DcbError::DatabaseCorrupted(
                                     "TSN-subtree internal split produced invalid left arity"
                                         .to_string(),
                                 ));
@@ -1453,7 +1453,7 @@ impl Writer {
         mvcc: &Mvcc,
         tsn: Tsn,
         used_page_id: PageID,
-    ) -> DCBResult<()> {
+    ) -> DcbResult<()> {
         let verbose = self.verbose;
         if verbose {
             println!();
@@ -1479,7 +1479,7 @@ impl Writer {
                 stack.push(current_page_id);
                 current_page_id = *internal_node.child_ids.first().unwrap();
             } else {
-                return Err(DCBError::DatabaseCorrupted(
+                return Err(DcbError::DatabaseCorrupted(
                     "Expected FreeListInternal node".to_string(),
                 ));
             }
@@ -1496,12 +1496,12 @@ impl Writer {
         // Read the current leaf immutably to decide the path (inline vs TSN-subtree)
         let leaf_snapshot = { self.get_page_ref(mvcc, current_page_id)? };
         let Node::FreeListLeaf(leaf_node_ro) = &leaf_snapshot.node else {
-            return Err(DCBError::DatabaseCorrupted(
+            return Err(DcbError::DatabaseCorrupted(
                 "Expected FreeListLeaf node".to_string(),
             ));
         };
         if leaf_node_ro.keys.is_empty() || leaf_node_ro.keys[0] != tsn {
-            return Err(DCBError::DatabaseCorrupted(format!(
+            return Err(DcbError::DatabaseCorrupted(format!(
                 "Expected TSN {} not found: {:?}",
                 tsn.0, leaf_node_ro
             )));
@@ -1529,7 +1529,7 @@ impl Writer {
                 {
                     leaf_value.page_ids.remove(pos);
                 } else {
-                    return Err(DCBError::DatabaseCorrupted(format!(
+                    return Err(DcbError::DatabaseCorrupted(format!(
                         "{used_page_id:?} not found in {tsn:?}"
                     )));
                 }
@@ -1554,7 +1554,7 @@ impl Writer {
                     println!("Leaf value not empty {tsn:?}: {leaf_value:?}");
                 }
             } else {
-                return Err(DCBError::DatabaseCorrupted(
+                return Err(DcbError::DatabaseCorrupted(
                     "Expected FreeListLeaf node".to_string(),
                 ));
             }
@@ -1575,7 +1575,7 @@ impl Writer {
                     {
                         tsn_leaf_node.page_ids.remove(pos);
                     } else {
-                        return Err(DCBError::DatabaseCorrupted(format!(
+                        return Err(DcbError::DatabaseCorrupted(format!(
                             "{used_page_id:?} not found in TSN-subtree for {tsn:?}"
                         )));
                     }
@@ -1620,7 +1620,7 @@ impl Writer {
                                 current_id = next_id;
                             }
                             other => {
-                                return Err(DCBError::DatabaseCorrupted(format!(
+                                return Err(DcbError::DatabaseCorrupted(format!(
                                     "Unexpected node type in TSN-subtree during descent: {}",
                                     other.type_name()
                                 )));
@@ -1639,7 +1639,7 @@ impl Writer {
                                 {
                                     leaf_node.page_ids.remove(pos);
                                 } else {
-                                    return Err(DCBError::DatabaseCorrupted(format!(
+                                    return Err(DcbError::DatabaseCorrupted(format!(
                                         "{used_page_id:?} not found in TSN-subtree for {tsn:?}"
                                     )));
                                 }
@@ -1654,7 +1654,7 @@ impl Writer {
                                 }
                             }
                             other => {
-                                return Err(DCBError::DatabaseCorrupted(format!(
+                                return Err(DcbError::DatabaseCorrupted(format!(
                                     "Expected TSN-subtree leaf, got {}",
                                     other.type_name()
                                 )));
@@ -1678,7 +1678,7 @@ impl Writer {
                         let parent_page = self.get_mut_dirty(parent_dirty_id)?;
                         let Node::FreeListTsnInternal(ref mut parent_node) = parent_page.node
                         else {
-                            return Err(DCBError::DatabaseCorrupted(
+                            return Err(DcbError::DatabaseCorrupted(
                                 "Expected TSN-subtree internal node".to_string(),
                             ));
                         };
@@ -1741,7 +1741,7 @@ impl Writer {
                     }
                 }
                 _ => {
-                    return Err(DCBError::DatabaseCorrupted(
+                    return Err(DcbError::DatabaseCorrupted(
                         "Expected TSN-subtree node".to_string(),
                     ));
                 }
@@ -1756,7 +1756,7 @@ impl Writer {
             if let Node::FreeListLeaf(dirty_leaf_node) = &mut dirty_leaf_page.node {
                 // Ensure expected TSN still at index 0
                 if dirty_leaf_node.keys.is_empty() || dirty_leaf_node.keys[0] != tsn {
-                    return Err(DCBError::DatabaseCorrupted(format!(
+                    return Err(DcbError::DatabaseCorrupted(format!(
                         "Expected TSN {} not found in dirty leaf: {:?}",
                         tsn.0, dirty_leaf_node
                     )));
@@ -1784,7 +1784,7 @@ impl Writer {
                     dirty_leaf_node.values[0].root_id = dirty_tsn_root_id;
                 }
             } else {
-                return Err(DCBError::DatabaseCorrupted(
+                return Err(DcbError::DatabaseCorrupted(
                     "Expected FreeListLeaf node".to_string(),
                 ));
             }
@@ -1817,10 +1817,10 @@ impl Writer {
                             );
                         }
                     } else {
-                        return Err(DCBError::DatabaseCorrupted("Child ID mismatch".to_string()));
+                        return Err(DcbError::DatabaseCorrupted("Child ID mismatch".to_string()));
                     }
                 } else {
-                    return Err(DCBError::DatabaseCorrupted(
+                    return Err(DcbError::DatabaseCorrupted(
                         "Expected FreeListInternal node".to_string(),
                     ));
                 }
@@ -1833,10 +1833,10 @@ impl Writer {
                 if let Node::FreeListInternal(dirty_internal_node) = &mut dirty_internal_page.node {
                     // Remove the child ID and key
                     if dirty_internal_node.child_ids[0] != removed_page_id {
-                        return Err(DCBError::DatabaseCorrupted("Child ID mismatch".to_string()));
+                        return Err(DcbError::DatabaseCorrupted("Child ID mismatch".to_string()));
                     }
                     if dirty_internal_node.keys.is_empty() {
-                        return Err(DCBError::DatabaseCorrupted(
+                        return Err(DcbError::DatabaseCorrupted(
                             "Empty internal node keys".to_string(),
                         ));
                     }
@@ -1867,7 +1867,7 @@ impl Writer {
                         }
                     }
                 } else {
-                    return Err(DCBError::DatabaseCorrupted(
+                    return Err(DcbError::DatabaseCorrupted(
                         "Expected FreeListInternal node".to_string(),
                     ));
                 }
@@ -1890,7 +1890,7 @@ impl Writer {
                     println!("Replaced root {old_id:?} with {new_id:?}");
                 }
             } else {
-                return Err(DCBError::RootIDMismatch(old_id.0, new_id.0));
+                return Err(DcbError::RootIDMismatch(old_id.0, new_id.0));
             }
         }
 
@@ -4293,7 +4293,7 @@ mod tests {
             // 4) Attempt to open again; expect an InternalError complaining about schema version
             match Mvcc::new(&db_path, page_size, verbose) {
                 Ok(_) => panic!("opening should have failed due to newer on-disk schema"),
-                Err(DCBError::InternalError(msg)) => {
+                Err(DcbError::InternalError(msg)) => {
                     assert!(
                         msg.contains("Software version is too old"),
                         "unexpected error message: {msg}"

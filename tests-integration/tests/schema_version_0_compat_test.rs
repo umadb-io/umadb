@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use tempfile::tempdir;
 use umadb_core::db::UmaDB;
 use umadb_core::tags_tree_nodes::get_tag_key_width;
-use umadb_dcb::{DCBEvent, DCBEventStoreSync, DCBQuery, DCBQueryItem};
+use umadb_dcb::{DcbEvent, DcbEventStoreSync, DcbQuery, DcbQueryItem};
 
 // This test verifies that a legacy schema version 0 (with 64-bit tag hashes)
 // can be opened, queried, and appended to by the current code.
@@ -64,7 +64,7 @@ fn schema_version_0_roundtrip_read_write_and_tags() -> Result<(), Box<dyn std::e
         // For each tag, query events filtered by that tag and ensure we get >=1 result
         // First: pure index path (all items have tags) to validate index-based search on legacy DB
         for tag in &existing_tags {
-            let query = DCBQuery::new().item(DCBQueryItem::new().tags([tag.clone()]));
+            let query = DcbQuery::new().item(DcbQueryItem::new().tags([tag.clone()]));
             let (tag_events, _head2) = db.read_with_head(Some(query), None, false, None)?;
             assert!(
                 !tag_events.is_empty(),
@@ -75,9 +75,9 @@ fn schema_version_0_roundtrip_read_write_and_tags() -> Result<(), Box<dyn std::e
 
         // Second: force sequential fallback path while still filtering by the tag, should also work
         let build_tag_query_fallback = |t: &str| {
-            DCBQuery::new()
-                .item(DCBQueryItem::new().tags([t]))
-                .item(DCBQueryItem::new().types(["__no_such_type__"]))
+            DcbQuery::new()
+                .item(DcbQueryItem::new().tags([t]))
+                .item(DcbQueryItem::new().types(["__no_such_type__"]))
         };
 
         for tag in &existing_tags {
@@ -93,7 +93,7 @@ fn schema_version_0_roundtrip_read_write_and_tags() -> Result<(), Box<dyn std::e
         // Append a few new events with brand-new tags
         let new_tags = vec!["compat-new-A", "compat-new-B", "compat-new-C"];
         for (i, nt) in new_tags.iter().enumerate() {
-            let ev = DCBEvent {
+            let ev = DcbEvent {
                 event_type: format!("CompatEvent{}", i + 1),
                 data: format!("payload-{}", i + 1).into_bytes(),
                 tags: vec![nt.to_string()],
@@ -109,7 +109,7 @@ fn schema_version_0_roundtrip_read_write_and_tags() -> Result<(), Box<dyn std::e
 
         // Verify per-tag queries for the new tags return exactly one event
         for (i, nt) in new_tags.iter().enumerate() {
-            let query = DCBQuery::new().item(DCBQueryItem::new().tags([*nt]));
+            let query = DcbQuery::new().item(DcbQueryItem::new().tags([*nt]));
             let (events_for_tag, _h) = db.read_with_head(Some(query), None, false, None)?;
             assert_eq!(
                 1,

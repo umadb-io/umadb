@@ -3,7 +3,7 @@ use std::hint::black_box;
 use std::time::Instant;
 use tempfile::tempdir;
 use umadb_core::db::UmaDB;
-use umadb_dcb::{DCBAppendCondition, DCBEvent, DCBEventStoreSync, DCBQuery, DCBQueryItem};
+use umadb_dcb::{DcbAppendCondition, DcbEvent, DcbEventStoreSync, DcbQuery, DcbQueryItem};
 
 // This test is intended for profiling hotspots when appending events.
 // It can append one event per call or many events per call, to profile both per-call overhead
@@ -62,7 +62,7 @@ fn profile_event_store_append() {
 
     let payload = vec![0u8; data_size];
     for i in 0..calls_per_run {
-        let mut events: Vec<DCBEvent> = Vec::with_capacity(events_per_call);
+        let mut events: Vec<DcbEvent> = Vec::with_capacity(events_per_call);
         for j in 0..events_per_call {
             let idx = i + j;
 
@@ -72,7 +72,7 @@ fn profile_event_store_append() {
                 tags.push(format!("tag-{j}-{k}"));
             }
 
-            let event = DCBEvent {
+            let event = DcbEvent {
                 event_type: format!("Type{}", idx % 16),
                 data: payload.clone(),
                 tags,
@@ -80,9 +80,9 @@ fn profile_event_store_append() {
             };
             events.push(event);
         }
-        let condition = DCBAppendCondition {
-            fail_if_events_match: DCBQuery {
-                items: vec![DCBQueryItem {
+        let condition = DcbAppendCondition {
+            fail_if_events_match: DcbQuery {
+                items: vec![DcbQueryItem {
                     types: vec![],
                     tags: vec!["foo".to_string()],
                 }],

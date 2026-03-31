@@ -13,8 +13,8 @@ use itertools::Itertools;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
 use umadb_dcb::{
-    DCBAppendCondition, DCBError, DCBEvent, DCBEventStoreSync, DCBQuery, DCBReadResponseSync,
-    DCBResult, DCBSequencedEvent, TrackingInfo,
+    DcbAppendCondition, DcbEvent, DcbEventStoreSync, DcbQuery, DcbReadResponseSync, DcbResult,
+    DcbSequencedEvent, DcbError, TrackingInfo,
 };
 use uuid::Uuid;
 
@@ -25,7 +25,7 @@ pub const DEFAULT_DB_FILENAME: &str = "uma.db";
 /// Set to 1 for current releases; previous versions of the code used 0.
 pub const DB_SCHEMA_VERSION: u32 = 1;
 
-/// EventStore implementing the DCBEventStoreSync interface
+/// EventStore implementing the `DcbEventStoreSync` interface
 pub struct UmaDB {
     pub mvcc: Arc<Mvcc>,
 }
@@ -33,7 +33,7 @@ pub struct UmaDB {
 impl UmaDB {
     /// Create a new EventStore at the given directory or file path.
     /// If a directory path is provided, a file named "uma.db" will be used inside it.
-    pub fn new<P: AsRef<Path>>(path: P) -> DCBResult<Self> {
+    pub fn new<P: AsRef<Path>>(path: P) -> DcbResult<Self> {
         let p = path.as_ref();
         let file_path = if p.is_dir() {
             p.join(DEFAULT_DB_FILENAME)
@@ -51,7 +51,7 @@ impl UmaDB {
     }
 
     /// Returns the greatest recorded upstream position for a source, if any.
-    pub fn get_tracking_info(&self, source: &str) -> DCBResult<Option<u64>> {
+    pub fn get_tracking_info(&self, source: &str) -> DcbResult<Option<u64>> {
         let reader = self.mvcc.reader()?;
         let mut pid = reader.tracking_tree_root_id;
         if pid == PageID(0) {
@@ -67,14 +67,14 @@ impl UmaDB {
                         Err(i) => i,
                     };
                     if idx >= internal.child_ids.len() {
-                        return Err(DCBError::DatabaseCorrupted(
+                        return Err(DcbError::DatabaseCorrupted(
                             "tracking internal child index out of bounds".to_string(),
                         ));
                     }
                     pid = internal.child_ids[idx];
                 }
                 other => {
-                    return Err(DCBError::DatabaseCorrupted(format!(
+                    return Err(DcbError::DatabaseCorrupted(format!(
                         "Invalid tracking node type: {}",
                         other.type_name()
                     )));
@@ -93,19 +93,19 @@ impl UmaDB {
     pub fn append_batch(
         &self,
         mut items: Vec<(
-            Vec<DCBEvent>,
-            Option<DCBAppendCondition>,
+            Vec<DcbEvent>,
+            Option<DcbAppendCondition>,
             Option<TrackingInfo>,
         )>,
-    ) -> DCBResult<Vec<DCBResult<u64>>> {
+    ) -> DcbResult<Vec<DcbResult<u64>>> {
         let total = items.len();
         let mvcc = &self.mvcc;
         let mut writer = mvcc.writer()?;
-        let mut results: Vec<DCBResult<u64>> = Vec::with_capacity(total);
+        let mut results: Vec<DcbResult<u64>> = Vec::with_capacity(total);
 
         // Track abort state
         let mut abort_idx: Option<usize> = None;
-        let mut abort_err: Option<DCBError> = None;
+        let mut abort_err: Option<DcbError> = None;
 
         for (idx, (events, condition, tracking)) in items.drain(..).enumerate() {
             if abort_idx.is_some() {
@@ -148,12 +148,12 @@ impl UmaDB {
     }
 
     pub fn process_append_request(
-        events: Vec<DCBEvent>,
-        condition: Option<DCBAppendCondition>,
+        events: Vec<DcbEvent>,
+        condition: Option<DcbAppendCondition>,
         tracking_info: Option<TrackingInfo>,
         mvcc: &Arc<Mvcc>,
         writer: &mut Writer,
-    ) -> DCBResult<u64> {
+    ) -> DcbResult<u64> {
         // Check condition using read_conditional (limit 1), starting after the provided position
         if let Some(cond) = condition {
             let from = cond.after.map(|after| Position(after + 1));
@@ -190,7 +190,7 @@ impl UmaDB {
                                     cond.clone(),
                                     matched,
                                 );
-                                Err(DCBError::IntegrityError(msg))
+                                Err(DcbError::IntegrityError(msg))
                             }
                             Err(err) => {
                                 // Propagate the error for this item but continue with others
@@ -229,15 +229,15 @@ impl UmaDB {
     }
 }
 
-impl DCBEventStoreSync for UmaDB {
+impl DcbEventStoreSync for UmaDB {
     fn read(
         &self,
-        query: Option<DCBQuery>,
+        query: Option<DcbQuery>,
         start: Option<u64>,
         backwards: bool,
         limit: Option<u32>,
         _subscribe: bool, // Deprecated - remove in v1.0.
-    ) -> DCBResult<Box<dyn DCBReadResponseSync + Send + 'static>> {
+    ) -> DcbResult<Box<dyn DcbReadResponseSync + Send + 'static>> {
         let mvcc = &self.mvcc;
         let reader = mvcc.reader()?;
 
@@ -245,7 +245,7 @@ impl DCBEventStoreSync for UmaDB {
         let last_committed_position = reader.next_position.0.saturating_sub(1);
 
         // Build query and after
-        let q = query.unwrap_or(DCBQuery { items: vec![] });
+        let q = query.unwrap_or(DcbQuery { items: vec![] });
         let from = start.map(Position);
 
         // Delegate to read_conditional
@@ -278,14 +278,14 @@ impl DCBEventStoreSync for UmaDB {
         }))
     }
 
-    fn head(&self) -> DCBResult<Option<u64>> {
+    fn head(&self) -> DcbResult<Option<u64>> {
         let db = &self.mvcc;
         let (_, header) = db.get_latest_header()?;
         let last = header.next_position.0.saturating_sub(1);
         if last == 0 { Ok(None) } else { Ok(Some(last)) }
     }
 
-    fn get_tracking_info(&self, source: &str) -> DCBResult<Option<u64>> {
+    fn get_tracking_info(&self, source: &str) -> DcbResult<Option<u64>> {
         UmaDB::get_tracking_info(self, source)
     }
 
@@ -294,10 +294,10 @@ impl DCBEventStoreSync for UmaDB {
     /// any recorded for the given source, and atomically updates the tracking leaf.
     fn append(
         &self,
-        events: Vec<DCBEvent>,
-        condition: Option<DCBAppendCondition>,
+        events: Vec<DcbEvent>,
+        condition: Option<DcbAppendCondition>,
         tracking_info: Option<TrackingInfo>,
-    ) -> DCBResult<u64> {
+    ) -> DcbResult<u64> {
         if events.is_empty() {
             return Ok(0);
         }
@@ -311,16 +311,16 @@ impl DCBEventStoreSync for UmaDB {
 }
 
 struct ReadResponse {
-    events: VecDeque<DCBSequencedEvent>,
+    events: VecDeque<DcbSequencedEvent>,
     head: Option<u64>,
 }
 
 /// Ensure tracking constraint and update/insert the position into leaf without splitting.
-fn tracking_upsert(mvcc: &Mvcc, writer: &mut Writer, source: &str, pos: Position) -> DCBResult<()> {
+fn tracking_upsert(mvcc: &Mvcc, writer: &mut Writer, source: &str, pos: Position) -> DcbResult<()> {
     // Enforce maximum key length (1-byte length field in tracking nodes)
     let key_len = source.len();
     if key_len > u8::MAX as usize {
-        return Err(DCBError::InvalidArgument(format!(
+        return Err(DcbError::InvalidArgument(format!(
             "tracking source too long ({} > 255)",
             key_len
         )));
@@ -351,7 +351,7 @@ fn tracking_upsert(mvcc: &Mvcc, writer: &mut Writer, source: &str, pos: Position
             Node::TrackingInternal(internal) => {
                 let child_idx = internal.child_index_for_key(source);
                 if child_idx >= internal.child_ids.len() {
-                    return Err(DCBError::DatabaseCorrupted(
+                    return Err(DcbError::DatabaseCorrupted(
                         "tracking internal child index out of bounds".to_string(),
                     ));
                 }
@@ -360,7 +360,7 @@ fn tracking_upsert(mvcc: &Mvcc, writer: &mut Writer, source: &str, pos: Position
                 current_id = next;
             }
             other => {
-                return Err(DCBError::DatabaseCorrupted(format!(
+                return Err(DcbError::DatabaseCorrupted(format!(
                     "Invalid tracking node type: {}",
                     other.type_name()
                 )));
@@ -372,14 +372,14 @@ fn tracking_upsert(mvcc: &Mvcc, writer: &mut Writer, source: &str, pos: Position
     {
         let page = writer.get_page_ref(mvcc, current_id)?;
         let Node::TrackingLeaf(leaf) = &page.node else {
-            return Err(DCBError::DatabaseCorrupted(
+            return Err(DcbError::DatabaseCorrupted(
                 "Expected TrackingLeaf".to_string(),
             ));
         };
         if let Some(existing) = leaf.get(source)
             && pos.0 <= existing.0
         {
-            return Err(DCBError::IntegrityError(format!(
+            return Err(DcbError::IntegrityError(format!(
                 "non-increasing tracking position for source '{source}': {} <= {}",
                 pos.0, existing.0
             )));
@@ -400,7 +400,7 @@ fn tracking_upsert(mvcc: &Mvcc, writer: &mut Writer, source: &str, pos: Position
         // First, insert/update within a limited scope to end the mutable borrow before size checks
         {
             let Node::TrackingLeaf(ref mut node) = leaf_page.node else {
-                return Err(DCBError::DatabaseCorrupted(
+                return Err(DcbError::DatabaseCorrupted(
                     "Dirty tracking page not a leaf".to_string(),
                 ));
             };
@@ -418,12 +418,12 @@ fn tracking_upsert(mvcc: &Mvcc, writer: &mut Writer, source: &str, pos: Position
             let right_id: PageID;
             {
                 let Node::TrackingLeaf(ref mut node) = leaf_page.node else {
-                    return Err(DCBError::DatabaseCorrupted(
+                    return Err(DcbError::DatabaseCorrupted(
                         "Dirty tracking page not a leaf".to_string(),
                     ));
                 };
                 if node.keys.len() < 2 {
-                    return Err(DCBError::DatabaseCorrupted(
+                    return Err(DcbError::DatabaseCorrupted(
                         "Cannot split tracking leaf with too few keys".to_string(),
                     ));
                 }
@@ -432,7 +432,7 @@ fn tracking_upsert(mvcc: &Mvcc, writer: &mut Writer, source: &str, pos: Position
                 let right_vals = node.values.split_off(mid);
                 promoted_key = right_keys
                     .first()
-                    .ok_or_else(|| DCBError::DatabaseCorrupted("empty right split".to_string()))?
+                    .ok_or_else(|| DcbError::DatabaseCorrupted("empty right split".to_string()))?
                     .clone();
                 let right_leaf = TrackingLeafNode {
                     keys: right_keys,
@@ -457,7 +457,7 @@ fn tracking_upsert(mvcc: &Mvcc, writer: &mut Writer, source: &str, pos: Position
         if let Some((old_id, new_id)) = replacement_info.take() {
             let parent_page = writer.get_mut_dirty(dirty_parent_id)?;
             let Node::TrackingInternal(ref mut internal) = parent_page.node else {
-                return Err(DCBError::DatabaseCorrupted(
+                return Err(DcbError::DatabaseCorrupted(
                     "Expected TrackingInternal".to_string(),
                 ));
             };
@@ -470,7 +470,7 @@ fn tracking_upsert(mvcc: &Mvcc, writer: &mut Writer, source: &str, pos: Position
             {
                 let parent_page = writer.get_mut_dirty(dirty_parent_id)?;
                 let Node::TrackingInternal(ref mut internal) = parent_page.node else {
-                    return Err(DCBError::DatabaseCorrupted(
+                    return Err(DcbError::DatabaseCorrupted(
                         "Expected TrackingInternal".to_string(),
                     ));
                 };
@@ -481,7 +481,7 @@ fn tracking_upsert(mvcc: &Mvcc, writer: &mut Writer, source: &str, pos: Position
                 // Reborrow mutably to perform the split
                 let parent_page = writer.get_mut_dirty(dirty_parent_id)?;
                 let Node::TrackingInternal(ref mut internal) = parent_page.node else {
-                    return Err(DCBError::DatabaseCorrupted(
+                    return Err(DcbError::DatabaseCorrupted(
                         "Expected TrackingInternal".to_string(),
                     ));
                 };
@@ -507,7 +507,7 @@ fn tracking_upsert(mvcc: &Mvcc, writer: &mut Writer, source: &str, pos: Position
         if writer.tracking_tree_root_id == old_id {
             writer.tracking_tree_root_id = new_id;
         } else {
-            return Err(DCBError::RootIDMismatch(old_id.0, new_id.0));
+            return Err(DcbError::RootIDMismatch(old_id.0, new_id.0));
         }
     }
 
@@ -528,21 +528,21 @@ fn tracking_upsert(mvcc: &Mvcc, writer: &mut Writer, source: &str, pos: Position
 }
 
 impl Iterator for ReadResponse {
-    type Item = DCBResult<DCBSequencedEvent>;
+    type Item = DcbResult<DcbSequencedEvent>;
     fn next(&mut self) -> Option<Self::Item> {
         self.events.pop_front().map(Ok)
     }
 }
 
-impl DCBReadResponseSync for ReadResponse {
-    fn head(&mut self) -> DCBResult<Option<u64>> {
+impl DcbReadResponseSync for ReadResponse {
+    fn head(&mut self) -> DcbResult<Option<u64>> {
         Ok(self.head)
     }
-    fn collect_with_head(&mut self) -> DCBResult<(Vec<DCBSequencedEvent>, Option<u64>)> {
+    fn collect_with_head(&mut self) -> DcbResult<(Vec<DcbSequencedEvent>, Option<u64>)> {
         let events = self.events.drain(..).collect();
         Ok((events, self.head))
     }
-    fn next_batch(&mut self) -> DCBResult<Vec<DCBSequencedEvent>> {
+    fn next_batch(&mut self) -> DcbResult<Vec<DcbSequencedEvent>> {
         let batch = self.events.drain(..).collect();
         Ok(batch)
     }
@@ -559,8 +559,8 @@ impl DCBReadResponseSync for ReadResponse {
 pub fn unconditional_append(
     mvcc: &Mvcc,
     writer: &mut Writer,
-    events: Vec<DCBEvent>,
-) -> DCBResult<u64> {
+    events: Vec<DcbEvent>,
+) -> DcbResult<u64> {
     // Note: when used with tracking, the caller must perform tracking checks and updates
     // before this call within the same writer to ensure atomicity.
     let mut last_pos_u64: u64 = 0;
@@ -592,12 +592,12 @@ pub fn read_conditional(
     dirty: &HashMap<PageID, Page>,
     events_tree_root_id: PageID,
     tags_tree_root_id: PageID,
-    query: DCBQuery,
+    query: DcbQuery,
     start: Option<Position>,
     backwards: bool,
     limit: Option<u32>,
     force_sequential_read: bool,
-) -> DCBResult<Vec<DCBSequencedEvent>> {
+) -> DcbResult<Vec<DcbSequencedEvent>> {
     const SCAN_BATCH_SIZE: u32 = 256;
     // Special case: explicit zero limit
     if let Some(0) = limit {
@@ -607,16 +607,16 @@ pub fn read_conditional(
     // If no items, return all events with after/limit respected via sequential scan
     if query.items.is_empty() {
         let mut iter = EventIterator::new(mvcc, dirty, events_tree_root_id, start, backwards);
-        let mut out: Vec<DCBSequencedEvent> = Vec::new();
+        let mut out: Vec<DcbSequencedEvent> = Vec::new();
         'outer_all: loop {
             let batch = iter.next_batch(limit.unwrap_or(SCAN_BATCH_SIZE))?;
             if batch.is_empty() {
                 break;
             }
             for (pos, rec) in batch.into_iter() {
-                out.push(DCBSequencedEvent {
+                out.push(DcbSequencedEvent {
                     position: pos.0,
-                    event: DCBEvent {
+                    event: DcbEvent {
                         event_type: rec.event_type,
                         data: rec.data,
                         tags: rec.tags,
@@ -638,7 +638,7 @@ pub fn read_conditional(
     if !all_items_have_tags || force_sequential_read {
         // Fallback: sequentially scan all events and apply the same matching logic
         let mut iter = EventIterator::new(mvcc, dirty, events_tree_root_id, start, backwards);
-        let mut out: Vec<DCBSequencedEvent> = Vec::new();
+        let mut out: Vec<DcbSequencedEvent> = Vec::new();
         let matches_item = |rec: &EventRecord| -> bool {
             for item in &query.items {
                 let type_ok =
@@ -660,9 +660,9 @@ pub fn read_conditional(
             }
             for (pos, rec) in batch.into_iter() {
                 if matches_item(&rec) {
-                    out.push(DCBSequencedEvent {
+                    out.push(DcbSequencedEvent {
                         position: pos.0,
-                        event: DCBEvent {
+                        event: DcbEvent {
                             event_type: rec.event_type,
                             data: rec.data,
                             tags: rec.tags,
@@ -800,7 +800,7 @@ pub fn read_conditional(
         }
     }
 
-    let mut out: Vec<DCBSequencedEvent> = Vec::new();
+    let mut out: Vec<DcbSequencedEvent> = Vec::new();
     for (pos, tags_present, qiis_present) in GroupByPositionIterator::new(merged) {
         // Find any query item whose required tag set is subset of tags_present
         let matching_qiis: Vec<usize> = qiis_present
@@ -835,9 +835,9 @@ pub fn read_conditional(
             continue;
         }
 
-        out.push(DCBSequencedEvent {
+        out.push(DcbSequencedEvent {
             position: pos.0,
-            event: DCBEvent {
+            event: DcbEvent {
                 event_type: rec.event_type,
                 data: rec.data,
                 tags: rec.tags,
@@ -905,10 +905,10 @@ pub fn is_request_idempotent(
     dirty: &HashMap<PageID, Page>,
     events_tree_root_id: PageID,
     tags_tree_root_id: PageID,
-    events: &Vec<DCBEvent>,
-    fail_if_events_match: DCBQuery,
+    events: &Vec<DcbEvent>,
+    fail_if_events_match: DcbQuery,
     start: Option<Position>,
-) -> DCBResult<Option<u64>> {
+) -> DcbResult<Option<u64>> {
     // Check events for event IDs. If all have events IDs then
     // call read_conditional again with limit=event.len() and then
     // see if all events have matching UUIDs.
@@ -964,53 +964,53 @@ pub fn is_request_idempotent(
 }
 
 // --- helpers for append_batch abort policy ---
-pub fn is_integrity_error(e: &DCBError) -> bool {
-    matches!(e, DCBError::IntegrityError(_))
+pub fn is_integrity_error(e: &DcbError) -> bool {
+    matches!(e, DcbError::IntegrityError(_))
 }
 
-pub fn clone_dcb_error(src: &DCBError) -> DCBError {
+pub fn clone_dcb_error(src: &DcbError) -> DcbError {
     match src {
-        DCBError::AuthenticationError(err) => DCBError::AuthenticationError(err.to_string()),
-        DCBError::InitializationError(err) => DCBError::InitializationError(err.to_string()),
-        DCBError::Io(err) => DCBError::Io(std::io::Error::other(err.to_string())),
-        DCBError::IntegrityError(s) => DCBError::IntegrityError(s.clone()),
-        DCBError::Corruption(s) => DCBError::Corruption(s.clone()),
-        DCBError::InvalidArgument(s) => DCBError::InvalidArgument(s.clone()),
-        DCBError::PageNotFound(id) => DCBError::PageNotFound(*id),
-        DCBError::DirtyPageNotFound(id) => DCBError::DirtyPageNotFound(*id),
-        DCBError::RootIDMismatch(old_id, new_id) => DCBError::RootIDMismatch(*old_id, *new_id),
-        DCBError::DatabaseCorrupted(s) => DCBError::DatabaseCorrupted(s.clone()),
-        DCBError::InternalError(s) => DCBError::InternalError(s.clone()),
-        DCBError::SerializationError(s) => DCBError::SerializationError(s.clone()),
-        DCBError::DeserializationError(s) => DCBError::DeserializationError(s.clone()),
-        DCBError::PageAlreadyFreed(id) => DCBError::PageAlreadyFreed(*id),
-        DCBError::PageAlreadyDirty(id) => DCBError::PageAlreadyDirty(*id),
-        DCBError::TransportError(err) => DCBError::TransportError(err.clone()),
-        DCBError::CancelledByUser() => DCBError::CancelledByUser(),
+        DcbError::AuthenticationError(err) => DcbError::AuthenticationError(err.to_string()),
+        DcbError::InitializationError(err) => DcbError::InitializationError(err.to_string()),
+        DcbError::Io(err) => DcbError::Io(std::io::Error::other(err.to_string())),
+        DcbError::IntegrityError(s) => DcbError::IntegrityError(s.clone()),
+        DcbError::Corruption(s) => DcbError::Corruption(s.clone()),
+        DcbError::InvalidArgument(s) => DcbError::InvalidArgument(s.clone()),
+        DcbError::PageNotFound(id) => DcbError::PageNotFound(*id),
+        DcbError::DirtyPageNotFound(id) => DcbError::DirtyPageNotFound(*id),
+        DcbError::RootIDMismatch(old_id, new_id) => DcbError::RootIDMismatch(*old_id, *new_id),
+        DcbError::DatabaseCorrupted(s) => DcbError::DatabaseCorrupted(s.clone()),
+        DcbError::InternalError(s) => DcbError::InternalError(s.clone()),
+        DcbError::SerializationError(s) => DcbError::SerializationError(s.clone()),
+        DcbError::DeserializationError(s) => DcbError::DeserializationError(s.clone()),
+        DcbError::PageAlreadyFreed(id) => DcbError::PageAlreadyFreed(*id),
+        DcbError::PageAlreadyDirty(id) => DcbError::PageAlreadyDirty(*id),
+        DcbError::TransportError(err) => DcbError::TransportError(err.clone()),
+        DcbError::CancelledByUser() => DcbError::CancelledByUser(),
     }
 }
 
-pub fn shadow_for_batch_abort(src: &DCBError) -> DCBError {
+pub fn shadow_for_batch_abort(src: &DcbError) -> DcbError {
     let msg = "batch aborted due to internal error".to_string();
     match src {
-        DCBError::AuthenticationError(_) => DCBError::AuthenticationError(msg),
-        DCBError::InitializationError(_) => DCBError::InitializationError(msg),
-        DCBError::Io(_) => DCBError::Io(std::io::Error::other(msg)),
-        DCBError::IntegrityError(_) => DCBError::IntegrityError(msg),
-        DCBError::Corruption(_) => DCBError::Corruption(msg),
-        DCBError::InvalidArgument(_) => DCBError::InvalidArgument(msg),
-        DCBError::DatabaseCorrupted(_) => DCBError::DatabaseCorrupted(msg),
-        DCBError::InternalError(_) => DCBError::InternalError(msg),
-        DCBError::SerializationError(_) => DCBError::SerializationError(msg),
-        DCBError::DeserializationError(_) => DCBError::DeserializationError(msg),
-        DCBError::TransportError(_) => DCBError::TransportError(msg),
+        DcbError::AuthenticationError(_) => DcbError::AuthenticationError(msg),
+        DcbError::InitializationError(_) => DcbError::InitializationError(msg),
+        DcbError::Io(_) => DcbError::Io(std::io::Error::other(msg)),
+        DcbError::IntegrityError(_) => DcbError::IntegrityError(msg),
+        DcbError::Corruption(_) => DcbError::Corruption(msg),
+        DcbError::InvalidArgument(_) => DcbError::InvalidArgument(msg),
+        DcbError::DatabaseCorrupted(_) => DcbError::DatabaseCorrupted(msg),
+        DcbError::InternalError(_) => DcbError::InternalError(msg),
+        DcbError::SerializationError(_) => DcbError::SerializationError(msg),
+        DcbError::DeserializationError(_) => DcbError::DeserializationError(msg),
+        DcbError::TransportError(_) => DcbError::TransportError(msg),
         // For numeric/marker variants, we cannot add a message; keep same variant to preserve type
-        DCBError::PageNotFound(id) => DCBError::PageNotFound(*id),
-        DCBError::DirtyPageNotFound(id) => DCBError::DirtyPageNotFound(*id),
-        DCBError::RootIDMismatch(a, b) => DCBError::RootIDMismatch(*a, *b),
-        DCBError::PageAlreadyFreed(id) => DCBError::PageAlreadyFreed(*id),
-        DCBError::PageAlreadyDirty(id) => DCBError::PageAlreadyDirty(*id),
-        DCBError::CancelledByUser() => DCBError::CancelledByUser(),
+        DcbError::PageNotFound(id) => DcbError::PageNotFound(*id),
+        DcbError::DirtyPageNotFound(id) => DcbError::DirtyPageNotFound(*id),
+        DcbError::RootIDMismatch(a, b) => DcbError::RootIDMismatch(*a, *b),
+        DcbError::PageAlreadyFreed(id) => DcbError::PageAlreadyFreed(*id),
+        DcbError::PageAlreadyDirty(id) => DcbError::PageAlreadyDirty(*id),
+        DcbError::CancelledByUser() => DcbError::CancelledByUser(),
     }
 }
 
@@ -1022,7 +1022,7 @@ mod tests {
     use std::collections::HashMap;
     use tempfile::tempdir;
     use umadb_dcb::{
-        DCBAppendCondition, DCBError, DCBEvent, DCBEventStoreSync, DCBQuery, DCBQueryItem,
+        DcbAppendCondition, DcbEvent, DcbEventStoreSync, DcbQuery, DcbQueryItem, DcbError,
     };
     use uuid::Uuid;
 
@@ -1044,7 +1044,7 @@ mod tests {
         let uma = UmaDB::new(db_path).unwrap();
         // Make a 256-byte ASCII string
         let long_key = "a".repeat(256);
-        let ev = DCBEvent::new().event_type("T").data([1u8]);
+        let ev = DcbEvent::new().event_type("T").data([1u8]);
         let err = uma
             .append(
                 vec![ev],
@@ -1056,7 +1056,7 @@ mod tests {
             )
             .unwrap_err();
         match err {
-            DCBError::InvalidArgument(msg) => assert!(msg.contains("too long")),
+            DcbError::InvalidArgument(msg) => assert!(msg.contains("too long")),
             other => panic!("unexpected error: {:?}", other),
         }
     }
@@ -1070,7 +1070,7 @@ mod tests {
         let mvcc = Mvcc::new(&db_path, 256, false).unwrap();
         let uma = UmaDB::from_arc(Arc::new(mvcc));
 
-        let base_event = DCBEvent::new().event_type("T").data([0u8]);
+        let base_event = DcbEvent::new().event_type("T").data([0u8]);
         // Insert many different sources to force at least one leaf split
         for i in 0..50u32 {
             let key = format!("k{:03}", i);
@@ -1101,7 +1101,7 @@ mod tests {
         let mvcc = Mvcc::new(&db_path, 128, false).unwrap();
         let uma = UmaDB::from_arc(Arc::new(mvcc));
 
-        let base_event = DCBEvent::new().event_type("T").data([0u8]);
+        let base_event = DcbEvent::new().event_type("T").data([0u8]);
 
         // Keep track of every key we send and the expected value (position)
         let mut observed: HashMap<String, u64> = HashMap::new();
@@ -1189,7 +1189,7 @@ mod tests {
         let uma = UmaDB::new(db_path).unwrap();
 
         // Prepare a simple event
-        let ev = DCBEvent::new()
+        let ev = DcbEvent::new()
             .event_type("T1")
             .data(vec![1, 2, 3])
             .tags(["x", "y"]);
@@ -1221,7 +1221,7 @@ mod tests {
             .err()
             .expect("expected error");
         match err {
-            DCBError::IntegrityError(msg) => {
+            DcbError::IntegrityError(msg) => {
                 assert!(msg.contains("non-increasing tracking position"))
             }
             other => panic!("unexpected error: {:?}", other),
@@ -1247,11 +1247,11 @@ mod tests {
         mvcc: &Mvcc,
         events_tree_root_id: PageID,
         tags_tree_root_id: PageID,
-        query: DCBQuery,
+        query: DcbQuery,
         start: Option<Position>,
         backwards: bool,
         limit: Option<u32>,
-    ) -> DCBResult<Vec<DCBSequencedEvent>> {
+    ) -> DcbResult<Vec<DcbSequencedEvent>> {
         super::read_conditional(
             mvcc,
             &HashMap::<PageID, Page>::new(),
@@ -1268,7 +1268,7 @@ mod tests {
     static VERBOSE: bool = false;
 
     // Helper to produce a deterministic set of 10 events with shared tags and unique types
-    fn standard_events() -> Vec<DCBEvent> {
+    fn standard_events() -> Vec<DcbEvent> {
         let shared_tags = vec![
             "alpha".to_string(),
             "beta".to_string(),
@@ -1276,11 +1276,11 @@ mod tests {
             "delta".to_string(),
             "epsilon".to_string(),
         ];
-        let mut input: Vec<DCBEvent> = Vec::new();
+        let mut input: Vec<DcbEvent> = Vec::new();
         for i in 0..10u8 {
             let t1 = shared_tags[(i % 5) as usize].clone();
             let t2 = shared_tags[((i + 2) % 5) as usize].clone();
-            input.push(DCBEvent {
+            input.push(DcbEvent {
                 event_type: format!("Type{}", i),
                 data: vec![i, i + 1, i + 2],
                 tags: vec![t1, t2],
@@ -1291,7 +1291,7 @@ mod tests {
     }
 
     // Create DB with the standard events; keep temp dir alive by returning it
-    fn setup_db_with_standard_events() -> (tempfile::TempDir, Mvcc, Vec<DCBEvent>) {
+    fn setup_db_with_standard_events() -> (tempfile::TempDir, Mvcc, Vec<DcbEvent>) {
         let temp_dir = tempdir().unwrap();
         let db_path = temp_dir.path().join("mvcc-api-test.db");
         let db = Mvcc::new(db_path.as_ref(), DEFAULT_PAGE_SIZE, VERBOSE).unwrap();
@@ -1318,7 +1318,7 @@ mod tests {
             &mut mvcc,
             reader.events_tree_root_id,
             reader.tags_tree_root_id,
-            DCBQuery { items: vec![] },
+            DcbQuery { items: vec![] },
             Some(Position(1)),
             false,
             None,
@@ -1333,7 +1333,7 @@ mod tests {
             &mut mvcc,
             reader.events_tree_root_id,
             reader.tags_tree_root_id,
-            DCBQuery { items: vec![] },
+            DcbQuery { items: vec![] },
             Some(Position(first + 1)),
             false,
             None,
@@ -1347,7 +1347,7 @@ mod tests {
             &mut mvcc,
             reader.events_tree_root_id,
             reader.tags_tree_root_id,
-            DCBQuery { items: vec![] },
+            DcbQuery { items: vec![] },
             Some(Position(last + 1)),
             false,
             None,
@@ -1360,7 +1360,7 @@ mod tests {
             &mut mvcc,
             reader.events_tree_root_id,
             reader.tags_tree_root_id,
-            DCBQuery { items: vec![] },
+            DcbQuery { items: vec![] },
             Some(Position(1)),
             false,
             Some(0),
@@ -1371,7 +1371,7 @@ mod tests {
             &mut mvcc,
             reader.events_tree_root_id,
             reader.tags_tree_root_id,
-            DCBQuery { items: vec![] },
+            DcbQuery { items: vec![] },
             Some(Position(1)),
             false,
             Some(3),
@@ -1382,7 +1382,7 @@ mod tests {
             &mut mvcc,
             reader.events_tree_root_id,
             reader.tags_tree_root_id,
-            DCBQuery { items: vec![] },
+            DcbQuery { items: vec![] },
             Some(Position(1)),
             false,
             Some(20),
@@ -1395,8 +1395,8 @@ mod tests {
     #[serial]
     fn tags_only_single_tag_after_and_limit() {
         let (_tmp, mut db, _input) = setup_db_with_standard_events();
-        let qi = DCBQuery {
-            items: vec![DCBQueryItem {
+        let qi = DcbQuery {
+            items: vec![DcbQueryItem {
                 types: vec![],
                 tags: vec!["alpha".to_string()],
             }],
@@ -1484,8 +1484,8 @@ mod tests {
     #[serial]
     fn tags_only_multi_tag_and() {
         let (_tmp, mut db, _input) = setup_db_with_standard_events();
-        let qi = DCBQuery {
-            items: vec![DCBQueryItem {
+        let qi = DcbQuery {
+            items: vec![DcbQueryItem {
                 types: vec![],
                 tags: vec!["alpha".to_string(), "gamma".to_string()],
             }],
@@ -1516,8 +1516,8 @@ mod tests {
     #[serial]
     fn types_plus_tags_index_path() {
         let (_tmp, mut db, _input) = setup_db_with_standard_events();
-        let qi = DCBQuery {
-            items: vec![DCBQueryItem {
+        let qi = DcbQuery {
+            items: vec![DcbQueryItem {
                 types: vec!["Type0".to_string()],
                 tags: vec!["alpha".to_string()],
             }],
@@ -1542,8 +1542,8 @@ mod tests {
     #[serial]
     fn or_semantics_and_deduplication() {
         let (_tmp, mut db, _input) = setup_db_with_standard_events();
-        let alpha_only = DCBQuery {
-            items: vec![DCBQueryItem {
+        let alpha_only = DcbQuery {
+            items: vec![DcbQueryItem {
                 types: vec![],
                 tags: vec!["alpha".to_string()],
             }],
@@ -1564,13 +1564,13 @@ mod tests {
         .collect();
 
         // Overlapping items: alpha OR (alpha AND gamma) should deduplicate
-        let query = DCBQuery {
+        let query = DcbQuery {
             items: vec![
-                DCBQueryItem {
+                DcbQueryItem {
                     types: vec![],
                     tags: vec!["alpha".to_string()],
                 },
-                DCBQueryItem {
+                DcbQueryItem {
                     types: vec![],
                     tags: vec!["alpha".to_string(), "gamma".to_string()],
                 },
@@ -1599,19 +1599,19 @@ mod tests {
 
         // Use a smaller custom set to make counts obvious
         let events = vec![
-            DCBEvent {
+            DcbEvent {
                 event_type: "TypeA".to_string(),
                 data: vec![1],
                 tags: vec!["x".to_string()],
                 uuid: None,
             },
-            DCBEvent {
+            DcbEvent {
                 event_type: "TypeB".to_string(),
                 data: vec![2],
                 tags: vec!["y".to_string()],
                 uuid: None,
             },
-            DCBEvent {
+            DcbEvent {
                 event_type: "TypeA".to_string(),
                 data: vec![3],
                 tags: vec!["z".to_string()],
@@ -1626,8 +1626,8 @@ mod tests {
         assert_eq!(last, head);
 
         // Query item with no tags => forces fallback path; select TypeA only
-        let qi = DCBQuery {
-            items: vec![DCBQueryItem {
+        let qi = DcbQuery {
+            items: vec![DcbQueryItem {
                 types: vec!["TypeA".to_string()],
                 tags: vec![],
             }],
@@ -1679,8 +1679,8 @@ mod tests {
     fn fallback_empty_item_matches_all() {
         let (_tmp, mut db, input) = setup_db_with_standard_events();
         // An empty item (no types, no tags) should match all events via fallback path
-        let qi = DCBQuery {
-            items: vec![DCBQueryItem {
+        let qi = DcbQuery {
+            items: vec![DcbQueryItem {
                 types: vec![],
                 tags: vec![],
             }],
@@ -1736,13 +1736,13 @@ mod tests {
 
         // Append a couple of events
         let events = vec![
-            DCBEvent {
+            DcbEvent {
                 event_type: "TypeA".to_string(),
                 data: vec![1],
                 tags: vec!["foo".to_string()],
                 uuid: None,
             },
-            DCBEvent {
+            DcbEvent {
                 event_type: "TypeB".to_string(),
                 data: vec![2],
                 tags: vec!["bar".to_string(), "foo".to_string()],
@@ -1769,8 +1769,8 @@ mod tests {
         assert_eq!(head_lim1, Some(only_one[0].position));
 
         // Tag-filtered read ("foo")
-        let query = DCBQuery {
-            items: vec![DCBQueryItem {
+        let query = DcbQuery {
+            items: vec![DcbQueryItem {
                 types: vec![],
                 tags: vec!["foo".to_string()],
             }],
@@ -1790,9 +1790,9 @@ mod tests {
         assert_eq!(out3[0].event.event_type, "TypeB");
 
         // Append with a condition that should PASS: query matches existing 'foo' but after = last
-        let cond_pass = DCBAppendCondition {
-            fail_if_events_match: DCBQuery {
-                items: vec![DCBQueryItem {
+        let cond_pass = DcbAppendCondition {
+            fail_if_events_match: DcbQuery {
+                items: vec![DcbQueryItem {
                     types: vec![],
                     tags: vec!["foo".to_string()],
                 }],
@@ -1801,7 +1801,7 @@ mod tests {
         };
         let ok_last = store
             .append(
-                vec![DCBEvent {
+                vec![DcbEvent {
                     event_type: "TypeC".to_string(),
                     data: vec![3],
                     tags: vec!["baz".to_string()],
@@ -1815,9 +1815,9 @@ mod tests {
         assert_eq!(store.head().unwrap(), Some(ok_last));
 
         // Append with a condition that should FAIL: same query but after = 0
-        let cond_fail = DCBAppendCondition {
-            fail_if_events_match: DCBQuery {
-                items: vec![DCBQueryItem {
+        let cond_fail = DcbAppendCondition {
+            fail_if_events_match: DcbQuery {
+                items: vec![DcbQueryItem {
                     types: vec![],
                     tags: vec!["foo".to_string()],
                 }],
@@ -1826,7 +1826,7 @@ mod tests {
         };
         let before_head = store.head().unwrap();
         let res = store.append(
-            vec![DCBEvent {
+            vec![DcbEvent {
                 event_type: "TypeD".to_string(),
                 data: vec![4],
                 tags: vec!["qux".to_string()],
@@ -1836,7 +1836,7 @@ mod tests {
             None,
         );
         match res {
-            Err(DCBError::IntegrityError(_)) => {}
+            Err(DcbError::IntegrityError(_)) => {}
             other => panic!("Expected IntegrityError, got {:?}", other),
         }
         // Ensure head unchanged after failed append
@@ -1848,19 +1848,19 @@ mod tests {
         let temp_dir = tempdir().unwrap();
         let store = UmaDB::new(temp_dir.path()).unwrap();
 
-        let e1 = DCBEvent {
+        let e1 = DcbEvent {
             event_type: "A".into(),
             data: b"1".to_vec(),
             tags: vec!["t1".into()],
             uuid: None,
         };
-        let e2 = DCBEvent {
+        let e2 = DcbEvent {
             event_type: "B".into(),
             data: b"2".to_vec(),
             tags: vec!["t2".into()],
             uuid: None,
         };
-        let e3 = DCBEvent {
+        let e3 = DcbEvent {
             event_type: "C".into(),
             data: b"3".to_vec(),
             tags: vec!["t3".into()],
@@ -1872,16 +1872,16 @@ mod tests {
             (vec![e1.clone()], None, None),
             (
                 vec![e2.clone()],
-                Some(DCBAppendCondition {
-                    fail_if_events_match: DCBQuery::default(),
+                Some(DcbAppendCondition {
+                    fail_if_events_match: DcbQuery::default(),
                     after: None,
                 }),
                 None,
             ),
             (
                 vec![e3.clone()],
-                Some(DCBAppendCondition {
-                    fail_if_events_match: DCBQuery::default(),
+                Some(DcbAppendCondition {
+                    fail_if_events_match: DcbQuery::default(),
                     after: Some(10),
                 }),
                 None,
@@ -1899,7 +1899,7 @@ mod tests {
         // Second item should fail integrity
         match &results[1] {
             Ok(pos) => panic!("expected integrity error, got Ok({})", pos),
-            Err(e) => assert!(matches!(e, DCBError::IntegrityError(_))),
+            Err(e) => assert!(matches!(e, DcbError::IntegrityError(_))),
         }
         // Third item should succeed with last position 2 (since second didn't append)
         match &results[2] {
@@ -1921,27 +1921,27 @@ mod tests {
         let store = UmaDB::new(temp_dir.path()).unwrap();
 
         // Item1 introduces tag "x"; Item2 condition queries tag "x" and must see it via dirty tags tree; Item3 uses after to ignore it
-        let e1 = DCBEvent {
+        let e1 = DcbEvent {
             event_type: "T".into(),
             data: b"one".to_vec(),
             tags: vec!["x".into()],
             uuid: None,
         };
-        let e2 = DCBEvent {
+        let e2 = DcbEvent {
             event_type: "T".into(),
             data: b"two".to_vec(),
             tags: vec!["y".into()],
             uuid: None,
         };
-        let e3 = DCBEvent {
+        let e3 = DcbEvent {
             event_type: "T".into(),
             data: b"three".to_vec(),
             tags: vec!["z".into()],
             uuid: None,
         };
 
-        let query_tag_x = DCBQuery {
-            items: vec![DCBQueryItem {
+        let query_tag_x = DcbQuery {
+            items: vec![DcbQueryItem {
                 types: vec![],
                 tags: vec!["x".into()],
             }],
@@ -1953,7 +1953,7 @@ mod tests {
             // 2) Attempt append e2, but fail if any events with tag x exist after None (i.e., from the start); should fail due to e1 in dirty pages
             (
                 vec![e2.clone()],
-                Some(DCBAppendCondition {
+                Some(DcbAppendCondition {
                     fail_if_events_match: query_tag_x.clone(),
                     after: None,
                 }),
@@ -1962,7 +1962,7 @@ mod tests {
             // 3) Append e3 with condition that ignores position 1 by using after=Some(1); should pass
             (
                 vec![e3.clone()],
-                Some(DCBAppendCondition {
+                Some(DcbAppendCondition {
                     fail_if_events_match: query_tag_x.clone(),
                     after: Some(1),
                 }),
@@ -1979,7 +1979,7 @@ mod tests {
         }
         match &results[1] {
             Ok(pos) => panic!("expected integrity error, got Ok({})", pos),
-            Err(e) => assert!(matches!(e, DCBError::IntegrityError(_))),
+            Err(e) => assert!(matches!(e, DcbError::IntegrityError(_))),
         }
         match &results[2] {
             Ok(pos) => assert_eq!(*pos, 2),
@@ -2007,7 +2007,7 @@ mod tests {
         let store = UmaDB::new(temp_dir.path()).unwrap();
 
         // Prepare events
-        let small = DCBEvent {
+        let small = DcbEvent {
             event_type: "S".into(),
             data: b"sm".to_vec(),
             tags: vec!["tS".into()],
@@ -2015,25 +2015,25 @@ mod tests {
         };
         // Large data to ensure it spills into event overflow pages
         let big_data_len = DEFAULT_PAGE_SIZE * 3; // 3 pages worth to be safe
-        let big = DCBEvent {
+        let big = DcbEvent {
             event_type: "B".into(),
             data: vec![0xAB; big_data_len],
             tags: vec!["tB".into()],
             uuid: None,
         };
-        let filler1 = DCBEvent {
+        let filler1 = DcbEvent {
             event_type: "X".into(),
             data: b"x".to_vec(),
             tags: vec![],
             uuid: None,
         };
-        let filler2 = DCBEvent {
+        let filler2 = DcbEvent {
             event_type: "Y".into(),
             data: b"y".to_vec(),
             tags: vec![],
             uuid: None,
         };
-        let final_ok = DCBEvent {
+        let final_ok = DcbEvent {
             event_type: "C".into(),
             data: b"c".to_vec(),
             tags: vec![],
@@ -2041,14 +2041,14 @@ mod tests {
         };
 
         // Queries by type only (no tags) to force fallback path over events tree (which reads from dirty pages)
-        let q_type_s = DCBQuery {
-            items: vec![DCBQueryItem {
+        let q_type_s = DcbQuery {
+            items: vec![DcbQueryItem {
                 types: vec!["S".into()],
                 tags: vec![],
             }],
         };
-        let q_type_b = DCBQuery {
-            items: vec![DCBQueryItem {
+        let q_type_b = DcbQuery {
+            items: vec![DcbQueryItem {
                 types: vec!["B".into()],
                 tags: vec![],
             }],
@@ -2060,7 +2060,7 @@ mod tests {
             // 2) Should fail because type S exists in dirty pages (after None)
             (
                 vec![filler1.clone()],
-                Some(DCBAppendCondition {
+                Some(DcbAppendCondition {
                     fail_if_events_match: q_type_s.clone(),
                     after: None,
                 }),
@@ -2071,7 +2071,7 @@ mod tests {
             // 4) Should fail because type B exists in dirty pages (after None)
             (
                 vec![filler2.clone()],
-                Some(DCBAppendCondition {
+                Some(DcbAppendCondition {
                     fail_if_events_match: q_type_b.clone(),
                     after: None,
                 }),
@@ -2080,7 +2080,7 @@ mod tests {
             // 5) Should succeed because after=Some(2) ignores positions <= 2 (small at 1, big at 2)
             (
                 vec![final_ok.clone()],
-                Some(DCBAppendCondition {
+                Some(DcbAppendCondition {
                     fail_if_events_match: q_type_b.clone(),
                     after: Some(2),
                 }),
@@ -2095,7 +2095,7 @@ mod tests {
             other => panic!("unexpected for item0: {:?}", other),
         }
         match &results[1] {
-            Err(DCBError::IntegrityError(_)) => {}
+            Err(DcbError::IntegrityError(_)) => {}
             other => {
                 panic!("expected IntegrityError for item1, got {:?}", other)
             }
@@ -2105,7 +2105,7 @@ mod tests {
             other => panic!("unexpected for item2: {:?}", other),
         }
         match &results[3] {
-            Err(DCBError::IntegrityError(_)) => {}
+            Err(DcbError::IntegrityError(_)) => {}
             other => {
                 panic!("expected IntegrityError for item3, got {:?}", other)
             }
@@ -2145,7 +2145,7 @@ mod tests {
         let store = UmaDB::new(temp_dir.path()).unwrap();
 
         // Small inline event: type "S" with tag "x"
-        let small = DCBEvent {
+        let small = DcbEvent {
             event_type: "S".into(),
             data: b"sm".to_vec(),
             tags: vec!["x".into()],
@@ -2153,26 +2153,26 @@ mod tests {
         };
         // Big overflow event: type "B" with tag "y" and large payload to exercise overflow pages
         let big_data_len = DEFAULT_PAGE_SIZE * 3; // ensure multiple overflow pages
-        let big = DCBEvent {
+        let big = DcbEvent {
             event_type: "B".into(),
             data: vec![0xCD; big_data_len],
             tags: vec!["y".into()],
             uuid: None,
         };
         // Fillers that will be conditioned out
-        let filler1 = DCBEvent {
+        let filler1 = DcbEvent {
             event_type: "X".into(),
             data: b"x".to_vec(),
             tags: vec![],
             uuid: None,
         };
-        let filler2 = DCBEvent {
+        let filler2 = DcbEvent {
             event_type: "Y".into(),
             data: b"y".to_vec(),
             tags: vec![],
             uuid: None,
         };
-        let final_ok = DCBEvent {
+        let final_ok = DcbEvent {
             event_type: "C".into(),
             data: b"c".to_vec(),
             tags: vec![],
@@ -2180,14 +2180,14 @@ mod tests {
         };
 
         // Conditions combining tags and types so the tags index is used and the type filter applies after lookup
-        let q_s_and_x = DCBQuery {
-            items: vec![DCBQueryItem {
+        let q_s_and_x = DcbQuery {
+            items: vec![DcbQueryItem {
                 types: vec!["S".into()],
                 tags: vec!["x".into()],
             }],
         };
-        let q_b_and_y = DCBQuery {
-            items: vec![DCBQueryItem {
+        let q_b_and_y = DcbQuery {
+            items: vec![DcbQueryItem {
                 types: vec!["B".into()],
                 tags: vec!["y".into()],
             }],
@@ -2199,7 +2199,7 @@ mod tests {
             // 2) Should fail because S@x exists in dirty pages (tags path + type filter)
             (
                 vec![filler1.clone()],
-                Some(DCBAppendCondition {
+                Some(DcbAppendCondition {
                     fail_if_events_match: q_s_and_x.clone(),
                     after: None,
                 }),
@@ -2210,7 +2210,7 @@ mod tests {
             // 4) Should fail because B@y exists in dirty pages (tags path + type filter and overflow read)
             (
                 vec![filler2.clone()],
-                Some(DCBAppendCondition {
+                Some(DcbAppendCondition {
                     fail_if_events_match: q_b_and_y.clone(),
                     after: None,
                 }),
@@ -2219,7 +2219,7 @@ mod tests {
             // 5) Should succeed because after=Some(2) ignores positions <= 2 (small at 1, big at 2)
             (
                 vec![final_ok.clone()],
-                Some(DCBAppendCondition {
+                Some(DcbAppendCondition {
                     fail_if_events_match: q_b_and_y.clone(),
                     after: Some(2),
                 }),
@@ -2234,7 +2234,7 @@ mod tests {
             other => panic!("unexpected for item0: {:?}", other),
         }
         match &results[1] {
-            Err(DCBError::IntegrityError(_)) => {}
+            Err(DcbError::IntegrityError(_)) => {}
             other => {
                 panic!("expected IntegrityError for item1, got {:?}", other)
             }
@@ -2244,7 +2244,7 @@ mod tests {
             other => panic!("unexpected for item2: {:?}", other),
         }
         match &results[3] {
-            Err(DCBError::IntegrityError(_)) => {}
+            Err(DcbError::IntegrityError(_)) => {}
             other => {
                 panic!("expected IntegrityError for item3, got {:?}", other)
             }
@@ -2285,12 +2285,12 @@ mod tests {
         let temp_dir = tempdir().unwrap();
         let store = UmaDB::new(temp_dir.path()).unwrap();
 
-        let condition1 = Some(DCBAppendCondition {
-            fail_if_events_match: DCBQuery { items: vec![] },
+        let condition1 = Some(DcbAppendCondition {
+            fail_if_events_match: DcbQuery { items: vec![] },
             after: None,
         });
 
-        let event1 = DCBEvent {
+        let event1 = DcbEvent {
             event_type: "type1".to_string(),
             data: b"data1".to_vec(),
             tags: vec!["tag1".to_string()],
@@ -2322,7 +2322,7 @@ mod tests {
         assert_eq!(event1.uuid, result[0].event.uuid);
 
         // Append another event.
-        let event2 = DCBEvent {
+        let event2 = DcbEvent {
             event_type: "type2".to_string(),
             data: b"data2".to_vec(),
             tags: vec!["tag2".to_string()],
@@ -2368,7 +2368,7 @@ mod tests {
 
         // Try with event2 and condition1 - should get an error.
         let result = store.append(vec![event2.clone()], condition1.clone(), None);
-        assert!(matches!(result, Err(DCBError::IntegrityError(_))));
+        assert!(matches!(result, Err(DcbError::IntegrityError(_))));
 
         // Try with two events in different order - should get an error.
         let result = store.append(
@@ -2376,7 +2376,7 @@ mod tests {
             condition1.clone(),
             None,
         );
-        assert!(matches!(result, Err(DCBError::IntegrityError(_))));
+        assert!(matches!(result, Err(DcbError::IntegrityError(_))));
     }
 
     #[test]
@@ -2390,7 +2390,7 @@ mod tests {
             &mvcc,
             reader.events_tree_root_id,
             reader.tags_tree_root_id,
-            DCBQuery { items: vec![] },
+            DcbQuery { items: vec![] },
             Some(Position(1)),
             false,
             None,
@@ -2405,7 +2405,7 @@ mod tests {
             &mvcc,
             reader.events_tree_root_id,
             reader.tags_tree_root_id,
-            DCBQuery { items: vec![] },
+            DcbQuery { items: vec![] },
             None,
             true,
             None,
@@ -2422,7 +2422,7 @@ mod tests {
             &mvcc,
             reader.events_tree_root_id,
             reader.tags_tree_root_id,
-            DCBQuery { items: vec![] },
+            DcbQuery { items: vec![] },
             Some(Position(last)),
             true,
             None,
@@ -2436,7 +2436,7 @@ mod tests {
             &mvcc,
             reader.events_tree_root_id,
             reader.tags_tree_root_id,
-            DCBQuery { items: vec![] },
+            DcbQuery { items: vec![] },
             Some(Position(last - 1)),
             true,
             None,
@@ -2451,7 +2451,7 @@ mod tests {
             &mvcc,
             reader.events_tree_root_id,
             reader.tags_tree_root_id,
-            DCBQuery { items: vec![] },
+            DcbQuery { items: vec![] },
             None,
             true,
             Some(3),
@@ -2466,8 +2466,8 @@ mod tests {
     fn tags_only_single_tag_backwards() {
         let (_tmp, mvcc, _input) = setup_db_with_standard_events();
         let reader = mvcc.reader().unwrap();
-        let qi = DCBQuery {
-            items: vec![DCBQueryItem {
+        let qi = DcbQuery {
+            items: vec![DcbQueryItem {
                 types: vec![],
                 tags: vec!["alpha".to_string()],
             }],
@@ -2524,8 +2524,8 @@ mod tests {
     fn tags_only_multi_tag_and_backwards() {
         let (_tmp, db, _input) = setup_db_with_standard_events();
         let reader = db.reader().unwrap();
-        let qi = DCBQuery {
-            items: vec![DCBQueryItem {
+        let qi = DcbQuery {
+            items: vec![DcbQueryItem {
                 types: vec![],
                 tags: vec!["alpha".to_string(), "gamma".to_string()],
             }],
@@ -2622,13 +2622,13 @@ mod tests {
         let (_tmp, db, _input) = setup_db_with_standard_events();
         let reader = db.reader().unwrap();
         // Two items: (alpha & gamma) OR (beta & delta)
-        let qi = DCBQuery {
+        let qi = DcbQuery {
             items: vec![
-                DCBQueryItem {
+                DcbQueryItem {
                     types: vec![],
                     tags: vec!["alpha".to_string(), "gamma".to_string()],
                 },
-                DCBQueryItem {
+                DcbQueryItem {
                     types: vec![],
                     tags: vec!["beta".to_string(), "delta".to_string()],
                 },

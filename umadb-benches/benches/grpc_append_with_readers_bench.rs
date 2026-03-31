@@ -13,7 +13,7 @@ use tokio::runtime::Builder as RtBuilder;
 use tokio::sync::oneshot;
 use umadb_client::{AsyncUmaDBClient, UmaDBClient};
 use umadb_core::db::UmaDB;
-use umadb_dcb::{DCBEvent, DCBEventStoreAsync, DCBEventStoreSync};
+use umadb_dcb::{DcbEvent, DcbEventStoreAsync, DcbEventStoreSync};
 use umadb_server::start_server;
 
 fn init_db_with_events(num_events: usize) -> (tempfile::TempDir, String) {
@@ -30,7 +30,7 @@ fn init_db_with_events(num_events: usize) -> (tempfile::TempDir, String) {
         let current = remaining.min(batch_size);
         let mut events = Vec::with_capacity(current);
         for i in 0..current {
-            let ev = DCBEvent {
+            let ev = DcbEvent {
                 event_type: "bench-init".to_string(),
                 data: format!("init-{}", i).into_bytes(),
                 tags: vec!["init".to_string()],
@@ -180,8 +180,8 @@ pub fn grpc_append_with_readers_benchmark(c: &mut Criterion) {
             let clients = clients.clone();
             b.iter(|| {
                 // Build the batch of events per iteration (per task)
-                let events: Vec<DCBEvent> = (0..events_per_iter)
-                    .map(|i| DCBEvent {
+                let events: Vec<DcbEvent> = (0..events_per_iter)
+                    .map(|i| DcbEvent {
                         event_type: "bench-append".to_string(),
                         data: format!("data-{}", i).into_bytes(),
                         tags: vec!["append".to_string()],

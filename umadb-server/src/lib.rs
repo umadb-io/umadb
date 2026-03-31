@@ -16,7 +16,7 @@ use umadb_core::db::{
 };
 use umadb_core::mvcc::Mvcc;
 use umadb_dcb::{
-    DCBAppendCondition, DCBError, DCBEvent, DCBQuery, DCBResult, DCBSequencedEvent, TrackingInfo,
+    DcbAppendCondition, DcbEvent, DcbQuery, DcbResult, DcbSequencedEvent, DcbError, TrackingInfo,
 };
 
 use tokio::runtime::Runtime;
@@ -280,7 +280,7 @@ async fn start_server_internal<P: AsRef<Path> + Send + 'static>(
     let incoming = match TcpIncoming::bind(addr) {
         Ok(incoming) => incoming,
         Err(err) => {
-            return Err(Box::new(DCBError::InitializationError(format!(
+            return Err(Box::new(DcbError::InitializationError(format!(
                 "failed to bind to address {}: {}",
                 addr, err
             ))));
@@ -292,7 +292,7 @@ async fn start_server_internal<P: AsRef<Path> + Send + 'static>(
     // Create a shutdown broadcast channel for terminating ongoing subscriptions
     let (srv_shutdown_tx, srv_shutdown_rx) = watch::channel(false);
     let dcb_server =
-        match DCBServer::new(path.as_ref().to_owned(), srv_shutdown_rx, api_key.clone()) {
+        match DcbServer::new(path.as_ref().to_owned(), srv_shutdown_rx, api_key.clone()) {
             Ok(server) => server,
             Err(err) => {
                 return Err(Box::new(err));
@@ -360,18 +360,18 @@ async fn start_server_internal<P: AsRef<Path> + Send + 'static>(
 }
 
 // gRPC server implementation
-pub struct DCBServer {
+pub struct DcbServer {
     pub(crate) request_handler: RequestHandler,
     shutdown_watch_rx: watch::Receiver<bool>,
     api_key: Option<String>,
 }
 
-impl DCBServer {
+impl DcbServer {
     pub fn new<P: AsRef<Path> + Send + 'static>(
         path: P,
         shutdown_rx: watch::Receiver<bool>,
         api_key: Option<String>,
-    ) -> DCBResult<Self> {
+    ) -> DcbResult<Self> {
         let command_handler = RequestHandler::new(path)?;
         Ok(Self {
             request_handler: command_handler,
@@ -393,7 +393,7 @@ impl DCBServer {
                 .map(|s| s == expected_val)
                 .unwrap_or(false);
             if !ok {
-                return Err(status_from_dcb_error(DCBError::AuthenticationError(
+                return Err(status_from_dcb_error(DcbError::AuthenticationError(
                     "missing or invalid API key".to_string(),
                 )));
             }
@@ -403,7 +403,7 @@ impl DCBServer {
 }
 
 #[tonic::async_trait]
-impl umadb_proto::v1::dcb_server::Dcb for DCBServer {
+impl umadb_proto::v1::dcb_server::Dcb for DcbServer {
     type ReadStream =
         Pin<Box<dyn Stream<Item = Result<umadb_proto::v1::ReadResponse, Status>> + Send + 'static>>;
     type SubscribeStream = Pin<
@@ -419,7 +419,7 @@ impl umadb_proto::v1::dcb_server::Dcb for DCBServer {
         let read_request = request.into_inner();
 
         // Convert protobuf query to DCB types
-        let mut query: Option<DCBQuery> = read_request.query.map(|q| q.into());
+        let mut query: Option<DcbQuery> = read_request.query.map(|q| q.into());
         let start = read_request.start;
         let backwards = read_request.backwards.unwrap_or(false);
         let limit = read_request.limit;
@@ -595,7 +595,7 @@ impl umadb_proto::v1::dcb_server::Dcb for DCBServer {
         let subscribe_request = request.into_inner();
 
         // Convert protobuf query to DCB types
-        let mut query: Option<DCBQuery> = subscribe_request.query.map(|q| q.into());
+        let mut query: Option<DcbQuery> = subscribe_request.query.map(|q| q.into());
         let after = subscribe_request.after;
         // Cap requested batch size.
         let batch_size = subscribe_request
@@ -691,7 +691,7 @@ impl umadb_proto::v1::dcb_server::Dcb for DCBServer {
         let req = request.into_inner();
 
         // Convert protobuf types to API types
-        let events: Vec<DCBEvent> = match req.events.into_iter().map(|e| e.try_into()).collect() {
+        let events: Vec<DcbEvent> = match req.events.into_iter().map(|e| e.try_into()).collect() {
             Ok(events) => events,
             Err(e) => {
                 return Err(status_from_dcb_error(e));
@@ -752,10 +752,10 @@ impl umadb_proto::v1::dcb_server::Dcb for DCBServer {
 // Message types for communication between the gRPC server and the request handler's writer thread
 enum WriterRequest {
     Append {
-        events: Vec<DCBEvent>,
-        condition: Option<DCBAppendCondition>,
+        events: Vec<DcbEvent>,
+        condition: Option<DcbAppendCondition>,
         tracking_info: Option<TrackingInfo>,
-        response_tx: oneshot::Sender<DCBResult<u64>>,
+        response_tx: oneshot::Sender<DcbResult<u64>>,
     },
     Shutdown,
 }
@@ -768,7 +768,7 @@ struct RequestHandler {
 }
 
 impl RequestHandler {
-    fn new<P: AsRef<Path> + Send + 'static>(path: P) -> DCBResult<Self> {
+    fn new<P: AsRef<Path> + Send + 'static>(path: P) -> DcbResult<Self> {
         // Create a channel for sending requests to the writer thread
         let (request_tx, mut request_rx) = mpsc::channel::<WriterRequest>(1024);
 
@@ -825,12 +825,12 @@ impl RequestHandler {
                                 }
                             };
 
-                            let mut responders: Vec<oneshot::Sender<DCBResult<u64>>> = Vec::new();
-                            let mut results: Vec<DCBResult<u64>> = Vec::new();
+                            let mut responders: Vec<oneshot::Sender<DcbResult<u64>>> = Vec::new();
+                            let mut results: Vec<DcbResult<u64>> = Vec::new();
 
                             // Track abort state for non-integrity error within the batch
                             let mut abort_idx: Option<usize> = None;
-                            let mut abort_err: Option<DCBError> = None;
+                            let mut abort_err: Option<DcbError> = None;
 
                             responders.push(response_tx);
                             let result = UmaDB::process_append_request(
@@ -977,15 +977,15 @@ impl RequestHandler {
 
     async fn read(
         &self,
-        query: Option<DCBQuery>,
+        query: Option<DcbQuery>,
         start: Option<u64>,
         backwards: bool,
         limit: Option<u32>,
-    ) -> DCBResult<(Vec<DCBSequencedEvent>, Option<u64>)> {
+    ) -> DcbResult<(Vec<DcbSequencedEvent>, Option<u64>)> {
         let reader = self.mvcc.reader()?;
         let last_committed_position = reader.next_position.0.saturating_sub(1);
 
-        let q = query.unwrap_or(DCBQuery { items: vec![] });
+        let q = query.unwrap_or(DcbQuery { items: vec![] });
         let start_position = start.map(Position);
 
         let events = read_conditional(
@@ -999,7 +999,7 @@ impl RequestHandler {
             limit,
             false,
         )
-        .map_err(|e| DCBError::Corruption(format!("{e}")))?;
+        .map_err(|e| DcbError::Corruption(format!("{e}")))?;
 
         let head = if limit.is_none() {
             if last_committed_position == 0 {
@@ -1014,26 +1014,26 @@ impl RequestHandler {
         Ok((events, head))
     }
 
-    async fn head(&self) -> DCBResult<Option<u64>> {
+    async fn head(&self) -> DcbResult<Option<u64>> {
         let (_, header) = self
             .mvcc
             .get_latest_header()
-            .map_err(|e| DCBError::Corruption(format!("{e}")))?;
+            .map_err(|e| DcbError::Corruption(format!("{e}")))?;
         let last = header.next_position.0.saturating_sub(1);
         if last == 0 { Ok(None) } else { Ok(Some(last)) }
     }
 
-    async fn get_tracking_info(&self, source: String) -> DCBResult<Option<u64>> {
+    async fn get_tracking_info(&self, source: String) -> DcbResult<Option<u64>> {
         let db = UmaDB::from_arc(self.mvcc.clone());
         db.get_tracking_info(&source)
     }
 
     pub async fn append(
         &self,
-        events: Vec<DCBEvent>,
-        condition: Option<DCBAppendCondition>,
+        events: Vec<DcbEvent>,
+        condition: Option<DcbAppendCondition>,
         tracking_info: Option<TrackingInfo>,
-    ) -> DCBResult<u64> {
+    ) -> DcbResult<u64> {
         // Concurrent pre-check of the given condition using a reader in a blocking thread.
         let pre_append_decision = if let Some(mut given_condition) = condition {
             let reader = self.mvcc.reader()?;
@@ -1079,7 +1079,7 @@ impl RequestHandler {
                             given_condition.clone(),
                             matched,
                         );
-                        return Err(DCBError::IntegrityError(msg));
+                        return Err(DcbError::IntegrityError(msg));
                     }
                     Err(err) => {
                         // Propagate underlying read error
@@ -1120,13 +1120,13 @@ impl RequestHandler {
                     })
                     .await
                     .map_err(|_| {
-                        DCBError::Io(std::io::Error::other(
+                        DcbError::Io(std::io::Error::other(
                             "failed to send append request to EventStore thread",
                         ))
                     })?;
 
                 response_rx.await.map_err(|_| {
-                    DCBError::Io(std::io::Error::other(
+                    DcbError::Io(std::io::Error::other(
                         "failed to receive append response from EventStore thread",
                     ))
                 })?
@@ -1158,7 +1158,7 @@ impl Clone for RequestHandler {
 #[derive(Debug)]
 enum PreAppendDecision {
     /// Proceed with this (possibly adjusted) condition
-    UseCondition(Option<DCBAppendCondition>),
+    UseCondition(Option<DcbAppendCondition>),
     /// Skip append operation because the request was idempotent; return last recorded position
     AlreadyAppended(u64),
 }
