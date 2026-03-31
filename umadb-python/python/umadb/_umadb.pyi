@@ -7,7 +7,7 @@ import typing
 @typing.final
 class AppendCondition:
     r"""
-    Python wrapper for DCBAppendCondition
+    Python wrapper for `DcbAppendCondition`
     """
     def __new__(cls, fail_if_events_match: Query, after: typing.Optional[builtins.int] = None) -> AppendCondition: ...
     def __repr__(self) -> builtins.str: ...
@@ -94,7 +94,7 @@ class Client:
 @typing.final
 class Event:
     r"""
-    Python wrapper for DCBEvent
+    Python wrapper for `DcbEvent`
     """
     @property
     def event_type(self) -> builtins.str: ...
@@ -110,7 +110,7 @@ class Event:
 @typing.final
 class Query:
     r"""
-    Python wrapper for DCBQuery
+    Python wrapper for `DcbQuery`
     """
     def __new__(cls, items: typing.Optional[typing.Sequence[QueryItem]] = None) -> Query: ...
     def __repr__(self) -> builtins.str: ...
@@ -118,7 +118,7 @@ class Query:
 @typing.final
 class QueryItem:
     r"""
-    Python wrapper for DCBQueryItem
+    Python wrapper for `DcbQueryItem`
     """
     def __new__(cls, types: typing.Optional[typing.Sequence[builtins.str]] = None, tags: typing.Optional[typing.Sequence[builtins.str]] = None) -> QueryItem: ...
     def __repr__(self) -> builtins.str: ...
@@ -146,7 +146,7 @@ class ReadResponse:
 @typing.final
 class SequencedEvent:
     r"""
-    Python wrapper for DCBSequencedEvent
+    Python wrapper for `DcbSequencedEvent`
     """
     @property
     def event(self) -> Event: ...

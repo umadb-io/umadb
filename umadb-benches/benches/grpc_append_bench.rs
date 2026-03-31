@@ -38,7 +38,7 @@ fn init_db_with_events(num_events: usize) -> (tempfile::TempDir, String) {
         let current = remaining.min(batch_size);
         let mut events = Vec::with_capacity(current);
         for i in 0..current {
-            let ev = DCBEvent {
+            let ev = DcbEvent {
                 event_type: "bench-init".to_string(),
                 data: format!("init-{}", i).into_bytes(),
                 tags: vec!["init".to_string()],

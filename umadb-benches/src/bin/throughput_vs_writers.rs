@@ -10,7 +10,7 @@ use tempfile::tempdir;
 use umadb_benches::server_helper::start_bench_server;
 use umadb_client::{AsyncUmaDBClient, UmaDBClient};
 use umadb_core::db::UmaDB;
-use umadb_dcb::{DCBEvent, DCBEventStoreAsync, DCBEventStoreSync};
+use umadb_dcb::{DcbEvent, DcbEventStoreAsync, DcbEventStoreSync};
 
 #[derive(Parser, Debug)]
 #[command(version, about = "Measure UmaDB append throughput vs number of concurrent writers")]
@@ -53,7 +53,7 @@ fn init_db_with_events(num_events: usize) -> (tempfile::TempDir, String) {
         let current = remaining.min(batch_size);
         let mut events = Vec::with_capacity(current);
         for i in 0..current {
-            let ev = DCBEvent {
+            let ev = DcbEvent {
                 event_type: "bench-init".to_string(),
                 data: format!("init-{}", i).into_bytes(),
                 tags: vec!["init".to_string()],
@@ -100,7 +100,7 @@ async fn run_throughput_test(
             tokio::spawn(async move {
                 let mut count = 0u64;
                 while Instant::now() < end_time {
-                    let event = DCBEvent {
+                    let event = DcbEvent {
                         event_type: "bench-append".to_string(),
                         data: format!("data-{}", count).into_bytes(),
                         tags: vec!["append".to_string()],
