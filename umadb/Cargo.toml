@@ -12,7 +12,7 @@ categories = ["database", "command-line-utilities"]
 
 [dependencies]
 umadb-server = { path = "../umadb-server", version = "0.4.0" }
-clap = { version = "4.5.6", features = ["derive"] }
+clap = { version = "4.6", features = ["derive"] }
 tokio = { workspace = true }
 
 [[bin]]

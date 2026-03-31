@@ -15,10 +15,10 @@ umadb-server = { path = "../umadb-server", version = "0.4.0"}
 futures = { workspace = true }
 tempfile = { workspace = true }
 tokio = { workspace = true }
-criterion = { version = "0.7.0", features = ["html_reports", "csv_output"] }
+criterion = { version = "0.8.2", features = ["html_reports", "csv_output"] }
 pprof = { version = "0.15.0", features = ["criterion", "flamegraph"] }
-uuid = { version = "1.18.1", features = ["v4"] }
-clap = { version = "4.5.51", features = ["derive"] }
+uuid = { version = "1.23.0", features = ["v4"] }
+clap = { version = "4.6.0", features = ["derive"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 

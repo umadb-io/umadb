@@ -16,7 +16,7 @@ futures = { workspace = true }
 tokio = { workspace = true }
 tonic = { workspace = true }
 tonic-health = { workspace = true }
-prost = "0.14.1"
+prost = "0.14"
 hyper = "1"
 hyper-util = { version = "0.1", features = ["client", "client-legacy", "http2", "tokio"] }
 http-body-util = "0.1"
@@ -24,11 +24,11 @@ http-body-util = "0.1"
 #umadb-benches = { path = "../benches" }
 
 # Add test dependencies as needed
-tempfile = "3.23.0"
+tempfile = "3.27.0"
 zstd = "0.13"
 #criterion = { version = "0.7.0", features = ["html_reports", "csv_output"] }
 #pprof = { version = "0.15.0", features = ["criterion", "flamegraph"] }
-rcgen = "0.12"
+rcgen = "0.14"
 uuid = { workspace = true }
 #futures-util = "0.3.31"
 

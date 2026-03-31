@@ -18,7 +18,7 @@ itertools = "0.14"
 uuid = { workspace = true }
 libc = { workspace = true }
 memmap2 = "0.9"
-rand = "0.9"
+rand = "0.10"
 byteorder = "1"
 bitflags = "2"
 nix = { version = "0.30", features = ["fs"] }
