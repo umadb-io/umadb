@@ -42,8 +42,7 @@ UVX ?= uvx@$(UV_VERSION)
 .PHONY: test-cross-umadb-aarch64-apple-darwin
 .PHONY: install-uv
 .PHONY: install-python-tools
-.PHONY: install-python-packages
-.PHONY: update-python-packages
+.PHONY: upgrade-python-tools
 .PHONY: build-umadb-python
 .PHONY: maturin-python-stubs
 .PHONY: maturin-python-develop
@@ -369,6 +368,9 @@ install-uv:
 
 install-python-tools:
 	$(UV) sync
+
+upgrade-python-tools:
+	$(UV) lock --upgrade
 
 build-umadb-python: maturin-python-stubs maturin-python-build
 
