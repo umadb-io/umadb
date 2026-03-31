@@ -44,7 +44,7 @@ UVX ?= uvx@$(UV_VERSION)
 .PHONY: install-python-tools
 .PHONY: upgrade-python-tools
 .PHONY: build-umadb-python
-.PHONY: maturin-python-stubs
+.PHONY: python-stubs
 .PHONY: maturin-python-develop
 .PHONY: maturin-python-build
 .PHONY: maturin-python-build-release
@@ -372,11 +372,10 @@ install-python-tools:
 upgrade-python-tools:
 	$(UV) lock --upgrade
 
-build-umadb-python: maturin-python-stubs maturin-python-build
+build-umadb-python: python-stubs maturin-python-develop
 
-maturin-python-stubs:
-	$(MAKE) maturin-python-develop
-	$(UV) run python ./umadb-python/generate_stubs.py
+python-stubs:
+	cargo run --bin stub_gen --no-default-features
 	$(UV) run mypy --strict ./umadb-python --exclude generate_stubs.py
 
 maturin-python-develop:

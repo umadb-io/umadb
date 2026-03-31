@@ -33,6 +33,4 @@ Homepage = "https://umadb.io"
 Repository = "https://github.com/umadb-io/umadb"
 
 [tool.maturin]
-python-source = "python"
-module-name = "umadb._umadb"
 bindings = "pyo3"

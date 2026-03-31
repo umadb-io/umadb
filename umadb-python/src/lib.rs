@@ -4,47 +4,43 @@ use pyo3::exceptions::{
 use pyo3::prelude::*;
 use pyo3::types::PyBytes;
 use pyo3::wrap_pyfunction;
-use pyo3_stub_gen::define_stub_info_gatherer;
-use pyo3_stub_gen::derive::*;
+use pyo3_stub_gen::{define_stub_info_gatherer, create_exception, derive::*};
 use std::sync::{Arc, Mutex};
-use umadb_client::{SyncUmaDBClient, UmaDBClient, trigger_cancel};
-use umadb_dcb::{
-    DcbAppendCondition, DcbEvent, DcbEventStoreSync, DcbQuery, DcbQueryItem, DcbSequencedEvent,
-    DcbError, TrackingInfo,
-};
+use umadb_client;
+use umadb_dcb;
+use umadb_dcb::DcbEventStoreSync;
 use uuid::Uuid;
 
-use pyo3::create_exception;
 
 create_exception!(umadb, IntegrityError, PyValueError);
 create_exception!(umadb, TransportError, PyRuntimeError);
 create_exception!(umadb, CorruptionError, PyRuntimeError);
 create_exception!(umadb, AuthenticationError, PyPermissionError);
 
-/// Convert `DcbError` to Python exception
-fn dcb_error_to_py_err(err: DcbError) -> PyErr {
+/// Convert `umadb_dcb::DcbError` to Python exception
+fn dcb_error_to_py_err(err: umadb_dcb::DcbError) -> PyErr {
     match err {
-        DcbError::InvalidArgument(msg) => PyValueError::new_err(msg),
-        DcbError::IntegrityError(msg) => IntegrityError::new_err(msg),
-        DcbError::TransportError(msg) => TransportError::new_err(msg),
-        DcbError::Corruption(msg) => CorruptionError::new_err(msg),
-        DcbError::CancelledByUser() => PyKeyboardInterrupt::new_err(()),
-        DcbError::AuthenticationError(msg) => AuthenticationError::new_err(msg),
+        umadb_dcb::DcbError::InvalidArgument(msg) => PyValueError::new_err(msg),
+        umadb_dcb::DcbError::IntegrityError(msg) => IntegrityError::new_err(msg),
+        umadb_dcb::DcbError::TransportError(msg) => TransportError::new_err(msg),
+        umadb_dcb::DcbError::Corruption(msg) => CorruptionError::new_err(msg),
+        umadb_dcb::DcbError::CancelledByUser() => PyKeyboardInterrupt::new_err(()),
+        umadb_dcb::DcbError::AuthenticationError(msg) => AuthenticationError::new_err(msg),
         other => PyException::new_err(format!("{}", other)),
     }
 }
 
 /// Python wrapper for `DcbEvent`
 #[gen_stub_pyclass]
-#[pyclass(name = "Event")]
 #[derive(Clone)]
-pub struct PyEvent {
-    inner: DcbEvent,
+#[pyclass(from_py_object)]
+pub struct Event {
+    inner: umadb_dcb::DcbEvent,
 }
 
 #[gen_stub_pymethods]
 #[pymethods]
-impl PyEvent {
+impl Event {
     #[new]
     #[pyo3(signature = (event_type, data, tags=None, uuid=None))]
     fn new(
@@ -62,8 +58,8 @@ impl PyEvent {
             None
         };
 
-        Ok(PyEvent {
-            inner: DcbEvent {
+        Ok(Event {
+            inner: umadb_dcb::DcbEvent {
                 event_type,
                 data,
                 tags: tags.unwrap_or_default(),
@@ -103,27 +99,50 @@ impl PyEvent {
     }
 }
 
-/// Python wrapper for `DcbSequencedEvent`
+/// Python wrapper for `umadb_dcb::DcbSequencedEvent`
 #[gen_stub_pyclass]
-#[pyclass(name = "SequencedEvent")]
-pub struct PySequencedEvent {
-    inner: DcbSequencedEvent,
-}
-
-#[gen_stub_pyclass]
-#[pyclass(name = "TrackingInfo")]
-#[derive(Clone)]
-pub struct PyTrackingInfo {
-    inner: TrackingInfo,
+#[pyclass]
+pub struct SequencedEvent {
+    inner: umadb_dcb::DcbSequencedEvent,
 }
 
 #[gen_stub_pymethods]
 #[pymethods]
-impl PyTrackingInfo {
+impl SequencedEvent {
+    #[getter]
+    fn event(&self) -> Event {
+        Event {
+            inner: self.inner.event.clone(),
+        }
+    }
+
+    #[getter]
+    fn position(&self) -> u64 {
+        self.inner.position
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "SequencedEvent(position={}, event_type='{}')",
+            self.inner.position, self.inner.event.event_type
+        )
+    }
+}
+
+#[gen_stub_pyclass]
+#[derive(Clone)]
+#[pyclass(from_py_object)]
+pub struct TrackingInfo {
+    inner: umadb_dcb::TrackingInfo,
+}
+
+#[gen_stub_pymethods]
+#[pymethods]
+impl TrackingInfo {
     #[new]
     fn new(source: String, position: u64) -> Self {
-        PyTrackingInfo {
-            inner: TrackingInfo { source, position },
+        TrackingInfo {
+            inner: umadb_dcb::TrackingInfo { source, position },
         }
     }
 
@@ -145,45 +164,23 @@ impl PyTrackingInfo {
     }
 }
 
-#[gen_stub_pymethods]
-#[pymethods]
-impl PySequencedEvent {
-    #[getter]
-    fn event(&self) -> PyEvent {
-        PyEvent {
-            inner: self.inner.event.clone(),
-        }
-    }
 
-    #[getter]
-    fn position(&self) -> u64 {
-        self.inner.position
-    }
-
-    fn __repr__(&self) -> String {
-        format!(
-            "SequencedEvent(position={}, event_type='{}')",
-            self.inner.position, self.inner.event.event_type
-        )
-    }
-}
-
-/// Python wrapper for `DcbQueryItem`
+/// Python wrapper for `umadb_dcb::DcbQueryItem`
 #[gen_stub_pyclass]
-#[pyclass(name = "QueryItem")]
 #[derive(Clone)]
-pub struct PyQueryItem {
-    inner: DcbQueryItem,
+#[pyclass(from_py_object)]
+pub struct QueryItem {
+    inner: umadb_dcb::DcbQueryItem,
 }
 
 #[gen_stub_pymethods]
 #[pymethods]
-impl PyQueryItem {
+impl QueryItem {
     #[new]
     #[pyo3(signature = (types=None, tags=None))]
     fn new(types: Option<Vec<String>>, tags: Option<Vec<String>>) -> Self {
-        PyQueryItem {
-            inner: DcbQueryItem {
+        QueryItem {
+            inner: umadb_dcb::DcbQueryItem {
                 types: types.unwrap_or_default(),
                 tags: tags.unwrap_or_default(),
             },
@@ -198,28 +195,28 @@ impl PyQueryItem {
     }
 }
 
-/// Python wrapper for `DcbQuery`
+/// Python wrapper for `umadb_dcb::DcbQuery`
 #[gen_stub_pyclass]
-#[pyclass(name = "Query")]
 #[derive(Clone)]
-pub struct PyQuery {
-    inner: DcbQuery,
+#[pyclass(from_py_object)]
+pub struct Query {
+    inner: umadb_dcb::DcbQuery,
 }
 
 #[gen_stub_pymethods]
 #[pymethods]
-impl PyQuery {
+impl Query {
     #[new]
     #[pyo3(signature = (items=None))]
-    fn new(items: Option<Vec<PyQueryItem>>) -> Self {
+    fn new(items: Option<Vec<QueryItem>>) -> Self {
         let query_items = items
             .unwrap_or_default()
             .into_iter()
             .map(|item| item.inner)
             .collect();
 
-        PyQuery {
-            inner: DcbQuery { items: query_items },
+        Query {
+            inner: umadb_dcb::DcbQuery { items: query_items },
         }
     }
 
@@ -228,22 +225,22 @@ impl PyQuery {
     }
 }
 
-/// Python wrapper for `DcbAppendCondition`
+/// Python wrapper for `umadb_dcb::DcbAppendCondition`
 #[gen_stub_pyclass]
-#[pyclass(name = "AppendCondition")]
 #[derive(Clone)]
-pub struct PyAppendCondition {
-    inner: DcbAppendCondition,
+#[pyclass(from_py_object)]
+pub struct AppendCondition {
+    inner: umadb_dcb::DcbAppendCondition,
 }
 
 #[gen_stub_pymethods]
 #[pymethods]
-impl PyAppendCondition {
+impl AppendCondition {
     #[new]
     #[pyo3(signature = (fail_if_events_match, after=None))]
-    fn new(fail_if_events_match: PyQuery, after: Option<u64>) -> Self {
-        PyAppendCondition {
-            inner: DcbAppendCondition {
+    fn new(fail_if_events_match: Query, after: Option<u64>) -> Self {
+        AppendCondition {
+            inner: umadb_dcb::DcbAppendCondition {
                 fail_if_events_match: fail_if_events_match.inner,
                 after,
             },
@@ -257,19 +254,20 @@ impl PyAppendCondition {
 
 /// Python iterator over sequenced events
 #[gen_stub_pyclass]
-#[pyclass(name = "ReadResponse")]
-pub struct PyReadResponse {
+#[pyclass]
+pub struct ReadResponse {
     inner: Arc<Mutex<Box<dyn umadb_dcb::DcbReadResponseSync + Send + 'static>>>,
 }
 
 #[gen_stub_pymethods()]
 #[pymethods]
-impl PyReadResponse {
+impl ReadResponse {
     fn __iter__(slf: PyRef<Self>) -> PyRef<Self> {
         slf
     }
 
-    fn __next__(slf: PyRefMut<Self>, py: Python<'_>) -> Option<PyResult<PySequencedEvent>> {
+    #[gen_stub(override_return_type(type_repr="SequencedEvent"))]
+    fn __next__(slf: PyRefMut<Self>, py: Python<'_>) -> Option<PyResult<SequencedEvent>> {
         // Clone the Arc and drop the PyRefMut before releasing the GIL so the closure doesn't capture non-Send data
         let inner = slf.inner.clone();
         drop(slf);
@@ -278,7 +276,7 @@ impl PyReadResponse {
             inner.lock().unwrap().next()
         });
         match result {
-            Some(Ok(event)) => Some(Ok(PySequencedEvent { inner: event })),
+            Some(Ok(event)) => Some(Ok(SequencedEvent { inner: event })),
             Some(Err(err)) => Some(Err(dcb_error_to_py_err(err))),
             None => None,
         }
@@ -296,15 +294,15 @@ impl PyReadResponse {
     fn collect_with_head(
         slf: PyRefMut<Self>,
         py: Python<'_>,
-    ) -> PyResult<(Vec<PySequencedEvent>, Option<u64>)> {
+    ) -> PyResult<(Vec<SequencedEvent>, Option<u64>)> {
         let inner = slf.inner.clone();
         drop(slf);
         let result = py.detach(move || inner.lock().unwrap().collect_with_head());
         match result {
             Ok((events, head)) => {
-                let py_events: Vec<PySequencedEvent> = events
+                let py_events: Vec<SequencedEvent> = events
                     .into_iter()
-                    .map(|e| PySequencedEvent { inner: e })
+                    .map(|e| SequencedEvent { inner: e })
                     .collect();
                 Ok((py_events, head))
             }
@@ -313,14 +311,14 @@ impl PyReadResponse {
     }
 
     /// Returns the next batch of events for this read. If there are no more events, returns an empty list.
-    fn next_batch(slf: PyRefMut<Self>, py: Python<'_>) -> PyResult<Vec<PySequencedEvent>> {
+    fn next_batch(slf: PyRefMut<Self>, py: Python<'_>) -> PyResult<Vec<SequencedEvent>> {
         let inner = slf.inner.clone();
         drop(slf);
         let result = py.detach(move || inner.lock().unwrap().next_batch());
         match result {
             Ok(batch) => Ok(batch
                 .into_iter()
-                .map(|e| PySequencedEvent { inner: e })
+                .map(|e| SequencedEvent { inner: e })
                 .collect()),
             Err(err) => Err(dcb_error_to_py_err(err)),
         }
@@ -329,19 +327,20 @@ impl PyReadResponse {
 
 /// Python iterator over sequenced events
 #[gen_stub_pyclass]
-#[pyclass(name = "Subscription")]
-pub struct PySubscription {
+#[pyclass]
+pub struct Subscription {
     inner: Arc<Mutex<Box<dyn umadb_dcb::DcbSubscriptionSync + Send + 'static>>>,
 }
 
 #[gen_stub_pymethods()]
 #[pymethods]
-impl PySubscription {
+impl Subscription {
     fn __iter__(slf: PyRef<Self>) -> PyRef<Self> {
         slf
     }
 
-    fn __next__(slf: PyRefMut<Self>, py: Python<'_>) -> Option<PyResult<PySequencedEvent>> {
+    #[gen_stub(override_return_type(type_repr="SequencedEvent"))]
+    fn __next__(slf: PyRefMut<Self>, py: Python<'_>) -> Option<PyResult<SequencedEvent>> {
         // Clone the Arc and drop the PyRefMut before releasing the GIL so the closure doesn't capture non-Send data
         let inner = slf.inner.clone();
         drop(slf);
@@ -350,21 +349,21 @@ impl PySubscription {
             inner.lock().unwrap().next()
         });
         match result {
-            Some(Ok(event)) => Some(Ok(PySequencedEvent { inner: event })),
+            Some(Ok(event)) => Some(Ok(SequencedEvent { inner: event })),
             Some(Err(err)) => Some(Err(dcb_error_to_py_err(err))),
             None => None,
         }
     }
 
     /// Returns the next batch of events for this read. If there are no more events, returns an empty list.
-    fn next_batch(slf: PyRefMut<Self>, py: Python<'_>) -> PyResult<Vec<PySequencedEvent>> {
+    fn next_batch(slf: PyRefMut<Self>, py: Python<'_>) -> PyResult<Vec<SequencedEvent>> {
         let inner = slf.inner.clone();
         drop(slf);
         let result = py.detach(move || inner.lock().unwrap().next_batch());
         match result {
             Ok(batch) => Ok(batch
                 .into_iter()
-                .map(|e| PySequencedEvent { inner: e })
+                .map(|e| SequencedEvent { inner: e })
                 .collect()),
             Err(err) => Err(dcb_error_to_py_err(err)),
         }
@@ -373,14 +372,14 @@ impl PySubscription {
 
 /// Python wrapper for the synchronous UmaDB client
 #[gen_stub_pyclass]
-#[pyclass(name = "Client")]
-pub struct PyUmaDBClient {
-    inner: Arc<SyncUmaDBClient>,
+#[pyclass]
+pub struct Client {
+    inner: Arc<umadb_client::SyncUmaDBClient>,
 }
 
 #[gen_stub_pymethods]
 #[pymethods]
-impl PyUmaDBClient {
+impl Client {
     /// Create a new UmaDB client
     ///
     /// Args:
@@ -401,7 +400,7 @@ impl PyUmaDBClient {
         batch_size: Option<u32>,
         api_key: Option<String>,
     ) -> PyResult<Self> {
-        let client = UmaDBClient::new(url);
+        let client = umadb_client::UmaDBClient::new(url);
         let client = if let Some(ca) = ca_path {
             client.ca_path(ca)
         } else {
@@ -422,7 +421,7 @@ impl PyUmaDBClient {
             .detach(move || client.connect())
             .map_err(dcb_error_to_py_err)?;
 
-        Ok(PyUmaDBClient {
+        Ok(Client {
             inner: Arc::new(sync_client),
         })
     }
@@ -442,19 +441,19 @@ impl PyUmaDBClient {
     fn read(
         &self,
         py: Python<'_>,
-        query: Option<PyQuery>,
+        query: Option<Query>,
         start: Option<u64>,
         backwards: bool,
         limit: Option<u32>,
         subscribe: bool,
-    ) -> PyResult<PyReadResponse> {
+    ) -> PyResult<ReadResponse> {
         let query_inner = query.map(|q| q.inner);
         let inner = self.inner.clone();
         let response_iter = py
             .detach(move || inner.read(query_inner, start, backwards, limit, subscribe))
             .map_err(dcb_error_to_py_err)?;
 
-        Ok(PyReadResponse {
+        Ok(ReadResponse {
             inner: Arc::new(Mutex::new(response_iter)),
         })
     }
@@ -475,16 +474,16 @@ impl PyUmaDBClient {
     fn subscribe(
         &self,
         py: Python<'_>,
-        query: Option<PyQuery>,
+        query: Option<Query>,
         after: Option<u64>,
-    ) -> PyResult<PySubscription> {
+    ) -> PyResult<Subscription> {
         let query_inner = query.map(|q| q.inner);
         let inner = self.inner.clone();
         let response_iter = py
             .detach(move || inner.subscribe(query_inner, after))
             .map_err(dcb_error_to_py_err)?;
 
-        Ok(PySubscription {
+        Ok(Subscription {
             inner: Arc::new(Mutex::new(response_iter)),
         })
     }
@@ -511,11 +510,11 @@ impl PyUmaDBClient {
     fn append(
         &self,
         py: Python<'_>,
-        events: Vec<PyEvent>,
-        condition: Option<PyAppendCondition>,
-        tracking_info: Option<PyTrackingInfo>,
+        events: Vec<Event>,
+        condition: Option<AppendCondition>,
+        tracking_info: Option<TrackingInfo>,
     ) -> PyResult<u64> {
-        let dcb_events: Vec<DcbEvent> = events.into_iter().map(|e| e.inner).collect();
+        let dcb_events: Vec<umadb_dcb::DcbEvent> = events.into_iter().map(|e| e.inner).collect();
         let dcb_condition = condition.map(|c| c.inner);
         let dcb_tracking_info = tracking_info.map(|t| t.inner);
         let inner = self.inner.clone();
@@ -547,7 +546,7 @@ impl PyUmaDBClient {
 /// Useful if you want to handle SIGINT in Python code and manually
 /// notify the Rust client to stop reading.
 fn trigger_cancel_from_python() {
-    trigger_cancel();
+    umadb_client::trigger_cancel();
 }
 
 #[pyfunction]
@@ -560,30 +559,30 @@ fn trigger_cancel_from_python2() {
 }
 
 // Define a function to gather stub information.
-define_stub_info_gatherer!(generate_umadb_pyi_stubs);
+define_stub_info_gatherer!(stub_info);
 
-#[pyfunction]
-#[pyo3(text_signature = "()")]
-// Generate stubs
-fn _generate_umadb_pyi_stubs() {
-    let stub = generate_umadb_pyi_stubs().expect("couldn't derive stubs");
-    stub.generate().expect("couldn't generate stubs");
-}
+// #[pyfunction]
+// #[pyo3(text_signature = "()")]
+// // Generate stubs
+// fn _generate_umadb_pyi_stubs() {
+//     let stub = generate_umadb_pyi_stubs().expect("couldn't derive stubs");
+//     stub.generate().expect("couldn't generate stubs");
+// }
 
 /// UmaDB Python client module
 #[pymodule]
-fn _umadb(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
-    m.add_class::<PyUmaDBClient>()?;
-    m.add_class::<PyEvent>()?;
-    m.add_class::<PySequencedEvent>()?;
-    m.add_class::<PyReadResponse>()?;
-    m.add_class::<PyQuery>()?;
-    m.add_class::<PyQueryItem>()?;
-    m.add_class::<PyAppendCondition>()?;
-    m.add_class::<PyTrackingInfo>()?;
+fn umadb(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
+    m.add_class::<Client>()?;
+    m.add_class::<Event>()?;
+    m.add_class::<SequencedEvent>()?;
+    m.add_class::<ReadResponse>()?;
+    m.add_class::<Query>()?;
+    m.add_class::<QueryItem>()?;
+    m.add_class::<AppendCondition>()?;
+    m.add_class::<TrackingInfo>()?;
     m.add_function(wrap_pyfunction!(trigger_cancel_from_python, m)?)?;
     m.add_function(wrap_pyfunction!(trigger_cancel_from_python2, m)?)?;
-    m.add_function(wrap_pyfunction!(_generate_umadb_pyi_stubs, m)?)?;
+    // m.add_function(wrap_pyfunction!(_generate_umadb_pyi_stubs, m)?)?;
     m.add("IntegrityError", py.get_type::<IntegrityError>())?;
     m.add("TransportError", py.get_type::<TransportError>())?;
     m.add("CorruptionError", py.get_type::<CorruptionError>())?;
