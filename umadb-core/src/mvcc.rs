@@ -20,7 +20,7 @@ use std::sync::{Arc, Mutex};
 use std::thread::sleep;
 use std::time::Duration;
 use umadb_dcb::DdbError::InternalError;
-use umadb_dcb::{DdbError, DcbQuery, DcbResult};
+use umadb_dcb::{DcbQuery, DcbResult, DdbError};
 
 const GET_LATEST_HEADER_RETRIES: usize = 5;
 const GET_LATEST_HEADER_DELAY: Duration = Duration::from_millis(10);
@@ -637,7 +637,7 @@ impl Writer {
     ///
     /// # Returns
     ///
-    /// A `DCBResult` containing a reference to the page if found, or an error if the page could not be found.
+    /// A `DcbResult` containing a reference to the page if found, or an error if the page could not be found.
     pub fn get_page_ref(&mut self, mvcc: &Mvcc, page_id: PageID) -> DcbResult<&Page> {
         // Check the dirty pages first
         if self.dirty.contains_key(&page_id) {

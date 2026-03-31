@@ -14,7 +14,7 @@ use uuid::Uuid;
 pub trait DcbEventStoreSync {
     /// Reads events from the store based on the provided query and constraints
     ///
-    /// Returns a DCBReadResponseSync that provides an iterator over all events,
+    /// Returns a `DcbReadResponseSync` that provides an iterator over all events,
     /// unless 'from' is given then only those with position greater than 'after',
     /// and unless any query items are given, then only those that match at least one
     /// query item. An event matches a query item if its type is in the item types or
@@ -28,7 +28,7 @@ pub trait DcbEventStoreSync {
         subscribe: bool, // Deprecated - remove in v1.0.
     ) -> DcbResult<Box<dyn DcbReadResponseSync + Send + 'static>>;
 
-    /// Reads events from the store and returns them as a tuple of (Vec<DCBSequencedEvent>, Option<u64>)
+    /// Reads events from the store and returns them as a tuple of `(Vec<DcbSequencedEvent>, Option<u64>)`
     fn read_with_head(
         &self,
         query: Option<DcbQuery>,
@@ -42,7 +42,7 @@ pub trait DcbEventStoreSync {
 
     /// Returns the current head position of the event store, or None if empty
     ///
-    /// Returns the value of last_committed_position, or None if last_committed_position is zero
+    /// Returns the value of `last_committed_position`, or `None` if `last_committed_position` is zero
     fn head(&self) -> DcbResult<Option<u64>>;
 
     /// Returns the greatest recorded upstream position for a tracking source, if any
@@ -85,7 +85,7 @@ pub trait DcbSubscriptionSync: Iterator<Item = DcbResult<DcbSequencedEvent>> + S
 pub trait DcbEventStoreAsync: Send + Sync {
     /// Reads events from the store based on the provided query and constraints
     ///
-    /// Returns a DCBReadResponseSync that provides an iterator over all events,
+    /// Returns a `DcbReadResponseSync` that provides an iterator over all events,
     /// unless 'after' is given then only those with position greater than 'after',
     /// and unless any query items are given, then only those that match at least one
     /// query item. An event matches a query item if its type is in the item types or
@@ -99,7 +99,7 @@ pub trait DcbEventStoreAsync: Send + Sync {
         subscribe: bool,
     ) -> DcbResult<Box<dyn DcbReadResponseAsync + Send + 'static>>;
 
-    /// Reads events from the store and returns them as a tuple of (Vec<DCBSequencedEvent>, Option<u64>)
+    /// Reads events from the store and returns them as a tuple of `(Vec<DcbSequencedEvent>, Option<u64>)`
     async fn read_with_head<'a>(
         &'a self,
         query: Option<DcbQuery>,

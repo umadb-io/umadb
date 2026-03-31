@@ -13,8 +13,8 @@ use itertools::Itertools;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
 use umadb_dcb::{
-    DcbAppendCondition, DdbError, DcbEvent, DcbEventStoreSync, DcbQuery, DcbReadResponseSync,
-    DcbResult, DcbSequencedEvent, TrackingInfo,
+    DcbAppendCondition, DcbEvent, DcbEventStoreSync, DcbQuery, DcbReadResponseSync, DcbResult,
+    DcbSequencedEvent, DdbError, TrackingInfo,
 };
 use uuid::Uuid;
 
@@ -25,7 +25,7 @@ pub const DEFAULT_DB_FILENAME: &str = "uma.db";
 /// Set to 1 for current releases; previous versions of the code used 0.
 pub const DB_SCHEMA_VERSION: u32 = 1;
 
-/// EventStore implementing the DCBEventStoreSync interface
+/// EventStore implementing the `DcbEventStoreSync` interface
 pub struct UmaDB {
     pub mvcc: Arc<Mvcc>,
 }
@@ -1022,7 +1022,7 @@ mod tests {
     use std::collections::HashMap;
     use tempfile::tempdir;
     use umadb_dcb::{
-        DcbAppendCondition, DdbError, DcbEvent, DcbEventStoreSync, DcbQuery, DcbQueryItem,
+        DcbAppendCondition, DcbEvent, DcbEventStoreSync, DcbQuery, DcbQueryItem, DdbError,
     };
     use uuid::Uuid;
 

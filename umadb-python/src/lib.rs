@@ -9,7 +9,7 @@ use pyo3_stub_gen::derive::*;
 use std::sync::{Arc, Mutex};
 use umadb_client::{SyncUmaDBClient, UmaDBClient, trigger_cancel};
 use umadb_dcb::{
-    DcbQuery, DcbQueryItem, DcbSequencedEvent, DcbAppendCondition, DcbEvent, DcbEventStoreSync,
+    DcbAppendCondition, DcbEvent, DcbEventStoreSync, DcbQuery, DcbQueryItem, DcbSequencedEvent,
     DdbError, TrackingInfo,
 };
 use uuid::Uuid;
@@ -21,7 +21,7 @@ create_exception!(umadb, TransportError, PyRuntimeError);
 create_exception!(umadb, CorruptionError, PyRuntimeError);
 create_exception!(umadb, AuthenticationError, PyPermissionError);
 
-/// Convert DCBError to Python exception
+/// Convert `DcbError` to Python exception
 fn dcb_error_to_py_err(err: DdbError) -> PyErr {
     match err {
         DdbError::InvalidArgument(msg) => PyValueError::new_err(msg),
@@ -34,7 +34,7 @@ fn dcb_error_to_py_err(err: DdbError) -> PyErr {
     }
 }
 
-/// Python wrapper for DCBEvent
+/// Python wrapper for `DcbEvent`
 #[gen_stub_pyclass]
 #[pyclass(name = "Event")]
 #[derive(Clone)]
@@ -103,7 +103,7 @@ impl PyEvent {
     }
 }
 
-/// Python wrapper for DCBSequencedEvent
+/// Python wrapper for `DcbSequencedEvent`
 #[gen_stub_pyclass]
 #[pyclass(name = "SequencedEvent")]
 pub struct PySequencedEvent {
@@ -168,7 +168,7 @@ impl PySequencedEvent {
     }
 }
 
-/// Python wrapper for DCBQueryItem
+/// Python wrapper for `DcbQueryItem`
 #[gen_stub_pyclass]
 #[pyclass(name = "QueryItem")]
 #[derive(Clone)]
@@ -198,7 +198,7 @@ impl PyQueryItem {
     }
 }
 
-/// Python wrapper for DCBQuery
+/// Python wrapper for `DcbQuery`
 #[gen_stub_pyclass]
 #[pyclass(name = "Query")]
 #[derive(Clone)]
@@ -228,7 +228,7 @@ impl PyQuery {
     }
 }
 
-/// Python wrapper for DCBAppendCondition
+/// Python wrapper for `DcbAppendCondition`
 #[gen_stub_pyclass]
 #[pyclass(name = "AppendCondition")]
 #[derive(Clone)]
