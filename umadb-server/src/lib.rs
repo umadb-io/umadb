@@ -83,7 +83,7 @@ where
             if let Some(final_uri) = new_uri {
                 *req.uri_mut() = final_uri;
             } else {
-                eprintln!("Failed to construct valid URI for path: {}", path);
+                eprintln!("failed to construct valid URI for path: {}", path);
             }
         }
 
@@ -191,7 +191,7 @@ pub async fn start_server_secure_from_files<
     let cert_path_ref = cert_path.as_ref();
     let cert_pem = fs::read(cert_path_ref).map_err(|e| -> Box<dyn std::error::Error> {
         format!(
-            "Failed to open TLS certificate file '{}': {}",
+            "failed to open TLS certificate file '{}': {}",
             cert_path_ref.display(),
             e
         )
@@ -201,7 +201,7 @@ pub async fn start_server_secure_from_files<
     let key_path_ref = key_path.as_ref();
     let key_pem = fs::read(key_path_ref).map_err(|e| -> Box<dyn std::error::Error> {
         format!(
-            "Failed to open TLS key file '{}': {}",
+            "failed to open TLS key file '{}': {}",
             key_path_ref.display(),
             e
         )
@@ -249,7 +249,7 @@ pub async fn start_server_secure_from_files_with_api_key<
     let cert_path_ref = cert_path.as_ref();
     let cert_pem = fs::read(cert_path_ref).map_err(|e| -> Box<dyn std::error::Error> {
         format!(
-            "Failed to open TLS certificate file '{}': {}",
+            "failed to open TLS certificate file '{}': {}",
             cert_path_ref.display(),
             e
         )
@@ -259,7 +259,7 @@ pub async fn start_server_secure_from_files_with_api_key<
     let key_path_ref = key_path.as_ref();
     let key_pem = fs::read(key_path_ref).map_err(|e| -> Box<dyn std::error::Error> {
         format!(
-            "Failed to open TLS key file '{}': {}",
+            "failed to open TLS key file '{}': {}",
             key_path_ref.display(),
             e
         )
@@ -281,7 +281,7 @@ async fn start_server_internal<P: AsRef<Path> + Send + 'static>(
         Ok(incoming) => incoming,
         Err(err) => {
             return Err(Box::new(DCBError::InitializationError(format!(
-                "Failed to bind to address {}: {}",
+                "failed to bind to address {}: {}",
                 addr, err
             ))));
         }
@@ -1121,13 +1121,13 @@ impl RequestHandler {
                     .await
                     .map_err(|_| {
                         DCBError::Io(std::io::Error::other(
-                            "Failed to send append request to EventStore thread",
+                            "failed to send append request to EventStore thread",
                         ))
                     })?;
 
                 response_rx.await.map_err(|_| {
                     DCBError::Io(std::io::Error::other(
-                        "Failed to receive append response from EventStore thread",
+                        "failed to receive append response from EventStore thread",
                     ))
                 })?
             }

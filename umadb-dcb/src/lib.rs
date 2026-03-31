@@ -341,47 +341,47 @@ pub struct DCBSequencedEvent {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum DCBError {
     // Generic/system errors
-    #[error("IO error: {0}")]
+    #[error("io error: {0}")]
     #[cfg_attr(feature = "serde", serde(with = "serde_io_error"))]
     Io(#[from] std::io::Error),
 
     // DCB domain errors
-    #[error("Integrity error: condition failed: {0}")]
+    #[error("integrity error: condition failed: {0}")]
     IntegrityError(String),
-    #[error("Corruption detected: {0}")]
+    #[error("corruption detected: {0}")]
     Corruption(String),
     /// Invalid input argument provided by the caller
     #[error("invalid argument: {0}")]
     InvalidArgument(String),
 
     // Storage errors (unified into DCBError)
-    #[error("Initialization error: {0:?}")]
+    #[error("initialization error: {0}")]
     InitializationError(String),
-    #[error("Page not found: {0:?}")]
+    #[error("page not found: {0}")]
     PageNotFound(u64),
-    #[error("Dirty page not found: {0:?}")]
+    #[error("dirty page not found: {0}")]
     DirtyPageNotFound(u64),
-    #[error("Root ID mismatched: old {0:?} new {1:?}")]
+    #[error("root ID mismatched: old {0} new {1}")]
     RootIDMismatch(u64, u64),
-    #[error("Database corrupted: {0}")]
+    #[error("database corrupted: {0}")]
     DatabaseCorrupted(String),
-    #[error("Internal error: {0}")]
+    #[error("internal error: {0}")]
     InternalError(String),
-    #[error("Serialization error: {0}")]
+    #[error("serialization error: {0}")]
     SerializationError(String),
-    #[error("Deserialization error: {0}")]
+    #[error("deserialization error: {0}")]
     DeserializationError(String),
-    #[error("Page already freed: {0:?}")]
+    #[error("page already freed: {0}")]
     PageAlreadyFreed(u64),
-    #[error("Page already dirty: {0:?}")]
+    #[error("page already dirty: {0}")]
     PageAlreadyDirty(u64),
-    #[error("Transport error: {0}")]
+    #[error("transport error: {0}")]
     TransportError(String),
-    #[error("Cancelled by user")]
+    #[error("cancelled by user")]
     CancelledByUser(),
 
     // Authentication error
-    #[error("Authentication error: {0}")]
+    #[error("authentication error: {0}")]
     AuthenticationError(String),
 }
 
