@@ -36,4 +36,3 @@ Repository = "https://github.com/umadb-io/umadb"
 python-source = "python"
 module-name = "umadb._umadb"
 bindings = "pyo3"
-strip = true
