@@ -17,9 +17,9 @@ fn get_free_port() -> u16 {
 }
 
 fn generate_self_signed_cert() -> (Vec<u8>, Vec<u8>) {
-    let cert = generate_simple_self_signed(["localhost".to_string()]).expect("generate cert");
-    let cert_pem = cert.serialize_pem().expect("serialize cert pem");
-    let key_pem = cert.serialize_private_key_pem();
+    let certified_key = generate_simple_self_signed(["localhost".to_string()]).expect("generate cert");
+    let cert_pem = certified_key.cert.pem();
+    let key_pem = certified_key.signing_key.serialize_pem();
     (cert_pem.into_bytes(), key_pem.into_bytes())
 }
 
