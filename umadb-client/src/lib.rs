@@ -414,7 +414,7 @@ impl AsyncUmaDBClient {
                 let ca_path = PathBuf::from(ca_path);
                 Some(
                     fs::read(&ca_path)
-                        .unwrap_or_else(|_| panic!("Couldn't read cert_path: {:?}", ca_path)),
+                        .unwrap_or_else(|_| panic!("couldn't read cert_path: {:?}", ca_path)),
                 )
             } else {
                 None
@@ -443,10 +443,7 @@ impl AsyncUmaDBClient {
                 tls_enabled,
                 api_key,
             }),
-            Err(err) => Err(DCBError::TransportError(format!(
-                "failed to connect: {:?}",
-                err
-            ))),
+            Err(err) => Err(DCBError::TransportError(format!("{err}"))),
         }
     }
 
