@@ -310,8 +310,7 @@ fn real_main() -> DcbResult<()> {
 
     // Extended scan: continue reading pages beyond header.next_page_id up to actual file length
     // Stop when a full page of zeros is encountered or when the file ends.
-    let reader_file = mvcc.pager.file.clone();
-    let file_len = reader_file
+    let file_len = mvcc.pager.file
         .metadata()
         .map_err(|e| DcbError::InternalError(format!("Failed to read file metadata: {}", e)))?
         .len();
@@ -333,7 +332,7 @@ fn real_main() -> DcbResult<()> {
             break;
         }
         // Read page content safely without expanding mappings or the file
-        match reader_file.read_at(&mut buf[..], offset as u64) {
+        match mvcc.pager.file.read_at(&mut buf[..], offset as u64) {
             Ok(n) => {
                 if n < page_size {
                     if pid == total_pages {

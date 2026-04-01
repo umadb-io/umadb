@@ -15,7 +15,7 @@ use umadb_dcb::{DcbError, DcbResult};
 // Pager for file I/O
 #[derive(Debug)]
 pub struct Pager {
-    pub file: Arc<File>,
+    pub file: File,
     pub writer_raw_fd: RawFd,
     pub page_size: usize,
     pub is_file_new: bool,
@@ -30,7 +30,7 @@ impl Drop for Pager {
     fn drop(&mut self) {
         // Explicitly unlock to release the advisory lock before closing the file descriptor.
         // Presence of the file on disk is irrelevant; advisory lock state is maintained by OS.
-        let _ = Fs2FileExt::unlock(self.file.as_ref());
+        let _ = Fs2FileExt::unlock(&self.file);
     }
 }
 
@@ -99,7 +99,7 @@ impl Pager {
         let mmap_pages_per_map = align_pages * usize::max(1, k);
 
         Ok(Self {
-            file: Arc::new(file),
+            file: file,
             writer_raw_fd,
             page_size,
             is_file_new,
@@ -133,10 +133,9 @@ impl Pager {
     }
 
     pub fn read_page(&self, page_id: PageID) -> io::Result<Vec<u8>> {
-        let file = self.file.clone();
         let offset = page_id.0 * (self.page_size as u64);
         let mut page = vec![0u8; self.page_size];
-        let bytes_read = file.read_at(&mut page, offset)?;
+        let bytes_read = self.file.read_at(&mut page, offset)?;
         if bytes_read < self.page_size {
             return Err(io::Error::new(
                 io::ErrorKind::UnexpectedEof,
@@ -274,8 +273,7 @@ impl Pager {
         }
 
         // Slow path: need to create the mapping with double-checked locking
-        let file = self.file.clone();
-        let file_len = file.metadata()?.len();
+        let file_len = self.file.metadata()?.len();
 
         // Re-check if mapping appeared while we acquired the file lock
         if let Some(mmap_arc) = {
@@ -312,7 +310,7 @@ impl Pager {
         // Ensure the underlying file is large enough to permit a full standard-length mapping.
         let required_len = map_offset + max_len;
         if file_len < required_len {
-            file.set_len(required_len)?;
+            self.file.set_len(required_len)?;
         }
 
         // Create the mmap and insert it, but guard with a double-check
@@ -320,7 +318,7 @@ impl Pager {
             MmapOptions::new()
                 .offset(map_offset)
                 .len(max_len as usize)
-                .map(&*file)?
+                .map(&self.file)?
         };
         // mmap_new.advise(Advice::Random)?;
         // mmap_new.advise(Advice::WillNeed)?;
