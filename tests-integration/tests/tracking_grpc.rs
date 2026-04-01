@@ -1,4 +1,4 @@
-use umadb_client::UmaDBClient;
+use umadb_client::UmaDbClient;
 use umadb_dcb::{DcbError, DcbEvent, DcbEventStoreAsync, TrackingInfo};
 use umadb_server::start_server;
 
@@ -19,7 +19,7 @@ async fn grpc_append_with_tracking_enforces_monotonicity() {
     tokio::time::sleep(std::time::Duration::from_millis(200)).await;
 
     // Connect async client
-    let client = UmaDBClient::new(addr_http.clone())
+    let client = UmaDbClient::new(addr_http.clone())
         .connect_async()
         .await
         .expect("client connect");

@@ -2,7 +2,7 @@ use prost::Message;
 use std::net::TcpListener;
 use tempfile::tempdir;
 use tokio::runtime::Builder as RtBuilder;
-use umadb_client::UmaDBClient;
+use umadb_client::UmaDbClient;
 use umadb_dcb::DcbEvent;
 use umadb_proto::v1::HeadRequest;
 use umadb_server::start_server;
@@ -57,7 +57,7 @@ fn test_path_rewrite_umadbservice_to_dcb() {
         use std::{thread, time::Duration};
         let mut attempts = 0;
         loop {
-            match UmaDBClient::new(addr_with_scheme.clone()).connect() {
+            match UmaDbClient::new(addr_with_scheme.clone()).connect() {
                 Ok(c) => break c,
                 Err(e) => {
                     attempts += 1;

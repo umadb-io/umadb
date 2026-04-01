@@ -6,8 +6,8 @@ use std::time::{Duration, Instant};
 use tempfile::tempdir;
 use tokio::runtime::Builder as RtBuilder;
 use umadb_benches::server_helper::start_bench_server;
-use umadb_client::{AsyncUmaDBClient, UmaDBClient};
-use umadb_core::db::UmaDB;
+use umadb_client::{AsyncUmaDbClient, UmaDbClient};
+use umadb_core::db::UmaDb;
 use umadb_dcb::{DcbEvent, DcbEventStoreAsync, DcbEventStoreSync};
 
 fn get_max_threads() -> Option<usize> {
@@ -28,7 +28,7 @@ fn init_db_with_events(num_events: usize) -> (tempfile::TempDir, String) {
     let path = dir.path().to_str().unwrap().to_string();
 
     // Populate the database using the local EventStore (fast, in-process)
-    let store = UmaDB::new(&path).expect("create event store");
+    let store = UmaDb::new(&path).expect("create event store");
 
     // Prepare events and append in moderate batches to avoid huge allocations
     let batch_size = 1000usize.min(num_events.max(1));
@@ -106,11 +106,11 @@ pub fn grpc_read_benchmark(c: &mut Criterion) {
             .expect("build tokio rt (client)");
 
         // Establish independent gRPC connections upfront to avoid contention on a single HTTP/2 channel
-        let mut clients: Vec<Arc<AsyncUmaDBClient>> = Vec::with_capacity(threads);
+        let mut clients: Vec<Arc<AsyncUmaDbClient>> = Vec::with_capacity(threads);
         for _ in 0..threads {
             let c = rt
                 .block_on(
-                    UmaDBClient::new(addr_http.clone())
+                    UmaDbClient::new(addr_http.clone())
                         .batch_size(READ_BATCH_SIZE)
                         .connect_async(),
                 )

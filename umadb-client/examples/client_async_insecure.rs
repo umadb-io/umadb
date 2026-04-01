@@ -1,5 +1,5 @@
 use futures::StreamExt;
-use umadb_client::UmaDBClient;
+use umadb_client::UmaDbClient;
 use umadb_dcb::{
     DcbAppendCondition, DcbError, DcbEvent, DcbEventStoreAsync, DcbQuery, DcbQueryItem,
     TrackingInfo,
@@ -10,7 +10,7 @@ use uuid::Uuid;
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Connect to the gRPC server
     let url = "http://localhost:50051".to_string();
-    let client = UmaDBClient::new(url).connect_async().await?;
+    let client = UmaDbClient::new(url).connect_async().await?;
 
     // Define a consistency boundary
     let boundary = DcbQuery::new().item(

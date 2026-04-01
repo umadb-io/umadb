@@ -4,7 +4,7 @@ use std::time::Duration;
 use rcgen::generate_simple_self_signed;
 use tempfile::tempdir;
 use tokio::time::sleep;
-use umadb_client::{AsyncUmaDBClient, ClientTlsOptions, UmaDBClient};
+use umadb_client::{AsyncUmaDbClient, ClientTlsOptions, UmaDbClient};
 use umadb_dcb::{DcbError, DcbEvent, DcbEventStoreAsync};
 use umadb_server::start_server_secure_with_api_key;
 
@@ -59,9 +59,9 @@ async fn api_key_success_over_tls() {
     // Connect with retries
     let client = {
         let mut last_err = None;
-        let mut client: Option<AsyncUmaDBClient> = None;
+        let mut client: Option<AsyncUmaDbClient> = None;
         for _ in 0..40 {
-            match AsyncUmaDBClient::connect_with_tls_options(
+            match AsyncUmaDbClient::connect_with_tls_options(
                 url.clone(),
                 Some(tls.clone()),
                 None,
@@ -136,9 +136,9 @@ async fn api_key_wrong_fails_over_tls() {
     // Connect
     let client = {
         let mut last_err = None;
-        let mut client: Option<AsyncUmaDBClient> = None;
+        let mut client: Option<AsyncUmaDbClient> = None;
         for _ in 0..40 {
-            match AsyncUmaDBClient::connect_with_tls_options(
+            match AsyncUmaDbClient::connect_with_tls_options(
                 url.clone(),
                 Some(tls.clone()),
                 None,
@@ -173,7 +173,7 @@ async fn api_key_wrong_fails_over_tls() {
 async fn api_key_rejected_over_insecure_http() {
     // Client configured with API key and http URL should error before sending
     let url = "http://localhost:9".to_string();
-    let builder = UmaDBClient::new(url.clone()).api_key("k".to_string());
+    let builder = UmaDbClient::new(url.clone()).api_key("k".to_string());
     let client = builder.connect_async().await;
     // connect may succeed because channel creation may not connect immediately; perform a call
     if let Ok(c) = client {

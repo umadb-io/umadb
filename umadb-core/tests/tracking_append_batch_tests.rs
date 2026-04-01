@@ -1,6 +1,6 @@
 use serial_test::serial;
 use tempfile::tempdir;
-use umadb_core::db::UmaDB;
+use umadb_core::db::UmaDb;
 use umadb_dcb::{DcbAppendCondition, DcbEvent, DcbEventStoreSync, TrackingInfo};
 
 #[test]
@@ -8,7 +8,7 @@ use umadb_dcb::{DcbAppendCondition, DcbEvent, DcbEventStoreSync, TrackingInfo};
 fn append_batch_with_per_item_tracking_enforces_monotonicity() {
     let temp_dir = tempdir().unwrap();
     let db_path = temp_dir.path().join("tracking-batch.db");
-    let store = UmaDB::new(&db_path).unwrap();
+    let store = UmaDb::new(&db_path).unwrap();
 
     // simple helper to make an event
     let mk = |t: &str| DcbEvent {

@@ -119,16 +119,16 @@ umadb-client = "0.1"
 Use the client in your code:
 
 ```rust
-use umadb_client::UmaDBClient;
-use umadb_dcb::{DCBEvent, DCBEventStoreAsync};
+use umadb_client::UmaDcClient;
+use umadb_dcb::{DcbEvent, DcbEventStoreAsync};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let client = UmaDBClient::new("http://localhost:50051".to_string())
+    let client = UmaDbClient::new("http://localhost:50051".to_string())
         .connect_async()
         .await?;
 
-    let events = vec![DCBEvent {
+    let events = vec![DcbEvent {
         event_type: "UserCreated".to_string(),
         data: b"user data".to_vec(),
         tags: vec!["user:123".to_string()],

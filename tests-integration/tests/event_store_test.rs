@@ -1,8 +1,8 @@
 use std::net::TcpListener;
 use tempfile::tempdir;
 use tokio::runtime::Builder as RtBuilder;
-use umadb_client::UmaDBClient;
-use umadb_core::db::UmaDB;
+use umadb_client::UmaDbClient;
+use umadb_core::db::UmaDb;
 use umadb_dcb::{
     DcbAppendCondition, DcbError, DcbEvent, DcbEventStoreSync, DcbQuery, DcbQueryItem,
 };
@@ -1437,7 +1437,7 @@ pub fn dcb_event_store_test<T: DcbEventStoreSync>(event_store: &T) {
 #[test]
 fn test_direct_event_store() {
     let temp_dir = tempdir().unwrap();
-    let event_store = UmaDB::new(temp_dir.path()).unwrap();
+    let event_store = UmaDb::new(temp_dir.path()).unwrap();
     dcb_event_store_test(&event_store);
 }
 
@@ -1471,7 +1471,7 @@ fn test_grpc_event_store_client() {
         use std::{thread, time::Duration};
         let mut attempts = 0;
         loop {
-            match UmaDBClient::new(addr_with_scheme.clone()).connect() {
+            match UmaDbClient::new(addr_with_scheme.clone()).connect() {
                 Ok(c) => break c,
                 Err(e) => {
                     attempts += 1;
@@ -1498,7 +1498,7 @@ fn test_tag_hash_collision() {
 
     // Use a local EventStore backed by a temporary directory
     let temp_dir = tempdir().unwrap();
-    let store = UmaDB::new(temp_dir.path()).unwrap();
+    let store = UmaDb::new(temp_dir.path()).unwrap();
 
     // Append two events, one per colliding tag
     let ev_student = DcbEvent {

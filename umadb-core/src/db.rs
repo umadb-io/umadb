@@ -26,11 +26,11 @@ pub const DEFAULT_DB_FILENAME: &str = "uma.db";
 pub const DB_SCHEMA_VERSION: u32 = 1;
 
 /// EventStore implementing the `DcbEventStoreSync` interface
-pub struct UmaDB {
+pub struct UmaDb {
     pub mvcc: Arc<Mvcc>,
 }
 
-impl UmaDB {
+impl UmaDb {
     /// Create a new EventStore at the given directory or file path.
     /// If a directory path is provided, a file named "uma.db" will be used inside it.
     pub fn new<P: AsRef<Path>>(path: P) -> DcbResult<Self> {
@@ -229,7 +229,7 @@ impl UmaDB {
     }
 }
 
-impl DcbEventStoreSync for UmaDB {
+impl DcbEventStoreSync for UmaDb {
     fn read(
         &self,
         query: Option<DcbQuery>,
@@ -286,7 +286,7 @@ impl DcbEventStoreSync for UmaDB {
     }
 
     fn get_tracking_info(&self, source: &str) -> DcbResult<Option<u64>> {
-        UmaDB::get_tracking_info(self, source)
+        UmaDb::get_tracking_info(self, source)
     }
 
     /// Append events with optional tracking enforcement and update.
@@ -1031,7 +1031,7 @@ mod tests {
     fn tracking_get_none_on_new_db() {
         let temp_dir = tempdir().unwrap();
         let db_path = temp_dir.path().join("tracking-none.db");
-        let uma = UmaDB::new(db_path).unwrap();
+        let uma = UmaDb::new(db_path).unwrap();
         let pos = uma.get_tracking_info("source-A").unwrap();
         assert!(pos.is_none());
     }
@@ -1041,7 +1041,7 @@ mod tests {
     fn tracking_source_length_too_long_errors() {
         let temp_dir = tempdir().unwrap();
         let db_path = temp_dir.path().join("tracking-longkey.db");
-        let uma = UmaDB::new(db_path).unwrap();
+        let uma = UmaDb::new(db_path).unwrap();
         // Make a 256-byte ASCII string
         let long_key = "a".repeat(256);
         let ev = DcbEvent::new().event_type("T").data([1u8]);
@@ -1068,7 +1068,7 @@ mod tests {
         let db_path = temp_dir.path().join("tracking-split.db");
         // Use a small page size to trigger splits with few inserts
         let mvcc = Mvcc::new(&db_path, 256, false).unwrap();
-        let uma = UmaDB::from_arc(Arc::new(mvcc));
+        let uma = UmaDb::from_arc(Arc::new(mvcc));
 
         let base_event = DcbEvent::new().event_type("T").data([0u8]);
         // Insert many different sources to force at least one leaf split
@@ -1099,7 +1099,7 @@ mod tests {
         let db_path = temp_dir.path().join("tracking-internal-split.db");
         // Small page size to force both leaf and internal splits quickly
         let mvcc = Mvcc::new(&db_path, 128, false).unwrap();
-        let uma = UmaDB::from_arc(Arc::new(mvcc));
+        let uma = UmaDb::from_arc(Arc::new(mvcc));
 
         let base_event = DcbEvent::new().event_type("T").data([0u8]);
 
@@ -1186,7 +1186,7 @@ mod tests {
     fn append_with_tracking_create_and_update_and_monotonic_enforced() {
         let temp_dir = tempdir().unwrap();
         let db_path = temp_dir.path().join("tracking-append.db");
-        let uma = UmaDB::new(db_path).unwrap();
+        let uma = UmaDb::new(db_path).unwrap();
 
         // Prepare a simple event
         let ev = DcbEvent::new()
@@ -1729,7 +1729,7 @@ mod tests {
     #[serial]
     fn test_event_store() {
         let temp_dir = tempdir().unwrap();
-        let store = UmaDB::new(temp_dir.path()).unwrap();
+        let store = UmaDb::new(temp_dir.path()).unwrap();
 
         // Head is None on empty store
         assert_eq!(None, store.head().unwrap());
@@ -1846,7 +1846,7 @@ mod tests {
     #[test]
     fn test_append_batch_mixed_conditions() {
         let temp_dir = tempdir().unwrap();
-        let store = UmaDB::new(temp_dir.path()).unwrap();
+        let store = UmaDb::new(temp_dir.path()).unwrap();
 
         let e1 = DcbEvent {
             event_type: "A".into(),
@@ -1918,7 +1918,7 @@ mod tests {
     #[test]
     fn test_append_batch_dirty_visibility_with_tags() {
         let temp_dir = tempdir().unwrap();
-        let store = UmaDB::new(temp_dir.path()).unwrap();
+        let store = UmaDb::new(temp_dir.path()).unwrap();
 
         // Item1 introduces tag "x"; Item2 condition queries tag "x" and must see it via dirty tags tree; Item3 uses after to ignore it
         let e1 = DcbEvent {
@@ -2004,7 +2004,7 @@ mod tests {
     #[test]
     fn test_append_batch_dirty_visibility_with_types_small_and_big_overflow() {
         let temp_dir = tempdir().unwrap();
-        let store = UmaDB::new(temp_dir.path()).unwrap();
+        let store = UmaDb::new(temp_dir.path()).unwrap();
 
         // Prepare events
         let small = DcbEvent {
@@ -2142,7 +2142,7 @@ mod tests {
     #[test]
     fn test_append_batch_dirty_visibility_with_tags_and_types_small_and_big_overflow() {
         let temp_dir = tempdir().unwrap();
-        let store = UmaDB::new(temp_dir.path()).unwrap();
+        let store = UmaDb::new(temp_dir.path()).unwrap();
 
         // Small inline event: type "S" with tag "x"
         let small = DcbEvent {
@@ -2283,7 +2283,7 @@ mod tests {
     #[test]
     fn test_append_event_with_uuid_is_maintained_and_activated_append_idempotency() {
         let temp_dir = tempdir().unwrap();
-        let store = UmaDB::new(temp_dir.path()).unwrap();
+        let store = UmaDb::new(temp_dir.path()).unwrap();
 
         let condition1 = Some(DcbAppendCondition {
             fail_if_events_match: DcbQuery { items: vec![] },

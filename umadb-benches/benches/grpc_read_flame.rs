@@ -1,6 +1,6 @@
 // cargo bench --bench grpc_read_flame --features flamegraphs
 
-use umadb_client::UmaDBClient;
+use umadb_client::UmaDbClient;
 
 fn main() -> std::io::Result<()> {
     use pprof::ProfilerGuard;
@@ -11,8 +11,8 @@ fn main() -> std::io::Result<()> {
     use tempfile::tempdir;
     use tokio::runtime::Builder as RtBuilder;
     use umadb_benches::server_helper::start_bench_server;
-    use umadb_client::AsyncUmaDBClient;
-    use umadb_core::db::UmaDB;
+    use umadb_client::AsyncUmaDbClient;
+    use umadb_core::db::UmaDb;
     use umadb_dcb::{DcbEvent, DcbEventStoreAsync, DcbEventStoreSync};
 
     fn init_db_with_events(num_events: usize) -> (tempfile::TempDir, String) {
@@ -20,7 +20,7 @@ fn main() -> std::io::Result<()> {
         let path = dir.path().to_str().unwrap().to_string();
 
         // Populate the database using the local EventStore (fast, in-process)
-        let store = UmaDB::new(&path).expect("create event store");
+        let store = UmaDb::new(&path).expect("create event store");
 
         // Prepare events and append in moderate batches to avoid huge allocations
         let batch_size = 1000usize.min(num_events.max(1));
@@ -95,11 +95,11 @@ fn main() -> std::io::Result<()> {
                 .expect("build tokio rt (client)");
 
             // Establish independent gRPC connections upfront
-            let mut clients: Vec<Arc<AsyncUmaDBClient>> = Vec::with_capacity(threads);
+            let mut clients: Vec<Arc<AsyncUmaDbClient>> = Vec::with_capacity(threads);
             for _ in 0..threads {
                 let c = rt
                     .block_on(
-                        UmaDBClient::new(addr_http.clone())
+                        UmaDbClient::new(addr_http.clone())
                             .batch_size(READ_BATCH_SIZE)
                             .connect_async(),
                     )

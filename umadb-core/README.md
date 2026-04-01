@@ -31,7 +31,7 @@ UmaDB uses a custom storage engine with:
 This crate is typically used through higher-level UmaDB components like `umadb-server` rather than directly. It implements the traits defined in `umadb-dcb`:
 
 ```rust
-use umadb_core::db::UmaDB;
+use umadb_core::db::UmaDb;
 ```
 
 ## Performance

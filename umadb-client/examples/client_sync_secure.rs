@@ -1,4 +1,4 @@
-use umadb_client::UmaDBClient;
+use umadb_client::UmaDbClient;
 use umadb_dcb::{
     DcbAppendCondition, DcbError, DcbEvent, DcbEventStoreSync, DcbQuery, DcbQueryItem, TrackingInfo,
 };
@@ -7,7 +7,7 @@ use uuid::Uuid;
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Connect to the gRPC server
     let url = "https://localhost:50051".to_string();
-    let client = UmaDBClient::new(url)
+    let client = UmaDbClient::new(url)
         .ca_path("server.pem".to_string()) // For self-signed server certificates.
         .api_key("umadb:example-api-key-4f7c2b1d9e5f4a038c1a".to_string())
         .connect()?;

@@ -3,7 +3,7 @@ use std::io::{BufReader, BufWriter, Write};
 use std::path::PathBuf;
 
 use tempfile::tempdir;
-use umadb_core::db::UmaDB;
+use umadb_core::db::UmaDb;
 use umadb_core::tags_tree_nodes::get_tag_key_width;
 use umadb_dcb::{DcbEvent, DcbEventStoreSync, DcbQuery, DcbQueryItem};
 
@@ -38,7 +38,7 @@ fn schema_version_0_roundtrip_read_write_and_tags() -> Result<(), Box<dyn std::e
 
     {
         // Open the DB at the decompressed path
-        let db = UmaDB::new(&db_path)?;
+        let db = UmaDb::new(&db_path)?;
 
         // The MVCC should have detected legacy schema and set key width to 4
         assert_eq!(

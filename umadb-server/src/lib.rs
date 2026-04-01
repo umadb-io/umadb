@@ -11,7 +11,7 @@ use tokio_stream::wrappers::ReceiverStream;
 use tonic::transport::{Identity, ServerTlsConfig};
 use tonic::{Request, Response, Status, transport::Server};
 use umadb_core::db::{
-    DEFAULT_DB_FILENAME, DEFAULT_PAGE_SIZE, UmaDB, clone_dcb_error, is_integrity_error,
+    DEFAULT_DB_FILENAME, DEFAULT_PAGE_SIZE, UmaDb, clone_dcb_error, is_integrity_error,
     is_request_idempotent, read_conditional, shadow_for_batch_abort,
 };
 use umadb_core::mvcc::Mvcc;
@@ -793,7 +793,7 @@ impl RequestHandler {
         let mvcc_for_writer = mvcc.clone();
         let head_tx_writer = head_tx.clone();
         thread::spawn(move || {
-            let db = UmaDB::from_arc(mvcc_for_writer);
+            let db = UmaDb::from_arc(mvcc_for_writer);
 
             // Create a runtime for processing writer requests.
             let rt = Runtime::new().unwrap();
@@ -833,7 +833,7 @@ impl RequestHandler {
                             let mut abort_err: Option<DcbError> = None;
 
                             responders.push(response_tx);
-                            let result = UmaDB::process_append_request(
+                            let result = UmaDb::process_append_request(
                                 events,
                                 condition,
                                 tracking_info,
@@ -874,7 +874,7 @@ impl RequestHandler {
                                         let ev_len = events.len();
                                         let idx_in_batch = responders.len();
                                         responders.push(response_tx);
-                                        let res_next = UmaDB::process_append_request(
+                                        let res_next = UmaDb::process_append_request(
                                             events,
                                             condition,
                                             tracking_info,
@@ -1024,7 +1024,7 @@ impl RequestHandler {
     }
 
     async fn get_tracking_info(&self, source: String) -> DcbResult<Option<u64>> {
-        let db = UmaDB::from_arc(self.mvcc.clone());
+        let db = UmaDb::from_arc(self.mvcc.clone());
         db.get_tracking_info(&source)
     }
 

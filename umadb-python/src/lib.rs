@@ -374,7 +374,7 @@ impl Subscription {
 #[gen_stub_pyclass]
 #[pyclass]
 pub struct Client {
-    inner: Arc<umadb_client::SyncUmaDBClient>,
+    inner: Arc<umadb_client::SyncUmaDbClient>,
 }
 
 #[gen_stub_pymethods]
@@ -400,7 +400,7 @@ impl Client {
         batch_size: Option<u32>,
         api_key: Option<String>,
     ) -> PyResult<Self> {
-        let client = umadb_client::UmaDBClient::new(url);
+        let client = umadb_client::UmaDbClient::new(url);
         let client = if let Some(ca) = ca_path {
             client.ca_path(ca)
         } else {

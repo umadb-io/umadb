@@ -1,4 +1,4 @@
-use umadb_client::UmaDBClient;
+use umadb_client::UmaDbClient;
 use umadb_dcb::{DcbEvent, DcbEventStoreAsync};
 use umadb_server::start_server;
 
@@ -17,7 +17,7 @@ async fn grpc_async_streams_large_reads_total_count() {
     tokio::time::sleep(std::time::Duration::from_millis(200)).await;
 
     // Connect client
-    let client = UmaDBClient::new(addr_http.clone())
+    let client = UmaDbClient::new(addr_http.clone())
         .connect_async()
         .await
         .expect("client connect");
@@ -72,7 +72,7 @@ async fn grpc_async_does_not_stream_past_starting_head() {
     });
     tokio::time::sleep(std::time::Duration::from_millis(200)).await;
 
-    let client = UmaDBClient::new(addr_http.clone())
+    let client = UmaDbClient::new(addr_http.clone())
         .connect_async()
         .await
         .expect("client connect");
@@ -141,7 +141,7 @@ async fn grpc_async_subscription_catch_up_and_continue() {
     });
     tokio::time::sleep(std::time::Duration::from_millis(200)).await;
 
-    let client = UmaDBClient::new(addr_http.clone())
+    let client = UmaDbClient::new(addr_http.clone())
         .connect_async()
         .await
         .expect("client connect");
@@ -237,7 +237,7 @@ async fn grpc_async_stream_catch_up_and_continue() {
 
     sleep(TokioDuration::from_millis(200)).await;
 
-    let client = UmaDBClient::new(addr_http.clone())
+    let client = UmaDbClient::new(addr_http.clone())
         .connect_async()
         .await
         .expect("client connect");

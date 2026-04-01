@@ -56,7 +56,7 @@ pub fn register_cancel_sigint_handler() {
     });
 }
 
-pub struct UmaDBClient {
+pub struct UmaDbClient {
     url: String,
     ca_path: Option<String>,
     batch_size: Option<u32>,
@@ -64,7 +64,7 @@ pub struct UmaDBClient {
     api_key: Option<String>,
 }
 
-impl UmaDBClient {
+impl UmaDbClient {
     pub fn new(url: String) -> Self {
         Self {
             url,
@@ -103,8 +103,8 @@ impl UmaDBClient {
         }
     }
 
-    pub fn connect(&self) -> DcbResult<SyncUmaDBClient> {
-        let client = SyncUmaDBClient::connect(
+    pub fn connect(&self) -> DcbResult<SyncUmaDbClient> {
+        let client = SyncUmaDbClient::connect(
             self.url.clone(),
             self.ca_path.clone(),
             self.batch_size,
@@ -117,8 +117,8 @@ impl UmaDBClient {
         }
         client
     }
-    pub async fn connect_async(&self) -> DcbResult<AsyncUmaDBClient> {
-        let client = AsyncUmaDBClient::connect(
+    pub async fn connect_async(&self) -> DcbResult<AsyncUmaDbClient> {
+        let client = AsyncUmaDbClient::connect(
             self.url.clone(),
             self.ca_path.clone(),
             self.batch_size,
@@ -135,13 +135,13 @@ impl UmaDBClient {
 }
 
 // --- Sync wrapper around the async client ---
-pub struct SyncUmaDBClient {
-    async_client: AsyncUmaDBClient,
+pub struct SyncUmaDbClient {
+    async_client: AsyncUmaDbClient,
     handle: Handle,
     _runtime: Option<Runtime>, // Keeps runtime alive if we created it
 }
 
-impl SyncUmaDBClient {
+impl SyncUmaDbClient {
     /// Subscribe to events starting from an optional position.
     /// This is a convenience wrapper around the async client's Subscribe RPC.
     /// The returned iterator yields events indefinitely until cancelled or the stream ends.
@@ -168,7 +168,7 @@ impl SyncUmaDBClient {
     ) -> DcbResult<Self> {
         let (rt, handle) = Self::get_rt_handle();
         let async_client =
-            handle.block_on(AsyncUmaDBClient::connect(url, ca_path, batch_size, api_key))?;
+            handle.block_on(AsyncUmaDbClient::connect(url, ca_path, batch_size, api_key))?;
         Ok(Self {
             async_client,
             _runtime: rt, // Keep runtime alive for the client lifetime
@@ -182,7 +182,7 @@ impl SyncUmaDBClient {
         batch_size: Option<u32>,
     ) -> DcbResult<Self> {
         let (rt, handle) = Self::get_rt_handle();
-        let async_client = handle.block_on(AsyncUmaDBClient::connect_with_tls_options(
+        let async_client = handle.block_on(AsyncUmaDbClient::connect_with_tls_options(
             url,
             tls_options,
             batch_size,
@@ -216,7 +216,7 @@ impl SyncUmaDBClient {
     }
 }
 
-impl DcbEventStoreSync for SyncUmaDBClient {
+impl DcbEventStoreSync for SyncUmaDbClient {
     fn read(
         &self,
         query: Option<DcbQuery>,
@@ -374,14 +374,14 @@ impl DcbSubscriptionSync for SyncClientSubscription {
 }
 
 // Async client implementation
-pub struct AsyncUmaDBClient {
+pub struct AsyncUmaDbClient {
     client: umadb_proto::v1::dcb_client::DcbClient<Channel>,
     batch_size: Option<u32>,
     tls_enabled: bool,
     api_key: Option<String>,
 }
 
-impl AsyncUmaDBClient {
+impl AsyncUmaDbClient {
     pub async fn subscribe(
         &self,
         query: Option<DcbQuery>,
@@ -467,7 +467,7 @@ impl AsyncUmaDBClient {
 }
 
 #[async_trait]
-impl DcbEventStoreAsync for AsyncUmaDBClient {
+impl DcbEventStoreAsync for AsyncUmaDbClient {
     // Async inherent methods: use the gRPC client directly (no trait required)
     async fn read<'a>(
         &'a self,

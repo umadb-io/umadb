@@ -8,7 +8,7 @@ use tonic_health::pb::HealthCheckRequest;
 use tonic_health::pb::health_check_response::ServingStatus as PbServingStatus;
 use tonic_health::pb::health_client::HealthClient;
 
-use umadb_client::UmaDBClient;
+use umadb_client::UmaDbClient;
 use umadb_dcb::{DcbEvent, DcbEventStoreAsync};
 use umadb_server::start_server;
 use uuid::Uuid;
@@ -93,7 +93,7 @@ async fn next_batch_returns_all_then_empty_when_unlimited_and_large_batch_size()
     wait_for_health(&url).await;
 
     // Build client with large batch_size (greater than total events we'll append)
-    let client = UmaDBClient::new(url.clone())
+    let client = UmaDbClient::new(url.clone())
         .batch_size(10)
         .connect_async()
         .await

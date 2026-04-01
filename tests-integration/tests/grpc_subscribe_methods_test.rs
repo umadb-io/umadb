@@ -1,7 +1,7 @@
 use std::net::TcpListener;
 use tempfile::tempdir;
 use tokio::time::{Duration as TokioDuration, sleep};
-use umadb_client::UmaDBClient;
+use umadb_client::UmaDbClient;
 use umadb_dcb::{DcbEvent, DcbEventStoreAsync, DcbEventStoreSync};
 use umadb_server::start_server;
 
@@ -25,7 +25,7 @@ async fn grpc_async_subscribe_catch_up_and_continue() {
     sleep(TokioDuration::from_millis(200)).await;
 
     // Connect async client
-    let client = UmaDBClient::new(addr_http.clone())
+    let client = UmaDbClient::new(addr_http.clone())
         .connect_async()
         .await
         .expect("client connect");
@@ -115,7 +115,7 @@ async fn grpc_async_subscribe_with_after_position() {
     });
     sleep(TokioDuration::from_millis(200)).await;
 
-    let client = UmaDBClient::new(addr_http.clone())
+    let client = UmaDbClient::new(addr_http.clone())
         .connect_async()
         .await
         .expect("client connect");
@@ -235,7 +235,7 @@ fn grpc_sync_subscribe_catch_up_and_continue() {
         use std::{thread, time::Duration};
         let mut attempts = 0;
         loop {
-            match UmaDBClient::new(addr_with_scheme.clone()).connect() {
+            match UmaDbClient::new(addr_with_scheme.clone()).connect() {
                 Ok(c) => break c,
                 Err(_e) => {
                     attempts += 1;

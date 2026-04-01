@@ -8,8 +8,8 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tempfile::tempdir;
 use umadb_benches::server_helper::start_bench_server;
-use umadb_client::{AsyncUmaDBClient, UmaDBClient};
-use umadb_core::db::UmaDB;
+use umadb_client::{AsyncUmaDbClient, UmaDbClient};
+use umadb_core::db::UmaDb;
 use umadb_dcb::{DcbEvent, DcbEventStoreAsync, DcbEventStoreSync};
 
 #[derive(Parser, Debug)]
@@ -45,7 +45,7 @@ fn init_db_with_events(num_events: usize) -> (tempfile::TempDir, String) {
     let path = dir.path().to_str().unwrap().to_string();
 
     println!("Initializing database with {} events...", num_events);
-    let store = UmaDB::new(&path).expect("create event store");
+    let store = UmaDb::new(&path).expect("create event store");
 
     let batch_size = 1000usize.min(num_events.max(1));
     let mut remaining = num_events;
@@ -80,9 +80,9 @@ async fn run_throughput_test(
     );
 
     // Create clients (we're already in a tokio runtime from #[tokio::main])
-    let mut clients: Vec<Arc<AsyncUmaDBClient>> = Vec::with_capacity(writers);
+    let mut clients: Vec<Arc<AsyncUmaDbClient>> = Vec::with_capacity(writers);
     for _ in 0..writers {
-        let c = UmaDBClient::new(addr_http.to_string())
+        let c = UmaDbClient::new(addr_http.to_string())
             .connect_async()
             .await
             .expect("connect client");

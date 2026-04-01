@@ -1,4 +1,4 @@
-use umadb_client::UmaDBClient;
+use umadb_client::UmaDbClient;
 use umadb_dcb::{
     DcbAppendCondition, DcbError, DcbEvent, DcbEventStoreSync, DcbQuery, DcbQueryItem, TrackingInfo,
 };
@@ -7,7 +7,7 @@ use uuid::Uuid;
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Connect to the gRPC server
     let url = "http://localhost:50051".to_string();
-    let client = UmaDBClient::new(url).connect()?;
+    let client = UmaDbClient::new(url).connect()?;
 
     // Define a consistency boundary
     let boundary = DcbQuery::new().item(

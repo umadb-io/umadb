@@ -23,8 +23,8 @@ This crate is typically used as a dependency when building DCB-compliant event s
 
 ```rust
 use umadb_dcb::{
-    DCBAppendCondition, DCBError, DCBEvent, DCBEventStoreAsync, DCBEventStoreSync, DCBQuery,
-    DCBReadResponseAsync, DCBReadResponseSync, DCBResult, DCBSequencedEvent,
+    DcbAppendCondition, DcbError, DcbEvent, DcbEventStoreAsync, DcbEventStoreSync, DcbQuery,
+    DcbReadResponseAsync, DcbReadResponseSync, DcbResult, DcbSequencedEvent,
 };
 ```
 

@@ -2,7 +2,7 @@ use std::env;
 use std::hint::black_box;
 use std::time::Instant;
 use tempfile::tempdir;
-use umadb_core::db::UmaDB;
+use umadb_core::db::UmaDb;
 use umadb_dcb::{DcbAppendCondition, DcbEvent, DcbEventStoreSync, DcbQuery, DcbQueryItem};
 
 // This test is intended for profiling hotspots when appending events.
@@ -47,7 +47,7 @@ fn profile_event_store_append() {
     let total_events: usize = calls_per_run.saturating_mul(events_per_call);
 
     let tmp = tempdir().expect("create temp dir");
-    let store = UmaDB::new(tmp.path()).expect("open event store");
+    let store = UmaDb::new(tmp.path()).expect("open event store");
 
     // Time the entire loop of batched appends.
     let start = Instant::now();

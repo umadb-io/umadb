@@ -2,7 +2,7 @@ use std::fs::{File, OpenOptions};
 use std::io::Write;
 use std::sync::Arc;
 use std::time::Instant;
-use umadb_client::{AsyncUmaDBClient, UmaDBClient};
+use umadb_client::{AsyncUmaDbClient, UmaDbClient};
 use umadb_dcb::{DcbEvent, DcbEventStoreAsync};
 use uuid::Uuid;
 
@@ -35,7 +35,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Connect to UmaDB instance at 127.0.0.1:50051
     let client = Arc::new(
-        UmaDBClient::new(args.db_url.clone())
+        UmaDbClient::new(args.db_url.clone())
             .connect_async()
             .await
             .expect("Failed to connect to UmaDB"),
@@ -73,7 +73,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 async fn do_some_work(
-    client: Arc<AsyncUmaDBClient>,
+    client: Arc<AsyncUmaDbClient>,
     mut log_file: Arc<File>,
 ) -> std::io::Result<()> {
     let mut batch_count = 0u64;

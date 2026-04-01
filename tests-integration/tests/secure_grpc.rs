@@ -4,7 +4,7 @@ use std::time::Duration;
 use rcgen::generate_simple_self_signed;
 use tempfile::tempdir;
 use tokio::time::sleep;
-use umadb_client::{AsyncUmaDBClient, ClientTlsOptions};
+use umadb_client::{AsyncUmaDbClient, ClientTlsOptions};
 use umadb_dcb::{DcbEvent, DcbEventStoreAsync};
 use umadb_server::start_server_secure;
 
@@ -60,10 +60,10 @@ async fn secure_grpc_end_to_end_append_and_read() {
     // Retry connect loop to avoid race with server startup
     let client = {
         let mut last_err = None;
-        let mut client: Option<AsyncUmaDBClient> = None;
+        let mut client: Option<AsyncUmaDbClient> = None;
         for _ in 0..40 {
             // up to ~2s
-            match AsyncUmaDBClient::connect_with_tls_options(
+            match AsyncUmaDbClient::connect_with_tls_options(
                 url.clone(),
                 Some(tls.clone()),
                 None,
