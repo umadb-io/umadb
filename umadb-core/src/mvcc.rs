@@ -27,6 +27,21 @@ const GET_LATEST_HEADER_DELAY: Duration = Duration::from_millis(10);
 const HEADER_PAGE_ID_0: PageID = PageID(0);
 const HEADER_PAGE_ID_1: PageID = PageID(1);
 
+enum ReadMethod {
+    Mmap,
+    FileIo,
+}
+
+impl ReadMethod {
+    fn from_env() -> Self {
+        match std::env::var("UMADB_READ_METHOD").as_deref() {
+            Ok("mmap") => ReadMethod::Mmap,
+            Ok("fileio") => ReadMethod::FileIo,
+            _ => ReadMethod::FileIo, // default
+        }
+    }
+}
+
 // Main MVCC structure
 pub struct Mvcc {
     pub pager: Pager,
@@ -42,6 +57,7 @@ pub struct Mvcc {
     pub page_buf: Mutex<Vec<u8>>,
     reader_id_counter: AtomicUsize,
     pub verbose: bool,
+    read_method: ReadMethod,
 }
 
 impl Mvcc {
@@ -68,6 +84,7 @@ impl Mvcc {
             page_buf: Mutex::new(vec![0u8; page_size]),
             reader_id_counter: AtomicUsize::new(0),
             verbose,
+            read_method: ReadMethod::from_env(),
         };
 
         if mvcc.pager.is_file_new {
@@ -371,11 +388,22 @@ impl Mvcc {
     }
 
     pub fn read_page(&self, page_id: PageID) -> DcbResult<Page> {
-        let mapped = self.pager.read_page_mmap_slice(page_id)?;
-        if self.verbose {
-            println!("Read {page_id:?} from file, deserializing...");
+        match self.read_method {
+            ReadMethod::Mmap => {
+                let mapped = self.pager.read_page_mmap_slice(page_id)?;
+                if self.verbose {
+                    println!("Read {page_id:?} from mmap, deserializing...");
+                }
+                Page::deserialize(page_id, mapped.as_slice())
+            },
+            ReadMethod::FileIo => {
+                let page = self.pager.read_page(page_id)?;
+                if self.verbose {
+                    println!("Read {page_id:?} from file, deserializing...");
+                }
+                Page::deserialize(page_id, &page)
+            }
         }
-        Page::deserialize(page_id, mapped.as_slice())
     }
 
     pub fn fsync(&self) -> DcbResult<()> {
