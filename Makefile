@@ -49,6 +49,7 @@ UVX ?= uvx@$(UV_VERSION)
 .PHONY: maturin-python-build
 .PHONY: maturin-python-build-release
 .PHONY: self-signed-cert
+.PHONY: build-local-docker-arm64
 
 clean:
 	cargo clean
@@ -415,3 +416,10 @@ self-signed-cert:
       -subj "/CN=localhost" \
       -addext "basicConstraints = CA:FALSE" \
       -addext "subjectAltName = DNS:localhost"
+
+build-local-docker-arm64:
+	make build-cross-umadb-aarch64-unknown-linux-musl
+	mkdir -p binaries/linux/arm64
+	cp target/aarch64-unknown-linux-musl/release/umadb binaries/linux/arm64/
+	docker build --build-arg TARGETPLATFORM=linux/arm64 -t umadb:local .
+	rm -r binaries/linux/arm64
