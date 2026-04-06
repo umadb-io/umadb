@@ -78,5 +78,9 @@ name = "throughput_vs_volume"
 path = "src/bin/throughput_vs_volume.rs"
 
 [[bin]]
+name = "grpc_append_sustained_bench"
+path = "src/bin/grpc_append_sustained_bench.rs"
+
+[[bin]]
 name = "throughput_vs_writers"
 path = "src/bin/throughput_vs_writers.rs"

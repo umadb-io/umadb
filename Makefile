@@ -12,7 +12,7 @@ UVX ?= uvx@$(UV_VERSION)
 .PHONY: build-workspace-exclude-python
 .PHONY: test
 .PHONY: test-workspace-exclude-python
-.PHONY: bench-append bench-append-1 bench-append-10 bench-append-100 bench-append-1000 bench-append-all
+.PHONY: bench-append bench-append-sustained bench-append-1 bench-append-10 bench-append-100 bench-append-1000 bench-append-all
 .PHONY: bench-append-cond bench-append-cond-1 bench-append-cond-10 bench-append-cond-100 bench-append-cond-all
 .PHONY: bench-append-with-readers
 .PHONY: bench-append-throughput-vs-writers
@@ -107,6 +107,12 @@ bench-append:
 	@trap 'kill 0' INT TERM; \
 	EVENTS_PER_REQUEST=$(EVENTS_PER_REQUEST) MAX_THREADS=$(MAX_THREADS) cargo bench -p umadb-benches --bench grpc_append_bench && \
 	EVENTS_PER_REQUEST=$(EVENTS_PER_REQUEST) MAX_THREADS=$(MAX_THREADS) python ./umadb-benches/benches/grpc_append_bench_plot.py
+
+bench-append-sustained:
+	@echo "Running sustained benchmark with EVENTS_PER_REQUEST=$(EVENTS_PER_REQUEST)"
+	@trap 'kill 0' INT TERM; \
+	cargo run --release -p umadb-benches --bin grpc_append_sustained_bench -- --events-per-request $(EVENTS_PER_REQUEST) --max-writers $(or $(MAX_THREADS),1024) && \
+	EVENTS_PER_REQUEST=$(EVENTS_PER_REQUEST) python ./umadb-benches/benches/grpc_append_sustained_plot.py
 
 bench-append-cond-all:
 	$(MAKE) bench-append-cond-1
