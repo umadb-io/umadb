@@ -299,10 +299,10 @@ async fn start_server_internal<P: AsRef<Path> + Send + 'static>(
             }
         };
 
-    println!(
-        "UmaDB has {:?} events",
-        dcb_server.request_handler.head().await?.unwrap_or(0)
-    );
+        println!(
+            "UmaDB has {:?} events",
+            dcb_server.request_handler.head().unwrap_or(Some(0)).unwrap_or(0)
+        );
     let tls_mode_display_str = if tls.is_some() {
         "with TLS"
     } else {
@@ -449,7 +449,11 @@ impl umadb_proto::v1::dcb_server::Dcb for DcbServer {
             let mut head_rx = request_handler.watch_head();
             // If non-subscription read, capture head to preserve point-in-time semantics
             let captured_head = if !subscribe {
-                request_handler.head().await.unwrap_or(None)
+                let handler = request_handler.clone();
+                tokio::task::spawn_blocking(move || handler.head())
+                    .await
+                    .unwrap_or(Ok(None))
+                    .unwrap_or(None)
             } else {
                 None
             };
@@ -470,9 +474,15 @@ impl umadb_proto::v1::dcb_server::Dcb for DcbServer {
                 if subscribe && limit.is_some() && remaining_limit == 0 {
                     break;
                 }
-                match request_handler
-                    .read(query_clone.clone(), next_start, backwards, Some(read_limit))
-                    .await
+                let handler = request_handler.clone();
+                let query_val = query_clone.clone();
+                let limit_val = Some(read_limit);
+                match tokio::task::spawn_blocking(move || {
+                    handler.read(query_val, next_start, backwards, limit_val)
+                })
+                .await
+                .map_err(|e| DcbError::InternalError(e.to_string()))
+                .and_then(|res| res)
                 {
                     Ok((dcb_sequenced_events, head)) => {
                         // Capture the original length before consuming events
@@ -628,10 +638,15 @@ impl umadb_proto::v1::dcb_server::Dcb for DcbServer {
                     break;
                 }
 
-                // Always read forward with the requested batch size
-                match request_handler
-                    .read(query_clone.clone(), next_after, false, Some(batch_size))
-                    .await
+                let handler = request_handler.clone();
+                let query_val = query_clone.clone();
+                let batch_size_val = Some(batch_size);
+                match tokio::task::spawn_blocking(move || {
+                    handler.read(query_val, next_after, false, batch_size_val)
+                })
+                .await
+                .map_err(|e| DcbError::InternalError(e.to_string()))
+                .and_then(|res| res)
                 {
                     Ok((dcb_sequenced_events, _head)) => {
                         // Map events to protobuf type
@@ -724,7 +739,7 @@ impl umadb_proto::v1::dcb_server::Dcb for DcbServer {
         // Enforce API key if configured
         self.enforce_api_key(request.metadata())?;
         // Call the event store head method
-        match self.request_handler.head().await {
+        match self.request_handler.head() {
             Ok(position) => {
                 // Return the position as a response
                 Ok(Response::new(umadb_proto::v1::HeadResponse { position }))
@@ -740,7 +755,7 @@ impl umadb_proto::v1::dcb_server::Dcb for DcbServer {
         // Enforce API key if configured
         self.enforce_api_key(request.metadata())?;
         let req = request.into_inner();
-        match self.request_handler.get_tracking_info(req.source).await {
+        match self.request_handler.get_tracking_info(req.source) {
             Ok(position) => Ok(Response::new(umadb_proto::v1::TrackingResponse {
                 position,
             })),
@@ -975,7 +990,7 @@ impl RequestHandler {
         })
     }
 
-    async fn read(
+    fn read(
         &self,
         query: Option<DcbQuery>,
         start: Option<u64>,
@@ -1014,7 +1029,7 @@ impl RequestHandler {
         Ok((events, head))
     }
 
-    async fn head(&self) -> DcbResult<Option<u64>> {
+    fn head(&self) -> DcbResult<Option<u64>> {
         let (_, header) = self
             .mvcc
             .get_latest_header()
@@ -1023,7 +1038,7 @@ impl RequestHandler {
         if last == 0 { Ok(None) } else { Ok(Some(last)) }
     }
 
-    async fn get_tracking_info(&self, source: String) -> DcbResult<Option<u64>> {
+    fn get_tracking_info(&self, source: String) -> DcbResult<Option<u64>> {
         let db = UmaDb::from_arc(self.mvcc.clone());
         db.get_tracking_info(&source)
     }
