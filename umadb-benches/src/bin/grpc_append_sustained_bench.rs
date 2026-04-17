@@ -86,6 +86,7 @@ async fn run_sustained_throughput_test(
     warmup_secs: u64,
     duration_secs: u64,
     events_per_request: usize,
+    many_streams: bool,
     addr_http: &str,
 ) -> TestResult {
     println!(
@@ -126,8 +127,7 @@ async fn run_sustained_throughput_test(
             let mut count = 0u64;
 
             // Tight loop with minimal overhead
-            let mut stream_name = format!("stream-");
-            // let mut stream_name = format!("stream-{}-", Uuid::new_v4());
+            let mut stream_name = format!("stream-{}", Uuid::new_v4());
             let stream_len = 100000;
             let mut stream_position = 0;
 
@@ -154,12 +154,15 @@ async fn run_sustained_throughput_test(
                 }
                 let _ = stop_rx.has_changed(); // best effort to pick up stop signal
 
-                // Increment stream position, maybe reset and change name.
-                // stream_position += 1;
-                // if stream_position == stream_len {
-                //     stream_name = format!("stream-{}-", Uuid::new_v4());
-                //     stream_position = 0;
-                // }
+                if many_streams {
+                    // Increment stream position, maybe reset and change name.
+                    stream_position += 1;
+                    if stream_position == stream_len {
+                        stream_name = format!("stream-{}-", Uuid::new_v4());
+                        stream_position = 0;
+                    }
+
+                }
 
             }
 
@@ -236,11 +239,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let addr_http = format!("http://{}", addr);
         let server_handle = start_bench_server(db_path, addr.clone());
 
+        let many_streams = true;
         let result = run_sustained_throughput_test(
             writers,
             args.warmup,
             args.duration,
             args.events_per_request,
+            many_streams,
             &addr_http,
         ).await;
         results.push(result);
