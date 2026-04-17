@@ -37,7 +37,7 @@ impl ReadMethod {
         match std::env::var("UMADB_READ_METHOD").as_deref() {
             Ok("mmap") => ReadMethod::Mmap,
             Ok("fileio") => ReadMethod::FileIo,
-            _ => ReadMethod::FileIo, // default
+            _ => ReadMethod::Mmap, // default
         }
     }
 }
