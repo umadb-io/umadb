@@ -11,5 +11,6 @@
 /dcbdb-databases-docker/
 /umadb-python/python/umadb/__pycache__/
 /umadb-python/python/umadb/_umadb.abi3.so
+/umadb-benches/benches/__pycache__/
 /.python-version
 /uma.db
