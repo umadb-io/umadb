@@ -2,7 +2,7 @@ SHELL := /bin/bash
 
 PYTHONPATH=./tests
 
-UV_VERSION=0.9.16
+UV_VERSION=0.11.7
 UV ?= uv@$(UV_VERSION)
 UVX ?= uvx@$(UV_VERSION)
 

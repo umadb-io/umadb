@@ -21,9 +21,9 @@ crate-type = ["cdylib", "rlib"]
 umadb-client = { path = "../umadb-client", version = "0.5.0" }
 umadb-dcb = { path = "../umadb-dcb", version = "0.5.0" }
 pyo3 = { version = ">=0.28", features = ["abi3-py310"] }
-uuid = { version = "1.23.0", features = ["v4"] }
-pyo3-stub-gen = "0.20.0"
-pyo3-stub-gen-derive = "0.20.0"
+uuid = { version = "1.23", features = ["v4"] }
+pyo3-stub-gen = "0.20"
+#pyo3-stub-gen-derive = "0.20.0"
 
 [features]
 default = ["extension-module"]

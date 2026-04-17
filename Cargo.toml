@@ -33,9 +33,9 @@ futures = "0.3.32"
 libc = "0.2.183"
 tempfile = "3.27.0"
 thiserror = "2.0.18"
-tonic = { version = "0.14.5", features = ["server", "tls-native-roots", "tls-aws-lc"] }
+tonic = { version = "0.14", features = ["server", "tls-native-roots", "tls-aws-lc"] }
 # TODO: How to enable the optional FIPS support?
-tonic-health = "0.14.5"
+tonic-health = "0.14"
 tokio = { version = "1.50.0", features = ["full"] }
 uuid = { version = "1.23.0", features = ["v4", "v5"] }
 serial_test = "3.4.0"

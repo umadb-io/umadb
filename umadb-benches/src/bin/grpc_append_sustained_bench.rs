@@ -136,9 +136,9 @@ async fn run_sustained_throughput_test(
                     break;
                 }
                 let events: Vec<DcbEvent> = (0..evs_per_req)
-                    .map(|j| DcbEvent {
-                        // event_type: format!("{}-{}", event_type.clone(), stream_position),
-                        event_type: format!("{}", event_type.clone()),
+                    .map(|_| DcbEvent {
+                        event_type: format!("{}-{}", event_type.clone(), stream_position),
+                        // event_type: format!("{}", event_type.clone()),
                         data: payload.clone(),
                         tags: vec![stream_name.clone()],
                         uuid: None,
