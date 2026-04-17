@@ -99,7 +99,7 @@ impl Pager {
         let mmap_pages_per_map = align_pages * usize::max(1, k);
 
         Ok(Self {
-            file: file,
+            file,
             writer_raw_fd,
             page_size,
             is_file_new,
