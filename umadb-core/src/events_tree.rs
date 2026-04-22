@@ -746,7 +746,8 @@ mod tests {
         db.commit(&mut writer).unwrap();
 
         // Read back the latest header and the persisted root event leaf page
-        let (_header_page_id, header) = db.get_latest_header().unwrap();
+        let header_page = db.get_latest_header_page().unwrap();
+        let header = header_page.as_header_node().unwrap();
         let persisted_page = db.read_page(header.events_tree_root_id).unwrap();
         match &persisted_page.node {
             Node::EventLeaf(node) => {
@@ -1479,7 +1480,8 @@ mod tests {
         assert_eq!(event, got);
 
         // Ensure an overflow page is used for storage
-        let (_hdr_id, header) = db.get_latest_header().unwrap();
+        let header_page = db.get_latest_header_page().unwrap();
+        let header = header_page.as_header_node().unwrap();
         let root = db.read_page(header.events_tree_root_id).unwrap();
         match &root.node {
             Node::EventInternal(internal) => {
@@ -1529,7 +1531,8 @@ mod tests {
         assert_eq!(event, got);
 
         // Ensure overflow in leaf
-        let (_hdr_id, header) = db.get_latest_header().unwrap();
+        let header_page = db.get_latest_header_page().unwrap();
+        let header = header_page.as_header_node().unwrap();
         let root = db.read_page(header.events_tree_root_id).unwrap();
         let check_leaf = |leaf: &EventLeafNode| match &leaf.values[0] {
             EventValue::Overflow { data_len, .. } => {

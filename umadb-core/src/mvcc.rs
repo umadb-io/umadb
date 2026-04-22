@@ -187,7 +187,8 @@ impl Mvcc {
 
         } else {
             // Existing DB: hydrate headers from disk and set tag key width based on latest header
-            if let Ok((_, header_latest)) = mvcc.get_latest_header() {
+            if let Ok(header_page) = mvcc.get_latest_header_page() {
+                let header_latest = page_as_header_node(&header_page)?;
                 // Don't proceed if this software is too old.
                 if header_latest.schema_version > DB_SCHEMA_VERSION {
                     let schema_version = header_latest.schema_version;
@@ -276,7 +277,9 @@ impl Mvcc {
                     }
                 }
             }
-            if let Ok((hid, header_latest)) = mvcc.get_latest_header() {
+            if let Ok(header_page) = mvcc.get_latest_header_page() {
+                let hid = header_page.page_id;
+                let header_latest = page_as_header_node(&header_page)?;
                 // Validate header.next_position against events tree's last event and fix if needed
                 {
                     let empty_dirty: std::collections::HashMap<PageID, Page> =
@@ -344,7 +347,8 @@ impl Mvcc {
         }
         // Cache tree root pages.
         if let Some(ref page_cache) = mvcc.page_cache {
-            let (_, header_node) = mvcc.get_latest_header()?;
+            let header_page = mvcc.get_latest_header_page()?;
+            let header_node = page_as_header_node(&header_page)?;
             let page = mvcc.read_page(header_node.free_lists_tree_root_id)?;
             page_cache.insert(page.page_id, page);
 
@@ -412,12 +416,6 @@ impl Mvcc {
         Err(DcbError::DatabaseCorrupted(
             "Unable to read a valid header".to_string(),
         ))
-    }
-
-    pub fn get_latest_header(&self) -> DcbResult<(PageID, HeaderNode)> {
-        let header_page = self.get_latest_header_page()?;
-        let header_node = page_as_header_node(&header_page)?;
-        Ok((header_page.page_id, header_node.clone()))
     }
 
     fn update_header(
@@ -2867,7 +2865,9 @@ mod tests {
             let (_temp_dir, mut db) = construct_mvcc(64);
 
             // Get latest header
-            let (header_page_id, header_node) = db.get_latest_header().unwrap();
+            let header_page = db.get_latest_header_page().unwrap();
+            let header_node = header_page.as_header_node().unwrap();
+            let header_page_id = header_page.page_id;
             assert_eq!(PageID(0), header_page_id);
 
             // Get next page ID
@@ -3019,7 +3019,9 @@ mod tests {
             let (_temp_dir, mut db) = construct_mvcc(64);
 
             // Get latest header
-            let (header_page_id, header_node) = db.get_latest_header().unwrap();
+            let header_page = db.get_latest_header_page().unwrap();
+            let header_node = header_page.as_header_node().unwrap();
+            let header_page_id = header_page.page_id;
 
             // Create a writer
             let mut tsn = Tsn(100);
@@ -3339,7 +3341,9 @@ mod tests {
 
             {
                 // Get latest header
-                let (header_page_id, header_node) = db.get_latest_header().unwrap();
+                let header_page = db.get_latest_header_page().unwrap();
+                let header_node = header_page.as_header_node().unwrap();
+                let header_page_id = header_page.page_id;
 
                 // Create a new writer
                 let mut writer = Writer::new(
@@ -3442,7 +3446,9 @@ mod tests {
             let (_temp_dir, mut db) = construct_mvcc(64);
 
             // Get latest header
-            let (header_page_id, header_node) = db.get_latest_header().unwrap();
+            let header_page = db.get_latest_header_page().unwrap();
+            let header_node = header_page.as_header_node().unwrap();
+            let header_page_id = header_page.page_id;
 
             // Create a writer
             let mut writer = Writer::new(
@@ -3662,7 +3668,9 @@ mod tests {
             // Now remove all the inserted freed page IDs
             {
                 // Get latest header
-                let (header_page_id, header_node) = db.get_latest_header().unwrap();
+                let header_page = db.get_latest_header_page().unwrap();
+                let header_node = header_page.as_header_node().unwrap();
+                let header_page_id = header_page.page_id;
 
                 // Create a new writer
                 let mut writer = Writer::new(

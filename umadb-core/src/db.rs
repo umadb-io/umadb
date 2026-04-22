@@ -1301,7 +1301,8 @@ mod tests {
         let last = unconditional_append(&db, &mut writer, input.clone()).unwrap();
         db.commit(&mut writer).unwrap();
         // Verify last equals committed head
-        let (_, header) = db.get_latest_header().unwrap();
+        let header_page = db.get_latest_header_page().unwrap();
+        let header = header_page.as_header_node().unwrap();
         let head = header.next_position.0.saturating_sub(1);
         assert_eq!(last, head);
         (temp_dir, db, input)
@@ -1622,7 +1623,8 @@ mod tests {
         let mut writer = db.writer().unwrap();
         let last = unconditional_append(&db, &mut writer, events).unwrap();
         db.commit(&mut writer).unwrap();
-        let (_, header) = db.get_latest_header().unwrap();
+        let header_page = db.get_latest_header_page().unwrap();
+        let header = header_page.as_header_node().unwrap();
         let head = header.next_position.0.saturating_sub(1);
         assert_eq!(last, head);
 

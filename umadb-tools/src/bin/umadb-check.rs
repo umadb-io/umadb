@@ -202,7 +202,9 @@ fn real_main() -> DcbResult<()> {
     }
 
     // Now read the latest header as usual
-    let (header_page_id, header) = mvcc.get_latest_header()?;
+    let header_page = mvcc.get_latest_header_page()?;
+    let header_page_id = header_page.page_id;
+    let header = header_page.as_header_node()?;
 
     let total_pages = header.next_page_id.0;
     if args.verbose {
