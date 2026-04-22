@@ -6,6 +6,7 @@ use crate::tags_tree_nodes::{
     TagHash, TagInternalNode, TagLeafNode, TagsInternalNode, TagsLeafNode, TagsLeafValue,
 };
 use std::collections::HashMap;
+use std::sync::Arc;
 use umadb_dcb::{DcbError, DcbResult};
 
 /// Insert a Position into the tags tree at the given TagHash key.
@@ -589,7 +590,7 @@ pub struct TagsTreeIterator<'a> {
     backwards: bool,
     // New traversal machinery similar to EventIterator
     stack: Vec<(PageID, Option<usize>)>,
-    page_cache: HashMap<PageID, Page>,
+    page_cache: HashMap<PageID, Arc<Page>>,
     // Current batch of positions (from a single page)
     batch: Vec<Position>,
     batch_index: usize,
@@ -874,9 +875,13 @@ impl<'a> TagsTreeIterator<'a> {
         }
         if !self.page_cache.contains_key(&page_id) {
             let page_arc = self.db.read_page(page_id)?;
-            self.page_cache.insert(page_id, (*page_arc).clone());
+            self.page_cache.insert(page_id, page_arc);
         }
-        Ok(self.page_cache.get(&page_id).expect("cached page missing"))
+        Ok(self
+            .page_cache
+            .get(&page_id)
+            .expect("cached page missing")
+            .as_ref())
     }
 }
 
