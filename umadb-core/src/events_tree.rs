@@ -7,6 +7,7 @@ use crate::mvcc::{Mvcc, Writer};
 use crate::node::Node;
 use crate::page::{PAGE_HEADER_SIZE, Page};
 use std::collections::HashMap;
+use std::sync::Arc;
 use umadb_dcb::{DcbError, DcbResult};
 
 // Helpers for storing large event data across overflow pages
@@ -472,7 +473,7 @@ pub struct EventIterator<'a> {
     pub mvcc: &'a Mvcc,
     pub dirty: &'a HashMap<PageID, Page>,
     pub stack: Vec<(PageID, Option<usize>)>,
-    pub page_cache: HashMap<PageID, Page>,
+    pub page_cache: HashMap<PageID, Arc<Page>>,
     pub start: Option<Position>, // inclusive position, better for binary search
     pub backwards: bool,
 }
@@ -520,13 +521,14 @@ impl<'a> EventIterator<'a> {
                 let page_ref: &Page = if let Some(p) = self.dirty.get(&page_id) {
                     p
                 } else if let Some(p) = self.page_cache.get(&page_id) {
-                    p
+                    p.as_ref()
                 } else {
                     let page_arc = self.mvcc.read_page(page_id)?;
-                    self.page_cache.insert(page_id, (*page_arc).clone());
+                    self.page_cache.insert(page_id, page_arc);
                     self.page_cache
                         .get(&page_id)
                         .expect("page should be in cache")
+                        .as_ref()
                 };
 
                 match &page_ref.node {
