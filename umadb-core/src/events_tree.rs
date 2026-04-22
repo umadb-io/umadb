@@ -6,7 +6,6 @@ use crate::events_tree_nodes::{
 use crate::mvcc::{Mvcc, Writer};
 use crate::node::Node;
 use crate::page::{PAGE_HEADER_SIZE, Page};
-use std::borrow::Cow;
 use std::collections::HashMap;
 use umadb_dcb::{DcbError, DcbResult};
 
@@ -60,25 +59,34 @@ fn read_overflow_chain(
 ) -> DcbResult<Vec<u8>> {
     let mut out: Vec<u8> = Vec::new();
     while page_id.0 != 0 {
-        // Prefer the dirty (unflushed) page if present; otherwise read from disk
-        let page = if let Some(p) = dirty.get(&page_id) {
-            Cow::Borrowed(p)
-        } else {
-            Cow::Owned((*mvcc.read_page(page_id)?).clone())
-        };
-        match &page.node {
+        page_id = with_page(mvcc, dirty, page_id, |page| match &page.node {
             Node::EventOverflow(node) => {
                 out.extend_from_slice(&node.data);
-                page_id = node.next;
+                Ok(node.next)
             }
-            _ => {
-                return Err(DcbError::DatabaseCorrupted(
-                    "Expected EventOverflow node".to_string(),
-                ));
-            }
-        }
+            _ => Err(DcbError::DatabaseCorrupted(
+                "Expected EventOverflow node".to_string(),
+            )),
+        })?;
     }
     Ok(out)
+}
+
+fn with_page<T, F>(
+    mvcc: &Mvcc,
+    dirty: &HashMap<PageID, Page>,
+    page_id: PageID,
+    f: F,
+) -> DcbResult<T>
+where
+    F: FnOnce(&Page) -> DcbResult<T>,
+{
+    if let Some(page) = dirty.get(&page_id) {
+        f(page)
+    } else {
+        let page = mvcc.read_page(page_id)?;
+        f(&page)
+    }
 }
 
 fn materialize_event_value(
@@ -417,46 +425,45 @@ pub fn event_tree_lookup(
     events_tree_root_id: PageID,
     position: Position,
 ) -> DcbResult<EventRecord> {
+    enum LookupStep {
+        Next(PageID),
+        Found(EventRecord),
+    }
+
     let mut current_page_id: PageID = events_tree_root_id;
     loop {
-        // Prefer the dirty (unflushed) page if present; otherwise read from disk
-        let page = if let Some(p) = dirty.get(&current_page_id) {
-            Cow::Borrowed(p)
-        } else {
-            let p_arc = mvcc.read_page(current_page_id)?;
-            Cow::Owned((*p_arc).clone())
-        };
-        match &page.node {
-            Node::EventInternal(internal) => {
-                // Choose child based on upper bound of position in separator keys
-                let idx = match internal.keys.binary_search(&position) {
-                    Ok(i) => i + 1,
-                    Err(i) => i,
-                };
-                if idx >= internal.child_ids.len() {
-                    return Err(DcbError::DatabaseCorrupted(
-                        "Child index out of bounds in event tree".to_string(),
-                    ));
+        let step = with_page(mvcc, dirty, current_page_id, |page| match &page.node {
+                Node::EventInternal(internal) => {
+                    // Choose child based on upper bound of position in separator keys
+                    let idx = match internal.keys.binary_search(&position) {
+                        Ok(i) => i + 1,
+                        Err(i) => i,
+                    };
+                    if idx >= internal.child_ids.len() {
+                        return Err(DcbError::DatabaseCorrupted(
+                            "Child index out of bounds in event tree".to_string(),
+                        ));
+                    }
+                    Ok(LookupStep::Next(internal.child_ids[idx]))
                 }
-                current_page_id = internal.child_ids[idx];
-            }
-            Node::EventLeaf(leaf) => {
-                return match leaf.keys.binary_search(&position) {
+                Node::EventLeaf(leaf) => match leaf.keys.binary_search(&position) {
                     Ok(i) => {
                         let rec = materialize_event_value(mvcc, dirty, &leaf.values[i])?;
-                        Ok(rec)
+                        Ok(LookupStep::Found(rec))
                     }
                     Err(_) => Err(DcbError::DatabaseCorrupted(format!(
                         "Event at position {position:?} not found",
                     ))),
-                };
-            }
-            _ => {
-                return Err(DcbError::DatabaseCorrupted(format!(
+                },
+                _ => Err(DcbError::DatabaseCorrupted(format!(
                     "Expected EventInternal or EventLeaf node in event tree, got {}",
                     page.node.type_name()
-                )));
-            }
+                ))),
+            })?;
+
+        match step {
+            LookupStep::Next(next_page_id) => current_page_id = next_page_id,
+            LookupStep::Found(rec) => return Ok(rec),
         }
     }
 }
