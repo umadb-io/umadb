@@ -348,22 +348,55 @@ impl Mvcc {
 
     pub fn get_latest_header(&self) -> DcbResult<(PageID, HeaderNode)> {
         for attempt in 0..GET_LATEST_HEADER_RETRIES {
-            let h0 = self.read_header(HEADER_PAGE_ID_0);
-            let h1 = self.read_header(HEADER_PAGE_ID_1);
+            let h0 = self.read_page(HEADER_PAGE_ID_0);
+            let h1 = self.read_page(HEADER_PAGE_ID_1);
 
             match (h0, h1) {
-                (Ok(header0), Ok(header1)) => {
+                (Ok(page0), Ok(page1)) => {
+                    let header0 = match &page0.node {
+                        Node::Header(node) => node,
+                        _ => {
+                            return Err(DcbError::DatabaseCorrupted(
+                                "Invalid header node type".to_string(),
+                            ));
+                        }
+                    };
+                    let header1 = match &page1.node {
+                        Node::Header(node) => node,
+                        _ => {
+                            return Err(DcbError::DatabaseCorrupted(
+                                "Invalid header node type".to_string(),
+                            ));
+                        }
+                    };
+
                     if header1.tsn > header0.tsn {
-                        return Ok((HEADER_PAGE_ID_1, header1));
+                        return Ok((HEADER_PAGE_ID_1, header1.clone()));
                     } else {
-                        return Ok((HEADER_PAGE_ID_0, header0));
+                        return Ok((HEADER_PAGE_ID_0, header0.clone()));
                     }
                 }
-                (Ok(header0), Err(_)) => {
-                    return Ok((HEADER_PAGE_ID_0, header0));
+                (Ok(page0), Err(_)) => {
+                    let header0 = match &page0.node {
+                        Node::Header(node) => node,
+                        _ => {
+                            return Err(DcbError::DatabaseCorrupted(
+                                "Invalid header node type".to_string(),
+                            ));
+                        }
+                    };
+                    return Ok((HEADER_PAGE_ID_0, header0.clone()));
                 }
-                (Err(_), Ok(header1)) => {
-                    return Ok((HEADER_PAGE_ID_1, header1));
+                (Err(_), Ok(page1)) => {
+                    let header1 = match &page1.node {
+                        Node::Header(node) => node,
+                        _ => {
+                            return Err(DcbError::DatabaseCorrupted(
+                                "Invalid header node type".to_string(),
+                            ));
+                        }
+                    };
+                    return Ok((HEADER_PAGE_ID_1, header1.clone()));
                 }
                 (Err(e0), Err(e1)) => {
                     if attempt + 1 < GET_LATEST_HEADER_RETRIES {
@@ -390,16 +423,6 @@ impl Mvcc {
         Err(DcbError::DatabaseCorrupted(
             "Unable to read a valid header".to_string(),
         ))
-    }
-
-    pub fn read_header(&self, page_id: PageID) -> DcbResult<HeaderNode> {
-        let page = self.read_page(page_id)?;
-        match &page.node {
-            Node::Header(node) => Ok(node.clone()),
-            _ => Err(DcbError::DatabaseCorrupted(
-                "Invalid header node type".to_string(),
-            )),
-        }
     }
 
     fn update_header(
@@ -4383,7 +4406,11 @@ mod tests {
             let mvcc = Mvcc::new(&db_path, page_size, verbose).expect("must create new db");
 
             // 2) Read header[0], bump its schema_version, write it back via pager
-            let mut h0 = mvcc.read_header(HEADER_PAGE_ID_0).expect("read header 0");
+            let h0 = mvcc.read_page(HEADER_PAGE_ID_0).expect("read header 0");
+            let mut h0 = match &h0.node {
+                Node::Header(node) => node.clone(),
+                _ => panic!("Page 0 is not a header"),
+            };
             h0.schema_version = DB_SCHEMA_VERSION + 1;
 
             // Recreate a Page with modified header and write it
