@@ -710,7 +710,7 @@ pub struct Writer {
     pub next_position: Position,
     pub reusable_page_ids: VecDeque<(PageID, Tsn)>,
     pub freed_page_ids: VecDeque<PageID>,
-    pub deserialized: HashMap<PageID, Page>,
+    pub deserialized: HashMap<PageID, Arc<Page>>,
     pub dirty: HashMap<PageID, Page>,
     pub reused_page_ids: VecDeque<(PageID, Tsn)>,
     pub verbose: bool,
@@ -783,7 +783,7 @@ impl Writer {
 
         // Need to deserialize the page
         let deserialized_page = mvcc.read_page(page_id)?;
-        self.insert_deserialized((*deserialized_page).clone());
+        self.insert_deserialized(deserialized_page);
 
         // Return the deserialized page
         Ok(self.deserialized.get(&page_id).unwrap())
@@ -797,7 +797,7 @@ impl Writer {
         }
     }
 
-    pub fn insert_deserialized(&mut self, page: Page) {
+    pub fn insert_deserialized(&mut self, page: Arc<Page>) {
         self.deserialized.insert(page.page_id, page);
     }
 
@@ -831,12 +831,14 @@ impl Writer {
                 self.freed_page_ids.push_back(old_page_id);
 
                 let new_page_id = self.alloc_page_id();
-                let mut new_page = self.deserialized.remove(&old_page_id).ok_or_else(|| {
+                let mut new_page = Arc::unwrap_or_clone(
+                    self.deserialized.remove(&old_page_id).ok_or_else(|| {
                     DcbError::DatabaseCorrupted(format!(
                         "Deserialized page {:?} not found while marking dirty",
                         old_page_id
                     ))
-                })?;
+                })?,
+                );
                 new_page.page_id = new_page_id;
 
                 self.dirty.insert(new_page_id, new_page);
