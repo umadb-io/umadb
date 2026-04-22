@@ -459,22 +459,30 @@ impl Mvcc {
         }
 
         // Otherwise deserialize from a serialized page.
-        match self.read_method {
+        let page = match self.read_method {
             ReadMethod::Mmap => {
                 let mapped = self.pager.read_page_mmap_slice(page_id)?;
                 if self.verbose {
                     println!("Read {page_id:?} from mmap, deserializing...");
                 }
-                Page::deserialize(page_id, mapped.as_slice())
+                Page::deserialize(page_id, mapped.as_slice())?
             },
             ReadMethod::FileIo => {
                 let page = self.pager.read_page(page_id)?;
                 if self.verbose {
                     println!("Read {page_id:?} from file, deserializing...");
                 }
-                Page::deserialize(page_id, &page)
+                Page::deserialize(page_id, &page)?
             }
+        };
+
+        // Cache the newly read page.
+        if let Some(ref page_cache_arc) = self.page_cache {
+            let mut page_cache = page_cache_arc.lock().unwrap();
+            page_cache.put(page_id, page.clone());
         }
+
+        Ok(page)
     }
 
     pub fn fsync(&self) -> DcbResult<()> {
