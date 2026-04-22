@@ -28,9 +28,13 @@ impl Page {
         PAGE_HEADER_SIZE + self.node.calc_serialized_size()
     }
 
-    /// Serialized page (header + body + zero padding) into `buf`.
-    pub fn serialize_into(&self, buf: &mut [u8]) -> DcbResult<()> {
-        serialize_page_into(buf, &self.node)?;
+    /// Serialized page (header + body) into `buf`, optionally zero-filling unused tail bytes.
+    pub fn serialize_into_with_zero_fill(
+        &self,
+        buf: &mut [u8],
+        zero_fill_remainder: bool,
+    ) -> DcbResult<()> {
+        serialize_page_into(buf, &self.node, zero_fill_remainder)?;
         Ok(())
     }
 
@@ -74,14 +78,22 @@ impl Page {
     }
 }
 
-pub fn serialize_page_into(buf: &mut [u8], node_ref: &Node) -> DcbResult<()> {
-    let body_len = serialize_page_node_into(buf, node_ref)?;
+pub fn serialize_page_into(
+    buf: &mut [u8],
+    node_ref: &Node,
+    zero_fill_remainder: bool,
+) -> DcbResult<()> {
+    let body_len = serialize_page_node_into(buf, node_ref, zero_fill_remainder)?;
     serialize_page_header_into(buf, body_len, node_ref.get_type_byte());
     Ok(())
 }
 
 #[inline(always)]
-fn serialize_page_node_into(buf: &mut [u8], node_ref: &Node) -> DcbResult<usize> {
+fn serialize_page_node_into(
+    buf: &mut [u8],
+    node_ref: &Node,
+    zero_fill_remainder: bool,
+) -> DcbResult<usize> {
     // Serialize body into the front of the body region using the space after header
     let body_len = {
         let body_slice = &mut buf[PAGE_HEADER_SIZE..];
@@ -90,7 +102,7 @@ fn serialize_page_node_into(buf: &mut [u8], node_ref: &Node) -> DcbResult<usize>
 
     // Zero-fill the remainder of the page after the serialized body
     let tail_start = PAGE_HEADER_SIZE + body_len;
-    if tail_start < buf.len() {
+    if zero_fill_remainder && tail_start < buf.len() {
         buf[tail_start..].fill(0);
     }
     Ok(body_len)
@@ -143,7 +155,7 @@ mod tests {
 
         // Serialize the page into a fixed-size buffer using serialize_into_vec
         let mut page_buf = vec![0u8; crate::db::DEFAULT_PAGE_SIZE];
-        page.serialize_into(&mut page_buf)
+        serialize_page_into(&mut page_buf, &page.node, true)
             .expect("Failed to serialize page into buffer");
 
         // Check that the effective serialized data size (header + body_len from header) matches the calculated size

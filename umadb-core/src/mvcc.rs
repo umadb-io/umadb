@@ -7,7 +7,9 @@ use crate::free_lists_tree_nodes::{
 };
 use crate::header_node::HeaderNode;
 use crate::node::Node;
-use crate::page::{PAGE_HEADER_SIZE, Page, serialize_page_into};
+use crate::page::{
+    PAGE_HEADER_SIZE, Page, serialize_page_into,
+};
 use crate::pager::Pager;
 use crate::tags_tree_nodes::TagsLeafNode;
 use crate::tags_tree_nodes::set_tag_key_width;
@@ -58,6 +60,7 @@ pub struct Mvcc {
     pub page_buf: Mutex<Vec<u8>>,
     reader_id_counter: AtomicUsize,
     pub verbose: bool,
+    pub zero_fill_pages: bool,
     read_method: ReadMethod,
     page_cache: Option<Cache<PageID, Arc<Page>>>,
 }
@@ -77,6 +80,15 @@ impl Mvcc {
             ReadMethod::Mmap => "memory map",
             ReadMethod::FileIo => "file I/O",
         });
+
+        let zero_fill_pages = std::env::var("UMADB_ZERO_FILL_PAGES")
+            .ok()
+            .and_then(|s| s.parse::<bool>().ok())
+            .unwrap_or(false);
+        println!(
+            "UmaDB zero-filling page remainder: {}",
+            if zero_fill_pages { "enabled" } else { "disabled" }
+        );
 
         let page_cache = if page_cache_size > 0 {
             println!("UmaDB page cache size is {} pages", page_cache_size);
@@ -106,6 +118,7 @@ impl Mvcc {
             page_buf: Mutex::new(vec![0u8; page_size]),
             reader_id_counter: AtomicUsize::new(0),
             verbose,
+            zero_fill_pages,
             read_method,
             page_cache
         };
@@ -238,7 +251,11 @@ impl Mvcc {
                                     }
                                     // Re-write the header pages with identical fields but schema_version=0
                                     let mut buf = mvcc.page_buf.lock().unwrap();
-                                    serialize_page_into(&mut buf, &hp.node)?;
+                                    serialize_page_into(
+                                        &mut buf,
+                                        &hp.node,
+                                        mvcc.zero_fill_pages,
+                                    )?;
                                     mvcc.pager.write_page(hp.page_id, &buf)?;
                                 }
                             }
@@ -452,7 +469,11 @@ impl Mvcc {
 
                 // Write node using pre-allocated buffer.
                 let mut buf = self.page_buf.lock().unwrap();
-                serialize_page_into(&mut buf, &header.node)?;
+                serialize_page_into(
+                    &mut buf,
+                    &header.node,
+                    self.zero_fill_pages,
+                )?;
                 self.pager.write_page(page_id, &buf)?;
                 Ok(())
             }
@@ -565,7 +586,7 @@ impl Mvcc {
         let mut buf = self.page_buf.lock().unwrap();
         let mut count = 0usize;
         for page in pages {
-            page.serialize_into(&mut buf)?;
+            page.serialize_into_with_zero_fill(&mut buf, self.zero_fill_pages)?;
             self.pager.write_page(page.page_id, &buf)?;
             if self.verbose {
                 println!("Wrote {:?} to file", page.page_id);
@@ -656,11 +677,13 @@ impl Mvcc {
         // Sync the file to disk
         self.fsync()?;
 
-        // Cache the new pages.
+        // Cache the new pages without cloning by draining dirty pages.
         if let Some(ref page_cache) = self.page_cache {
-            for page in writer.dirty.values() {
-                page_cache.insert(page.page_id, Arc::new(page.clone()));
+            for (page_id, page) in writer.dirty.drain() {
+                page_cache.insert(page_id, Arc::new(page));
             }
+        } else {
+            writer.dirty.clear();
         }
 
         // Mutate the owned header instance and serialize into the pre-allocated buffer
@@ -4417,7 +4440,8 @@ mod tests {
             let page = Page::new(HEADER_PAGE_ID_0, Node::Header(h0));
             {
                 let mut buf = mvcc.page_buf.lock().unwrap();
-                serialize_page_into(&mut buf, &page.node).expect("serialize header page");
+                serialize_page_into(&mut buf, &page.node, mvcc.zero_fill_pages)
+                    .expect("serialize header page");
                 mvcc.pager
                     .write_page(page.page_id, &buf)
                     .expect("write modified header 0");
