@@ -8,6 +8,7 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  UV_VERSION: 0.11.7
 
 jobs:
   read-bench-sweep:
@@ -26,7 +27,7 @@ jobs:
     - name: Install Python tools
       run: make install-python-tools
     - name: Run Read Bench Sweep
-      run: uv run python scripts/sweep_read_bench_across_read_method_and_page_cache_sizes.py
+      run: uv@${{ env.UV_VERSION }} run python scripts/sweep_read_bench_across_read_method_and_page_cache_sizes.py
 
   read-cond-bench-sweep:
     runs-on: ubuntu-latest
@@ -44,4 +45,4 @@ jobs:
     - name: Install Python tools
       run: make install-python-tools
     - name: Run Read Cond Bench Sweep
-      run: uv run python scripts/sweep_read_cond_bench_across_read_method_and_page_cache_sizes.py
+      run: uv@${{ env.UV_VERSION }} run python scripts/sweep_read_cond_bench_across_read_method_and_page_cache_sizes.py
