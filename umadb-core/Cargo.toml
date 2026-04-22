@@ -23,6 +23,7 @@ byteorder = "1"
 bitflags = "2"
 nix = { version = "0.30", features = ["fs"] }
 fs2 = "0.4"
+lru = "0.17"
 
 [dev-dependencies]
 tempfile = { workspace = true }

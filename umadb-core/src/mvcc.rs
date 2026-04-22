@@ -14,11 +14,13 @@ use crate::tags_tree_nodes::set_tag_key_width;
 use dashmap::DashMap;
 use std::collections::HashMap;
 use std::collections::VecDeque;
+use std::num::NonZeroUsize;
 use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::sleep;
 use std::time::Duration;
+use lru::LruCache;
 use umadb_dcb::DcbError::InternalError;
 use umadb_dcb::{DcbQuery, DcbResult, DcbError};
 
@@ -58,11 +60,13 @@ pub struct Mvcc {
     reader_id_counter: AtomicUsize,
     pub verbose: bool,
     read_method: ReadMethod,
+    page_cache: Arc<Mutex<LruCache<PageID, Page>>>,
 }
 
 impl Mvcc {
     pub fn new(path: &Path, page_size: usize, verbose: bool) -> DcbResult<Self> {
         let pager = Pager::new(path, page_size)?;
+        println!("UmaDB opened file {}", path.canonicalize()?.display());
 
         let mvcc = Self {
             pager,
@@ -85,6 +89,7 @@ impl Mvcc {
             reader_id_counter: AtomicUsize::new(0),
             verbose,
             read_method: ReadMethod::from_env(),
+            page_cache: Arc::new(Mutex::new(LruCache::new(NonZeroUsize::new(1000).unwrap())))
         };
 
         if mvcc.pager.is_file_new {
@@ -148,6 +153,7 @@ impl Mvcc {
 
             // Sync the file to disk.
             mvcc.fsync()?;
+
         } else {
             // Existing DB: hydrate headers from disk and set tag key width based on latest header
             if let Ok((_, header_latest)) = mvcc.get_latest_header() {
@@ -291,7 +297,44 @@ impl Mvcc {
                 }
             }
         }
-        println!("UmaDB opened file {}", path.canonicalize()?.display());
+
+        // Cache header pages.
+        {
+            if let Some(p0) = mvcc.read_page(HEADER_PAGE_ID_0).ok() {
+                let mut page_cache = mvcc.page_cache.lock().unwrap();
+                page_cache.put(p0.page_id, p0);
+            }
+            if let Some(p1) = mvcc.read_page(HEADER_PAGE_ID_1).ok() {
+                let mut page_cache = mvcc.page_cache.lock().unwrap();
+                page_cache.put(p1.page_id, p1);
+            }
+        }
+        // Cache tree root pages.
+        {
+            let (_, header_node) = mvcc.get_latest_header()?;
+            let page = mvcc.read_page(header_node.free_lists_tree_root_id)?;
+            {
+                let mut page_cache = mvcc.page_cache.lock().unwrap();
+                page_cache.put(page.page_id, page);
+            }
+            let page = mvcc.read_page(header_node.tags_tree_root_id)?;
+            {
+                let mut page_cache = mvcc.page_cache.lock().unwrap();
+                page_cache.put(page.page_id, page);
+            }
+            let page = mvcc.read_page(header_node.events_tree_root_id)?;
+            {
+                let mut page_cache = mvcc.page_cache.lock().unwrap();
+                page_cache.put(page.page_id, page);
+            }
+            if header_node.tracking_root_page_id != PageID(0) {
+                let page = mvcc.read_page(header_node.tracking_root_page_id)?;
+                {
+                    let mut page_cache = mvcc.page_cache.lock().unwrap();
+                    page_cache.put(page.page_id, page);
+                }
+            }
+        }
 
         Ok(mvcc)
     }
@@ -388,6 +431,15 @@ impl Mvcc {
     }
 
     pub fn read_page(&self, page_id: PageID) -> DcbResult<Page> {
+        // Try to clone the page from the deserialized page cache.
+        {
+            let mut page_cache = self.page_cache.lock().unwrap();
+            if let Some(page) = page_cache.get(&page_id) {
+                return Ok(page.clone());
+            }
+        }
+
+        // Otherwise deserialize from a serialized page.
         match self.read_method {
             ReadMethod::Mmap => {
                 let mapped = self.pager.read_page_mmap_slice(page_id)?;
@@ -567,13 +619,22 @@ impl Mvcc {
         // Sync the file to disk
         self.fsync()?;
 
-        // Mutate the owned header instance and serialize into the preallocated buffer
+        // Cache the new pages.
+        {
+            let mut page_cache = self.page_cache.lock().unwrap();
+            for page in writer.dirty.values() {
+                page_cache.put(page.page_id, page.clone());
+            }
+        }
+
+        // Mutate the owned header instance and serialize into the pre-allocated buffer
+        let (alternate_header_page_id, alternate_header_page_idx) = if writer.header_page_id == HEADER_PAGE_ID_0 {
+            (HEADER_PAGE_ID_1, 1)
+        } else {
+            (HEADER_PAGE_ID_0, 0)
+        };
         self.update_header(
-            if writer.header_page_id == HEADER_PAGE_ID_0 {
-                HEADER_PAGE_ID_1
-            } else {
-                HEADER_PAGE_ID_0
-            },
+            alternate_header_page_id,
             writer.tsn,
             writer.free_lists_tree_root_id,
             writer.events_tree_root_id,
@@ -585,6 +646,13 @@ impl Mvcc {
 
         // Sync the file to disk
         self.fsync()?;
+
+        // Cache the header page.
+        let header_page = self.headers.lock().unwrap()[alternate_header_page_idx].clone();
+        {
+            let mut page_cache = self.page_cache.lock().unwrap();
+            page_cache.put(header_page.page_id, header_page);
+        }
 
         if self.verbose {
             println!("Committed writer with {:?}", writer.tsn);
