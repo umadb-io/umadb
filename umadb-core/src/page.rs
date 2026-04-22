@@ -1,4 +1,5 @@
 use crate::common::PageID;
+use crate::header_node::HeaderNode;
 use crate::node::Node;
 use std::ops::Range;
 use umadb_dcb::{DcbError, DcbResult};
@@ -76,6 +77,23 @@ impl Page {
 
         Ok(Self { page_id, node })
     }
+
+    #[inline]
+    pub fn as_header_node(&self) -> DcbResult<&HeaderNode> {
+        match &self.node {
+            Node::Header(node) => Ok(node),
+            _ => Err(DcbError::DatabaseCorrupted(format!(
+                "Invalid header node type for page {:?}: {}",
+                self.page_id,
+                self.node.type_name()
+            ))),
+        }
+    }
+}
+
+#[inline]
+pub fn page_as_header_node(page: &Page) -> DcbResult<&HeaderNode> {
+    page.as_header_node()
 }
 
 pub fn serialize_page_into(

@@ -8,7 +8,7 @@ use crate::free_lists_tree_nodes::{
 use crate::header_node::HeaderNode;
 use crate::node::Node;
 use crate::page::{
-    PAGE_HEADER_SIZE, Page, serialize_page_into,
+    PAGE_HEADER_SIZE, Page, page_as_header_node, serialize_page_into,
 };
 use crate::pager::Pager;
 use crate::tags_tree_nodes::TagsLeafNode;
@@ -363,57 +363,29 @@ impl Mvcc {
         Ok(mvcc)
     }
 
-    pub fn get_latest_header(&self) -> DcbResult<(PageID, HeaderNode)> {
+    pub fn get_latest_header_page(&self) -> DcbResult<Arc<Page>> {
         for attempt in 0..GET_LATEST_HEADER_RETRIES {
             let h0 = self.read_page(HEADER_PAGE_ID_0);
             let h1 = self.read_page(HEADER_PAGE_ID_1);
 
             match (h0, h1) {
                 (Ok(page0), Ok(page1)) => {
-                    let header0 = match &page0.node {
-                        Node::Header(node) => node,
-                        _ => {
-                            return Err(DcbError::DatabaseCorrupted(
-                                "Invalid header node type".to_string(),
-                            ));
-                        }
-                    };
-                    let header1 = match &page1.node {
-                        Node::Header(node) => node,
-                        _ => {
-                            return Err(DcbError::DatabaseCorrupted(
-                                "Invalid header node type".to_string(),
-                            ));
-                        }
-                    };
+                    let header0 = page_as_header_node(&page0)?;
+                    let header1 = page_as_header_node(&page1)?;
 
                     if header1.tsn > header0.tsn {
-                        return Ok((HEADER_PAGE_ID_1, header1.clone()));
+                        return Ok(page1);
                     } else {
-                        return Ok((HEADER_PAGE_ID_0, header0.clone()));
+                        return Ok(page0);
                     }
                 }
                 (Ok(page0), Err(_)) => {
-                    let header0 = match &page0.node {
-                        Node::Header(node) => node,
-                        _ => {
-                            return Err(DcbError::DatabaseCorrupted(
-                                "Invalid header node type".to_string(),
-                            ));
-                        }
-                    };
-                    return Ok((HEADER_PAGE_ID_0, header0.clone()));
+                    let _ = page_as_header_node(&page0)?;
+                    return Ok(page0);
                 }
                 (Err(_), Ok(page1)) => {
-                    let header1 = match &page1.node {
-                        Node::Header(node) => node,
-                        _ => {
-                            return Err(DcbError::DatabaseCorrupted(
-                                "Invalid header node type".to_string(),
-                            ));
-                        }
-                    };
-                    return Ok((HEADER_PAGE_ID_1, header1.clone()));
+                    let _ = page_as_header_node(&page1)?;
+                    return Ok(page1);
                 }
                 (Err(e0), Err(e1)) => {
                     if attempt + 1 < GET_LATEST_HEADER_RETRIES {
@@ -440,6 +412,12 @@ impl Mvcc {
         Err(DcbError::DatabaseCorrupted(
             "Unable to read a valid header".to_string(),
         ))
+    }
+
+    pub fn get_latest_header(&self) -> DcbResult<(PageID, HeaderNode)> {
+        let header_page = self.get_latest_header_page()?;
+        let header_node = page_as_header_node(&header_page)?;
+        Ok((header_page.page_id, header_node.clone()))
     }
 
     fn update_header(
@@ -522,7 +500,8 @@ impl Mvcc {
     }
 
     pub fn reader(&self) -> DcbResult<Reader> {
-        let (header_page_id, header_node) = self.get_latest_header()?;
+        let header_page = self.get_latest_header_page()?;
+        let header_node = page_as_header_node(&header_page)?;
 
         // Generate a unique ID for this reader using the counter (lock-free)
         let reader_id = self.reader_id_counter.fetch_add(1, Ordering::Relaxed) + 1;
@@ -532,7 +511,7 @@ impl Mvcc {
 
         // Create the reader with the unique ID
         let reader = Reader {
-            header_page_id,
+            header_page_id: header_page.page_id,
             tsn: header_node.tsn,
             events_tree_root_id: header_node.events_tree_root_id,
             tags_tree_root_id: header_node.tags_tree_root_id,
@@ -552,11 +531,12 @@ impl Mvcc {
         }
 
         // Get the latest header
-        let (header_page_id, header_node) = self.get_latest_header()?;
+        let header_page = self.get_latest_header_page()?;
+        let header_node = page_as_header_node(&header_page)?;
 
         // Create the writer
         let mut writer = Writer::new(
-            header_page_id,
+            header_page.page_id,
             Tsn(header_node.tsn.0 + 1),
             header_node.next_page_id,
             header_node.free_lists_tree_root_id,

@@ -280,7 +280,8 @@ impl DcbEventStoreSync for UmaDb {
 
     fn head(&self) -> DcbResult<Option<u64>> {
         let db = &self.mvcc;
-        let (_, header) = db.get_latest_header()?;
+        let header_page = db.get_latest_header_page()?;
+        let header = header_page.as_header_node()?;
         let last = header.next_position.0.saturating_sub(1);
         if last == 0 { Ok(None) } else { Ok(Some(last)) }
     }

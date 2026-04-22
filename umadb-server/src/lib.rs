@@ -798,7 +798,8 @@ impl RequestHandler {
 
         // Initialize the head watch channel with the current head.
         let init_head = {
-            let (_, header) = mvcc.get_latest_header()?;
+            let header_page = mvcc.get_latest_header_page()?;
+            let header = header_page.as_header_node()?;
             let last = header.next_position.0.saturating_sub(1);
             if last == 0 { None } else { Some(last) }
         };
@@ -1030,9 +1031,12 @@ impl RequestHandler {
     }
 
     fn head(&self) -> DcbResult<Option<u64>> {
-        let (_, header) = self
+        let header_page = self
             .mvcc
-            .get_latest_header()
+            .get_latest_header_page()
+            .map_err(|e| DcbError::Corruption(format!("{e}")))?;
+        let header = header_page
+            .as_header_node()
             .map_err(|e| DcbError::Corruption(format!("{e}")))?;
         let last = header.next_position.0.saturating_sub(1);
         if last == 0 { Ok(None) } else { Ok(Some(last)) }
