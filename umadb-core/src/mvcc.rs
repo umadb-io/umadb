@@ -807,17 +807,21 @@ impl Writer {
                 self.freed_page_ids.push_back(old_page_id);
 
                 let new_page_id = self.alloc_page_id();
-                let old_page = self.deserialized.get(&old_page_id).unwrap();
-                let new_page = Page {
-                    page_id: new_page_id,
-                    node: old_page.node.clone(),
-                };
+                let mut new_page = self.deserialized.remove(&old_page_id).ok_or_else(|| {
+                    DcbError::DatabaseCorrupted(format!(
+                        "Deserialized page {:?} not found while marking dirty",
+                        old_page_id
+                    ))
+                })?;
+                new_page.page_id = new_page_id;
 
                 self.dirty.insert(new_page_id, new_page);
                 if self.verbose {
                     println!(
                         "Copied {:?} to {:?}: {:?}",
-                        old_page_id, new_page_id, old_page.node
+                        old_page_id,
+                        new_page_id,
+                        self.dirty.get(&new_page_id).unwrap().node
                     );
                 }
                 dirty_page_id = new_page_id;
