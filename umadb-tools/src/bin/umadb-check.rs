@@ -617,7 +617,7 @@ fn real_main() -> DcbResult<()> {
             for pid in &event_leaf_page_ids {
                 match mvcc.read_page(*pid) {
                     Ok(page) => {
-                        if let Node::EventLeaf(node) = page.node {
+                        if let Node::EventLeaf(node) = &page.node {
                             let mut matches: Vec<u64> = Vec::new();
                             for k in node.keys.iter() {
                                 let pos = k.0;

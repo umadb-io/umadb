@@ -873,8 +873,8 @@ impl<'a> TagsTreeIterator<'a> {
             return Ok(p);
         }
         if !self.page_cache.contains_key(&page_id) {
-            let page = self.db.read_page(page_id)?;
-            self.page_cache.insert(page_id, page);
+            let page_arc = self.db.read_page(page_id)?;
+            self.page_cache.insert(page_id, (*page_arc).clone());
         }
         Ok(self.page_cache.get(&page_id).expect("cached page missing"))
     }

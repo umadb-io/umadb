@@ -14,13 +14,12 @@ use crate::tags_tree_nodes::set_tag_key_width;
 use dashmap::DashMap;
 use std::collections::HashMap;
 use std::collections::VecDeque;
-use std::num::NonZeroUsize;
 use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::sleep;
 use std::time::Duration;
-use lru::LruCache;
+use moka::sync::Cache;
 use umadb_dcb::DcbError::InternalError;
 use umadb_dcb::{DcbQuery, DcbResult, DcbError};
 
@@ -60,7 +59,7 @@ pub struct Mvcc {
     reader_id_counter: AtomicUsize,
     pub verbose: bool,
     read_method: ReadMethod,
-    page_cache: Option<Arc<Mutex<LruCache<PageID, Page>>>>,
+    page_cache: Option<Cache<PageID, Arc<Page>>>,
 }
 
 impl Mvcc {
@@ -81,7 +80,7 @@ impl Mvcc {
 
         let page_cache = if page_cache_size > 0 {
             println!("UmaDB page cache size is {} pages", page_cache_size);
-            Some(Arc::new(Mutex::new(LruCache::new(NonZeroUsize::new(page_cache_size).unwrap()))))
+            Some(Cache::new(page_cache_size as u64))
         } else {
             println!("UmaDB page cache not enabled");
             None
@@ -197,10 +196,10 @@ impl Mvcc {
                 {
                     let mut headers = mvcc.headers.lock().unwrap();
                     if let Some(p0) = h0 {
-                        headers[0] = p0;
+                        headers[0] = (*p0).clone();
                     }
                     if let Some(p1) = h1 {
-                        headers[1] = p1;
+                        headers[1] = (*p1).clone();
                     }
                 }
 
@@ -318,40 +317,29 @@ impl Mvcc {
         }
 
         // Cache header pages.
-        if let Some(ref page_cache_arc) = mvcc.page_cache {
+        if let Some(ref page_cache) = mvcc.page_cache {
             if let Some(p0) = mvcc.read_page(HEADER_PAGE_ID_0).ok() {
-                let mut page_cache = page_cache_arc.lock().unwrap();
-                page_cache.put(p0.page_id, p0);
+                page_cache.insert(p0.page_id, p0);
             }
             if let Some(p1) = mvcc.read_page(HEADER_PAGE_ID_1).ok() {
-                let mut page_cache = page_cache_arc.lock().unwrap();
-                page_cache.put(p1.page_id, p1);
+                page_cache.insert(p1.page_id, p1);
             }
         }
         // Cache tree root pages.
-        if let Some(ref page_cache_arc) = mvcc.page_cache {
+        if let Some(ref page_cache) = mvcc.page_cache {
             let (_, header_node) = mvcc.get_latest_header()?;
             let page = mvcc.read_page(header_node.free_lists_tree_root_id)?;
-            {
-                let mut page_cache = page_cache_arc.lock().unwrap();
-                page_cache.put(page.page_id, page);
-            }
+            page_cache.insert(page.page_id, page);
+
             let page = mvcc.read_page(header_node.tags_tree_root_id)?;
-            {
-                let mut page_cache = page_cache_arc.lock().unwrap();
-                page_cache.put(page.page_id, page);
-            }
+            page_cache.insert(page.page_id, page);
+
             let page = mvcc.read_page(header_node.events_tree_root_id)?;
-            {
-                let mut page_cache = page_cache_arc.lock().unwrap();
-                page_cache.put(page.page_id, page);
-            }
+            page_cache.insert(page.page_id, page);
+
             if header_node.tracking_root_page_id != PageID(0) {
                 let page = mvcc.read_page(header_node.tracking_root_page_id)?;
-                {
-                    let mut page_cache = page_cache_arc.lock().unwrap();
-                    page_cache.put(page.page_id, page);
-                }
+                page_cache.insert(page.page_id, page);
             }
         }
 
@@ -406,8 +394,8 @@ impl Mvcc {
 
     pub fn read_header(&self, page_id: PageID) -> DcbResult<HeaderNode> {
         let page = self.read_page(page_id)?;
-        match page.node {
-            Node::Header(node) => Ok(node),
+        match &page.node {
+            Node::Header(node) => Ok(node.clone()),
             _ => Err(DcbError::DatabaseCorrupted(
                 "Invalid header node type".to_string(),
             )),
@@ -449,12 +437,11 @@ impl Mvcc {
         }
     }
 
-    pub fn read_page(&self, page_id: PageID) -> DcbResult<Page> {
-        // Try to clone the page from the deserialized page cache.
-        if let Some(ref page_cache_arc) = self.page_cache {
-            let mut page_cache = page_cache_arc.lock().unwrap();
+    pub fn read_page(&self, page_id: PageID) -> DcbResult<Arc<Page>> {
+        // Try to get the page from the deserialized page cache.
+        if let Some(ref page_cache) = self.page_cache {
             if let Some(page) = page_cache.get(&page_id) {
-                return Ok(page.clone());
+                return Ok(page);
             }
         }
 
@@ -475,11 +462,11 @@ impl Mvcc {
                 Page::deserialize(page_id, &page)?
             }
         };
+        let page = Arc::new(page);
 
         // Cache the newly read page.
-        if let Some(ref page_cache_arc) = self.page_cache {
-            let mut page_cache = page_cache_arc.lock().unwrap();
-            page_cache.put(page_id, page.clone());
+        if let Some(ref page_cache) = self.page_cache {
+            page_cache.insert(page_id, Arc::clone(&page));
         }
 
         Ok(page)
@@ -647,10 +634,9 @@ impl Mvcc {
         self.fsync()?;
 
         // Cache the new pages.
-        if let Some(ref page_cache_arc) = self.page_cache {
-            let mut page_cache = page_cache_arc.lock().unwrap();
+        if let Some(ref page_cache) = self.page_cache {
             for page in writer.dirty.values() {
-                page_cache.put(page.page_id, page.clone());
+                page_cache.insert(page.page_id, Arc::new(page.clone()));
             }
         }
 
@@ -676,9 +662,8 @@ impl Mvcc {
 
         // Cache the header page.
         let header_page = self.headers.lock().unwrap()[alternate_header_page_idx].clone();
-        if let Some(ref page_cache_arc) = self.page_cache {
-            let mut page_cache = page_cache_arc.lock().unwrap();
-            page_cache.put(header_page.page_id, header_page);
+        if let Some(ref page_cache) = self.page_cache {
+            page_cache.insert(header_page.page_id, Arc::new(header_page));
         }
 
         if self.verbose {
@@ -774,7 +759,7 @@ impl Writer {
 
         // Need to deserialize the page
         let deserialized_page = mvcc.read_page(page_id)?;
-        self.insert_deserialized(deserialized_page);
+        self.insert_deserialized((*deserialized_page).clone());
 
         // Return the deserialized page
         Ok(self.deserialized.get(&page_id).unwrap())

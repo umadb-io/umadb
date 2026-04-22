@@ -62,11 +62,11 @@ fn read_overflow_chain(
     while page_id.0 != 0 {
         // Prefer the dirty (unflushed) page if present; otherwise read from disk
         let page = if let Some(p) = dirty.get(&page_id) {
-            p.clone()
+            Cow::Borrowed(p)
         } else {
-            mvcc.read_page(page_id)?
+            Cow::Owned((*mvcc.read_page(page_id)?).clone())
         };
-        match page.node {
+        match &page.node {
             Node::EventOverflow(node) => {
                 out.extend_from_slice(&node.data);
                 page_id = node.next;
@@ -423,7 +423,8 @@ pub fn event_tree_lookup(
         let page = if let Some(p) = dirty.get(&current_page_id) {
             Cow::Borrowed(p)
         } else {
-            Cow::Owned(mvcc.read_page(current_page_id)?)
+            let p_arc = mvcc.read_page(current_page_id)?;
+            Cow::Owned((*p_arc).clone())
         };
         match &page.node {
             Node::EventInternal(internal) => {
@@ -514,8 +515,8 @@ impl<'a> EventIterator<'a> {
                 } else if let Some(p) = self.page_cache.get(&page_id) {
                     p
                 } else {
-                    let page = self.mvcc.read_page(page_id)?;
-                    self.page_cache.insert(page_id, page);
+                    let page_arc = self.mvcc.read_page(page_id)?;
+                    self.page_cache.insert(page_id, (*page_arc).clone());
                     self.page_cache
                         .get(&page_id)
                         .expect("page should be in cache")
@@ -1471,12 +1472,12 @@ mod tests {
         // Ensure an overflow page is used for storage
         let (_hdr_id, header) = db.get_latest_header().unwrap();
         let root = db.read_page(header.events_tree_root_id).unwrap();
-        match root.node {
+        match &root.node {
             Node::EventInternal(internal) => {
                 // Our key should be in the last child
                 let leaf_id = *internal.child_ids.last().unwrap();
                 let leaf_page = db.read_page(leaf_id).unwrap();
-                match leaf_page.node {
+                match &leaf_page.node {
                     Node::EventLeaf(leaf) => match &leaf.values[0] {
                         EventValue::Overflow { data_len, .. } => {
                             assert_eq!(*data_len as usize, data.len())
@@ -1527,11 +1528,11 @@ mod tests {
             }
             _ => panic!("Expected Overflow for very large event"),
         };
-        match root.node {
+        match &root.node {
             Node::EventInternal(internal) => {
                 let leaf_id = *internal.child_ids.last().unwrap();
                 let leaf_page = db.read_page(leaf_id).unwrap();
-                match leaf_page.node {
+                match &leaf_page.node {
                     Node::EventLeaf(leaf) => check_leaf(&leaf),
                     _ => panic!("Expected leaf"),
                 }

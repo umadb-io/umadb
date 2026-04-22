@@ -24,6 +24,7 @@ bitflags = "2"
 nix = { version = "0.30", features = ["fs"] }
 fs2 = "0.4"
 lru = "0.17"
+moka = { version = "0.12", features = ["sync"] }
 
 [dev-dependencies]
 tempfile = { workspace = true }

@@ -59,7 +59,7 @@ impl UmaDb {
         }
         loop {
             let page = self.mvcc.read_page(pid)?;
-            match page.node {
+            match &page.node {
                 Node::TrackingLeaf(node) => return Ok(node.get(source).map(|p| p.0)),
                 Node::TrackingInternal(internal) => {
                     let idx = match internal.keys.binary_search_by(|k| k.as_str().cmp(source)) {
