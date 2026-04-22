@@ -1,0 +1,47 @@
+name: Benchmark Sweeps
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  read-bench-sweep:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - name: Install Protoc
+      uses: arduino/setup-protoc@v3
+      with:
+        repo-token: ${{ secrets.GITHUB_TOKEN }}
+    - uses: actions/setup-python@v5
+      with:
+        python-version: "3.10"
+    - name: Install UV
+      run: make install-uv
+    - name: Install Python tools
+      run: make install-python-tools
+    - name: Run Read Bench Sweep
+      run: uv run python scripts/sweep_read_bench_across_read_method_and_page_cache_sizes.py
+
+  read-cond-bench-sweep:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - name: Install Protoc
+      uses: arduino/setup-protoc@v3
+      with:
+        repo-token: ${{ secrets.GITHUB_TOKEN }}
+    - uses: actions/setup-python@v5
+      with:
+        python-version: "3.10"
+    - name: Install UV
+      run: make install-uv
+    - name: Install Python tools
+      run: make install-python-tools
+    - name: Run Read Cond Bench Sweep
+      run: uv run python scripts/sweep_read_cond_bench_across_read_method_and_page_cache_sizes.py
