@@ -60,13 +60,32 @@ pub struct Mvcc {
     reader_id_counter: AtomicUsize,
     pub verbose: bool,
     read_method: ReadMethod,
-    page_cache: Arc<Mutex<LruCache<PageID, Page>>>,
+    page_cache: Option<Arc<Mutex<LruCache<PageID, Page>>>>,
 }
 
 impl Mvcc {
     pub fn new(path: &Path, page_size: usize, verbose: bool) -> DcbResult<Self> {
         let pager = Pager::new(path, page_size)?;
         println!("UmaDB opened file {}", path.canonicalize()?.display());
+
+        let page_cache_size = std::env::var("UMADB_PAGE_CACHE_SIZE")
+            .ok()
+            .and_then(|s| s.parse::<usize>().ok())
+            .unwrap_or(0);
+
+        let read_method = ReadMethod::from_env();
+        println!("UmaDB reading with {}", match read_method {
+            ReadMethod::Mmap => "memory map",
+            ReadMethod::FileIo => "file I/O",
+        });
+
+        let page_cache = if page_cache_size > 0 {
+            println!("UmaDB page cache size is {} pages", page_cache_size);
+            Some(Arc::new(Mutex::new(LruCache::new(NonZeroUsize::new(page_cache_size).unwrap()))))
+        } else {
+            println!("UmaDB page cache not enabled");
+            None
+        };
 
         let mvcc = Self {
             pager,
@@ -88,8 +107,8 @@ impl Mvcc {
             page_buf: Mutex::new(vec![0u8; page_size]),
             reader_id_counter: AtomicUsize::new(0),
             verbose,
-            read_method: ReadMethod::from_env(),
-            page_cache: Arc::new(Mutex::new(LruCache::new(NonZeroUsize::new(1000).unwrap())))
+            read_method,
+            page_cache
         };
 
         if mvcc.pager.is_file_new {
@@ -299,38 +318,38 @@ impl Mvcc {
         }
 
         // Cache header pages.
-        {
+        if let Some(ref page_cache_arc) = mvcc.page_cache {
             if let Some(p0) = mvcc.read_page(HEADER_PAGE_ID_0).ok() {
-                let mut page_cache = mvcc.page_cache.lock().unwrap();
+                let mut page_cache = page_cache_arc.lock().unwrap();
                 page_cache.put(p0.page_id, p0);
             }
             if let Some(p1) = mvcc.read_page(HEADER_PAGE_ID_1).ok() {
-                let mut page_cache = mvcc.page_cache.lock().unwrap();
+                let mut page_cache = page_cache_arc.lock().unwrap();
                 page_cache.put(p1.page_id, p1);
             }
         }
         // Cache tree root pages.
-        {
+        if let Some(ref page_cache_arc) = mvcc.page_cache {
             let (_, header_node) = mvcc.get_latest_header()?;
             let page = mvcc.read_page(header_node.free_lists_tree_root_id)?;
             {
-                let mut page_cache = mvcc.page_cache.lock().unwrap();
+                let mut page_cache = page_cache_arc.lock().unwrap();
                 page_cache.put(page.page_id, page);
             }
             let page = mvcc.read_page(header_node.tags_tree_root_id)?;
             {
-                let mut page_cache = mvcc.page_cache.lock().unwrap();
+                let mut page_cache = page_cache_arc.lock().unwrap();
                 page_cache.put(page.page_id, page);
             }
             let page = mvcc.read_page(header_node.events_tree_root_id)?;
             {
-                let mut page_cache = mvcc.page_cache.lock().unwrap();
+                let mut page_cache = page_cache_arc.lock().unwrap();
                 page_cache.put(page.page_id, page);
             }
             if header_node.tracking_root_page_id != PageID(0) {
                 let page = mvcc.read_page(header_node.tracking_root_page_id)?;
                 {
-                    let mut page_cache = mvcc.page_cache.lock().unwrap();
+                    let mut page_cache = page_cache_arc.lock().unwrap();
                     page_cache.put(page.page_id, page);
                 }
             }
@@ -432,8 +451,8 @@ impl Mvcc {
 
     pub fn read_page(&self, page_id: PageID) -> DcbResult<Page> {
         // Try to clone the page from the deserialized page cache.
-        {
-            let mut page_cache = self.page_cache.lock().unwrap();
+        if let Some(ref page_cache_arc) = self.page_cache {
+            let mut page_cache = page_cache_arc.lock().unwrap();
             if let Some(page) = page_cache.get(&page_id) {
                 return Ok(page.clone());
             }
@@ -620,8 +639,8 @@ impl Mvcc {
         self.fsync()?;
 
         // Cache the new pages.
-        {
-            let mut page_cache = self.page_cache.lock().unwrap();
+        if let Some(ref page_cache_arc) = self.page_cache {
+            let mut page_cache = page_cache_arc.lock().unwrap();
             for page in writer.dirty.values() {
                 page_cache.put(page.page_id, page.clone());
             }
@@ -649,8 +668,8 @@ impl Mvcc {
 
         // Cache the header page.
         let header_page = self.headers.lock().unwrap()[alternate_header_page_idx].clone();
-        {
-            let mut page_cache = self.page_cache.lock().unwrap();
+        if let Some(ref page_cache_arc) = self.page_cache {
+            let mut page_cache = page_cache_arc.lock().unwrap();
             page_cache.put(header_page.page_id, header_page);
         }
 
