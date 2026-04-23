@@ -7,9 +7,11 @@ import statistics
 # Configuration
 READ_METHODS = ["mmap", "fileio"]
 CACHE_SIZES = ["0", "1000", "10000"]
+# CACHE_SIZES = ["0", "1000"]
 # Criterion FILTER can be a regex, but we just filter for one at a time to be safe or run all and parse
-BENCH_COMMAND_BASE = ["cargo", "bench", "--bench", "grpc_read_bench", "--"]
+BENCH_COMMAND_BASE = ["cargo", "bench", "--bench", "grpc_read_cond_bench", "--"]
 # We will use a smaller set of threads for quick assessment
+# THREADS = ["1", "8", "64", "256"]
 THREADS = ["1", "2", "4", "8"]
 
 results = []
@@ -22,13 +24,13 @@ print("-" * 40)
 
 for method in READ_METHODS:
     for cache_size in CACHE_SIZES:
-        print(f"Running config: UMADB_READ_METHOD={method}, UMADB_PAGE_CACHE_SIZE={cache_size}")
+        print(f"Running config: UMADB_READ_METHOD={method}, UMADB_PAGE_CACHE_MAX_PAGES={cache_size}")
         
         env = os.environ.copy()
         env["UMADB_READ_METHOD"] = method
-        env["UMADB_PAGE_CACHE_SIZE"] = cache_size
+        env["UMADB_PAGE_CACHE_MAX_PAGES"] = cache_size
         # Limit threads in the benchmark to speed things up
-        env["MAX_THREADS"] = "256"
+        env["MAX_THREADS"] = THREADS[-1]
         
         # Run the benchmark
         # Filter for specific thread counts if possible, or just run and parse

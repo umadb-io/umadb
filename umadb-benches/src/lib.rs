@@ -583,3 +583,81 @@ pub mod bench_api {
             .collect()
     }
 }
+
+#[cfg(test)]
+mod memory_tests {
+    use super::bench_api::comprehensive_full_page_samples;
+    use memory_stats::memory_stats;
+    use std::hint::black_box;
+    use sysinfo::{Pid, Process, ProcessesToUpdate, System};
+    use umadb_core::page::page_approx_deserialized_bytes;
+
+    fn get_process_memory(process: &Process) -> u64 {
+        // If the process is the current one, use memory_stats for better accuracy
+        if process.pid().as_u32() == std::process::id() {
+            if let Some(usage) = memory_stats() {
+                return usage.physical_mem as u64;
+            }
+        }
+        process.memory()
+    }
+
+    #[test]
+    fn compare_actual_vs_approx_memory_for_1000_page_clones() {
+        let mut sys = System::new_all();
+        let pid = Pid::from_u32(std::process::id());
+
+        sys.refresh_processes(ProcessesToUpdate::Some(&[pid]), true);
+        let process_before = sys.process(pid).expect("current process not found");
+        let mem_before = get_process_memory(process_before);
+
+        let base_pages = comprehensive_full_page_samples();
+        let copies_per_page = 1000usize;
+        let total_instances = base_pages.len() * copies_per_page;
+
+        let mut clones = Vec::with_capacity(total_instances);
+        let mut approx_total_bytes = 0usize;
+
+        for page in &base_pages {
+            let approx_one = page_approx_deserialized_bytes(page);
+            approx_total_bytes = approx_total_bytes.saturating_add(approx_one * copies_per_page);
+
+            for _ in 0..copies_per_page {
+                clones.push(page.clone());
+            }
+        }
+
+        // Keep clones alive and prevent optimization
+        black_box(&clones);
+
+        sys.refresh_processes(ProcessesToUpdate::Some(&[pid]), true);
+        let process_after = sys
+            .process(pid)
+            .expect("current process not found after clone");
+        let mem_after = get_process_memory(process_after);
+
+        let actual_extra_bytes = mem_after.saturating_sub(mem_before) as usize;
+        let diff = actual_extra_bytes.abs_diff(approx_total_bytes);
+        let ratio = if approx_total_bytes > 0 {
+            actual_extra_bytes as f64 / approx_total_bytes as f64
+        } else {
+            0.0
+        };
+
+        println!(
+            "pages={}, copies_per_page={}, total_instances={}\nactual_extra_bytes={}\napprox_total_bytes={}\ndiff_bytes={}\nactual/approx={:.3}",
+            base_pages.len(),
+            copies_per_page,
+            total_instances,
+            actual_extra_bytes,
+            approx_total_bytes,
+            diff,
+            ratio
+        );
+
+        assert!(
+            actual_extra_bytes > 0,
+            "expected memory increase after cloning pages"
+        );
+    }
+}

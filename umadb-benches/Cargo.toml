@@ -12,7 +12,9 @@ umadb-dcb = { path = "../umadb-dcb", version = "0.5.2"}
 umadb-core = { path = "../umadb-core", version = "0.5.2"}
 umadb-client = { path = "../umadb-client", version = "0.5.2"}
 umadb-server = { path = "../umadb-server", version = "0.5.2"}
+memory-stats = "1.2"
 futures = { workspace = true }
+sysinfo = "0.33"
 tempfile = { workspace = true }
 tokio = { workspace = true }
 criterion = { version = "0.8.2", features = ["html_reports", "csv_output"] }

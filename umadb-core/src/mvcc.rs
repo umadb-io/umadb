@@ -71,11 +71,11 @@ impl Mvcc {
         let pager = Pager::new(path, page_size)?;
         println!("UmaDB opened file {}", path.canonicalize()?.display());
 
-        let page_cache_size = std::env::var("UMADB_PAGE_CACHE_SIZE")
+        let page_cache_max_pages = std::env::var("UMADB_PAGE_CACHE_MAX_PAGES")
             .ok()
             .and_then(|s| s.parse::<usize>().ok())
             .unwrap_or(0);
-        let page_cache_memory_bytes = std::env::var("UMADB_PAGE_CACHE_MEMORY_BYTES")
+        let page_cache_max_mb = std::env::var("UMADB_PAGE_CACHE_MAX_MB")
             .ok()
             .and_then(|s| s.parse::<usize>().ok())
             .unwrap_or(0);
@@ -95,22 +95,22 @@ impl Mvcc {
             if zero_fill_pages { "enabled" } else { "disabled" }
         );
 
-        let page_cache = if page_cache_memory_bytes > 0 {
+        let page_cache = if page_cache_max_mb > 0 {
             println!(
-                "UmaDB page cache size is {} bytes (approx deserialized weights)",
-                page_cache_memory_bytes
+                "UmaDB page cache max MB: {}",
+                page_cache_max_mb
             );
             Some(
                 Cache::builder()
-                    .max_capacity(page_cache_memory_bytes as u64)
+                    .max_capacity(1000000 * page_cache_max_mb as u64)
                     .weigher(|_page_id, page: &Arc<Page>| {
                         page_approx_deserialized_bytes(page.as_ref()).min(u32::MAX as usize) as u32
                     })
                     .build(),
             )
-        } else if page_cache_size > 0 {
-            println!("UmaDB page cache size is {} pages", page_cache_size);
-            Some(Cache::new(page_cache_size as u64))
+        } else if page_cache_max_pages > 0 {
+            println!("UmaDB page cache max pages: {}", page_cache_max_pages);
+            Some(Cache::new(page_cache_max_pages as u64))
         } else {
             println!("UmaDB page cache not enabled");
             None
