@@ -91,8 +91,8 @@ impl Mvcc {
             .and_then(|s| s.parse::<bool>().ok())
             .unwrap_or(true);
         println!(
-            "UmaDB zero-filling page remainder: {}",
-            if zero_fill_pages { "enabled" } else { "disabled" }
+            "UmaDB zero-fill pages: {}",
+            if zero_fill_pages { "true" } else { "false" }
         );
 
         let page_cache = if page_cache_max_mb > 0 {
