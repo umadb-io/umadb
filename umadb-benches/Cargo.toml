@@ -73,6 +73,14 @@ harness = false
 name = "event_leaf_node_bench"
 harness = false
 
+[[bench]]
+name = "page_approx_deserialized_bytes_bench"
+harness = false
+
+[[bench]]
+name = "page_deserialize_bench"
+harness = false
+
 [[bin]]
 name = "throughput_vs_volume"
 path = "src/bin/throughput_vs_volume.rs"

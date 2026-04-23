@@ -8,7 +8,8 @@ use crate::free_lists_tree_nodes::{
 use crate::header_node::HeaderNode;
 use crate::node::Node;
 use crate::page::{
-    PAGE_HEADER_SIZE, Page, page_as_header_node, serialize_page_into,
+    PAGE_HEADER_SIZE, Page, page_approx_deserialized_bytes, page_as_header_node,
+    serialize_page_into,
 };
 use crate::pager::Pager;
 use crate::tags_tree_nodes::TagsLeafNode;
@@ -74,6 +75,10 @@ impl Mvcc {
             .ok()
             .and_then(|s| s.parse::<usize>().ok())
             .unwrap_or(0);
+        let page_cache_memory_bytes = std::env::var("UMADB_PAGE_CACHE_MEMORY_BYTES")
+            .ok()
+            .and_then(|s| s.parse::<usize>().ok())
+            .unwrap_or(0);
 
         let read_method = ReadMethod::from_env();
         println!("UmaDB reading with {}", match read_method {
@@ -90,7 +95,20 @@ impl Mvcc {
             if zero_fill_pages { "enabled" } else { "disabled" }
         );
 
-        let page_cache = if page_cache_size > 0 {
+        let page_cache = if page_cache_memory_bytes > 0 {
+            println!(
+                "UmaDB page cache size is {} bytes (approx deserialized weights)",
+                page_cache_memory_bytes
+            );
+            Some(
+                Cache::builder()
+                    .max_capacity(page_cache_memory_bytes as u64)
+                    .weigher(|_page_id, page: &Arc<Page>| {
+                        page_approx_deserialized_bytes(page.as_ref()).min(u32::MAX as usize) as u32
+                    })
+                    .build(),
+            )
+        } else if page_cache_size > 0 {
             println!("UmaDB page cache size is {} pages", page_cache_size);
             Some(Cache::new(page_cache_size as u64))
         } else {
