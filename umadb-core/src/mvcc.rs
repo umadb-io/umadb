@@ -89,7 +89,7 @@ impl Mvcc {
         let zero_fill_pages = std::env::var("UMADB_ZERO_FILL_PAGES")
             .ok()
             .and_then(|s| s.parse::<bool>().ok())
-            .unwrap_or(false);
+            .unwrap_or(true);
         println!(
             "UmaDB zero-filling page remainder: {}",
             if zero_fill_pages { "enabled" } else { "disabled" }
