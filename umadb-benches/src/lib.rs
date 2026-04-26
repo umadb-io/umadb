@@ -586,11 +586,35 @@ pub mod bench_api {
 
 #[cfg(test)]
 mod memory_tests {
-    use super::bench_api::comprehensive_full_page_samples;
+    use super::bench_api::{comprehensive_full_page_samples, comprehensive_page_samples};
     use memory_stats::memory_stats;
+    use std::cmp::Ordering;
+    use std::collections::HashMap;
     use std::hint::black_box;
     use sysinfo::{Pid, Process, ProcessesToUpdate, System};
     use umadb_core::page::page_approx_deserialized_bytes;
+
+    struct PerTypeMemoryRow {
+        kind: &'static str,
+        copies: usize,
+        actual_extra_bytes: usize,
+        approx_total_bytes: usize,
+        ratio: f64,
+    }
+
+    fn mib(bytes: usize) -> f64 {
+        bytes as f64 / (1024.0 * 1024.0)
+    }
+
+    fn ratio_status(ratio: f64) -> &'static str {
+        if ratio <= 1.25 {
+            "OK"
+        } else if ratio <= 1.75 {
+            "WARN"
+        } else {
+            "HIGH"
+        }
+    }
 
     fn get_process_memory(process: &Process) -> u64 {
         // If the process is the current one, use memory_stats for better accuracy
@@ -600,6 +624,58 @@ mod memory_tests {
             }
         }
         process.memory()
+    }
+
+    fn measure_clone_memory_ratio(page: &umadb_core::page::Page, copies: usize) -> (usize, usize, f64) {
+        let mut sys = System::new_all();
+        let pid = Pid::from_u32(std::process::id());
+
+        sys.refresh_processes(ProcessesToUpdate::Some(&[pid]), true);
+        let process_before = sys.process(pid).expect("current process not found");
+        let mem_before = get_process_memory(process_before);
+
+        let approx_one = page_approx_deserialized_bytes(page);
+        let approx_total = approx_one.saturating_mul(copies);
+
+        let mut clones = Vec::with_capacity(copies);
+        for _ in 0..copies {
+            clones.push(page.clone());
+        }
+        black_box(&clones);
+
+        sys.refresh_processes(ProcessesToUpdate::Some(&[pid]), true);
+        let process_after = sys.process(pid).expect("current process not found after clone");
+        let mem_after = get_process_memory(process_after);
+
+        let actual_extra = mem_after.saturating_sub(mem_before) as usize;
+        let ratio = if approx_total > 0 {
+            actual_extra as f64 / approx_total as f64
+        } else {
+            0.0
+        };
+
+        (actual_extra, approx_total, ratio)
+    }
+
+    fn representative_page_by_type() -> Vec<umadb_core::page::Page> {
+        let mut pages_by_type: HashMap<&'static str, umadb_core::page::Page> = HashMap::new();
+
+        for page in comprehensive_page_samples() {
+            let key = page.node.type_name();
+            let page_approx = page_approx_deserialized_bytes(&page);
+            let keep_existing = pages_by_type
+                .get(key)
+                .map(|existing| page_approx_deserialized_bytes(existing) >= page_approx)
+                .unwrap_or(false);
+
+            if !keep_existing {
+                pages_by_type.insert(key, page);
+            }
+        }
+
+        let mut pages: Vec<_> = pages_by_type.into_values().collect();
+        pages.sort_by_key(|page| page.node.type_name());
+        pages
     }
 
     #[test]
@@ -658,6 +734,115 @@ mod memory_tests {
         assert!(
             actual_extra_bytes > 0,
             "expected memory increase after cloning pages"
+        );
+    }
+
+    #[test]
+    fn compare_actual_vs_approx_memory_per_page_type() {
+        let pages = representative_page_by_type();
+        assert!(!pages.is_empty(), "expected representative pages for all node types");
+
+        let mut rows: Vec<PerTypeMemoryRow> = Vec::with_capacity(pages.len());
+
+        let mut non_zero_increase_types = 0usize;
+        let mut measured_types = 0usize;
+
+        for page in pages {
+            let approx_one = page_approx_deserialized_bytes(&page).max(1);
+            let target_total_approx_bytes = 64usize * 1024 * 1024;
+            let copies = (target_total_approx_bytes / approx_one).clamp(4_000, 120_000);
+
+            let (actual_extra_bytes, approx_total_bytes, ratio) =
+                measure_clone_memory_ratio(&page, copies);
+
+            rows.push(PerTypeMemoryRow {
+                kind: page.node.type_name(),
+                copies,
+                actual_extra_bytes,
+                approx_total_bytes,
+                ratio,
+            });
+
+            measured_types += 1;
+            if actual_extra_bytes > 0 {
+                non_zero_increase_types += 1;
+            }
+
+            assert!(
+                approx_total_bytes > 0,
+                "expected non-zero approx bytes for type {}",
+                page.node.type_name()
+            );
+            assert!(
+                ratio.is_finite() && ratio < 12.0,
+                "unexpected actual/approx ratio for {}: {:.3}",
+                page.node.type_name(),
+                ratio
+            );
+        }
+
+        rows.sort_by(|a, b| b.ratio.partial_cmp(&a.ratio).unwrap_or(Ordering::Equal));
+
+        println!(
+            "{:<20} {:>8} {:>12} {:>12} {:>8} {:>8}",
+            "Type", "Copies", "Actual MiB", "Approx MiB", "Ratio", "Status"
+        );
+        println!("{}", "-".repeat(78));
+        for row in &rows {
+            println!(
+                "{:<20} {:>8} {:>12.2} {:>12.2} {:>7.2}x {:>8}",
+                row.kind,
+                row.copies,
+                mib(row.actual_extra_bytes),
+                mib(row.approx_total_bytes),
+                row.ratio,
+                ratio_status(row.ratio)
+            );
+        }
+
+        let mut sorted_ratios: Vec<f64> = rows.iter().map(|r| r.ratio).collect();
+        sorted_ratios.sort_by(|a, b| a.partial_cmp(b).unwrap_or(Ordering::Equal));
+        let median_ratio = if sorted_ratios.is_empty() {
+            0.0
+        } else if sorted_ratios.len() % 2 == 0 {
+            let right = sorted_ratios.len() / 2;
+            let left = right - 1;
+            (sorted_ratios[left] + sorted_ratios[right]) / 2.0
+        } else {
+            sorted_ratios[sorted_ratios.len() / 2]
+        };
+        let avg_ratio = if rows.is_empty() {
+            0.0
+        } else {
+            rows.iter().map(|r| r.ratio).sum::<f64>() / rows.len() as f64
+        };
+        let high_count = rows.iter().filter(|r| ratio_status(r.ratio) == "HIGH").count();
+        if let Some(worst) = rows.first() {
+            println!(
+                "summary: worst={} ({:.2}x), median={:.2}x, avg={:.2}x, high={}/{}",
+                worst.kind,
+                worst.ratio,
+                median_ratio,
+                avg_ratio,
+                high_count,
+                rows.len()
+            );
+            for (i, row) in rows.iter().take(3).enumerate() {
+                println!(
+                    "top{}: {} ratio={:.2}x actual={:.2}MiB approx={:.2}MiB status={}",
+                    i + 1,
+                    row.kind,
+                    row.ratio,
+                    mib(row.actual_extra_bytes),
+                    mib(row.approx_total_bytes),
+                    ratio_status(row.ratio)
+                );
+            }
+        }
+
+        assert!(
+            non_zero_increase_types >= measured_types / 2,
+            "expected measurable memory increase for most page types; got {non_zero_increase_types}/{measured_types}"
         );
     }
 }
