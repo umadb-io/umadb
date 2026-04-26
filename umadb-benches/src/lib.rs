@@ -590,14 +590,17 @@ mod memory_tests {
     use memory_stats::memory_stats;
     use std::cmp::Ordering;
     use std::collections::HashMap;
+    use std::env;
     use std::hint::black_box;
     use std::mem::size_of;
+    use std::process::Command;
+    use std::str;
     use std::sync::Arc;
     use sysinfo::{Pid, Process, ProcessesToUpdate, System};
     use umadb_core::page::page_approx_deserialized_bytes;
 
     struct PerTypeMemoryRow {
-        kind: &'static str,
+        kind: String,
         copies: usize,
         actual_extra_bytes: usize,
         approx_total_bytes: usize,
@@ -688,6 +691,71 @@ mod memory_tests {
         pages
     }
 
+    fn representative_page_for_type(kind: &str) -> Option<umadb_core::page::Page> {
+        representative_page_by_type()
+            .into_iter()
+            .find(|page| page.node.type_name() == kind)
+    }
+
+    fn target_copies_for_page(page: &umadb_core::page::Page) -> usize {
+        let approx_one = page_approx_deserialized_bytes(page).max(1);
+        let target_total_approx_bytes = 64usize * 1024 * 1024;
+        (target_total_approx_bytes / approx_one).clamp(4_000, 120_000)
+    }
+
+    fn parse_per_type_child_output(stdout: &str) -> Option<PerTypeMemoryRow> {
+        const PREFIX: &str = "UMA_PER_TYPE_RESULT\t";
+        let line = stdout
+            .lines()
+            .find(|line| line.starts_with(PREFIX))?
+            .trim();
+        let mut parts = line.split('\t');
+
+        let _prefix = parts.next()?;
+        let kind = parts.next()?;
+        let copies = parts.next()?.parse::<usize>().ok()?;
+        let actual_extra_bytes = parts.next()?.parse::<usize>().ok()?;
+        let approx_total_bytes = parts.next()?.parse::<usize>().ok()?;
+        let ratio = parts.next()?.parse::<f64>().ok()?;
+
+        Some(PerTypeMemoryRow {
+            kind: kind.to_string(),
+            copies,
+            actual_extra_bytes,
+            approx_total_bytes,
+            ratio,
+        })
+    }
+
+    fn measure_one_type_in_subprocess(kind: &'static str) -> PerTypeMemoryRow {
+        let current_exe = env::current_exe().expect("failed to resolve current test binary path");
+        let output = Command::new(current_exe)
+            .arg("--exact")
+            .arg("memory_tests::compare_actual_vs_approx_memory_per_page_type")
+            .arg("--nocapture")
+            .env("UMA_MEMORY_TEST_KIND", kind)
+            .output()
+            .expect("failed to spawn per-type memory test subprocess");
+
+        assert!(
+            output.status.success(),
+            "per-type subprocess failed for {}:\nstdout:\n{}\nstderr:\n{}",
+            kind,
+            str::from_utf8(&output.stdout).unwrap_or("<non-utf8 stdout>"),
+            str::from_utf8(&output.stderr).unwrap_or("<non-utf8 stderr>")
+        );
+
+        let stdout = str::from_utf8(&output.stdout).unwrap_or("");
+        parse_per_type_child_output(stdout).unwrap_or_else(|| {
+            panic!(
+                "failed to parse per-type subprocess output for {}. stdout:\n{}\nstderr:\n{}",
+                kind,
+                stdout,
+                str::from_utf8(&output.stderr).unwrap_or("<non-utf8 stderr>")
+            )
+        })
+    }
+
     #[test]
     fn compare_actual_vs_approx_memory_for_1000_page_clones() {
         let mut sys = System::new_all();
@@ -749,37 +817,24 @@ mod memory_tests {
 
     #[test]
     fn compare_actual_vs_approx_memory_per_page_type() {
-        let pages = representative_page_by_type();
-        assert!(!pages.is_empty(), "expected representative pages for all node types");
-
-        let mut rows: Vec<PerTypeMemoryRow> = Vec::with_capacity(pages.len());
-        let mut retained_clones: Vec<Arc<umadb_core::page::Page>> = Vec::new();
-        let mut sys = System::new_all();
-        let pid = Pid::from_u32(std::process::id());
-
-        let mut non_zero_increase_types = 0usize;
-        let mut measured_types = 0usize;
-
-        for page in pages {
-            let approx_one = page_approx_deserialized_bytes(&page).max(1);
-            let target_total_approx_bytes = 64usize * 1024 * 1024;
-            let copies = (target_total_approx_bytes / approx_one).clamp(4_000, 120_000);
-
+        if let Ok(kind) = env::var("UMA_MEMORY_TEST_KIND") {
+            let page = representative_page_for_type(&kind)
+                .unwrap_or_else(|| panic!("unknown page type requested: {}", kind));
+            let copies = target_copies_for_page(&page);
+            let mut retained_clones: Vec<Arc<umadb_core::page::Page>> = Vec::new();
+            let mut sys = System::new_all();
+            let pid = Pid::from_u32(std::process::id());
             let (actual_extra_bytes, approx_total_bytes, ratio) =
                 measure_clone_memory_ratio(&page, copies, &mut retained_clones, &mut sys, pid);
 
-            rows.push(PerTypeMemoryRow {
-                kind: page.node.type_name(),
+            println!(
+                "UMA_PER_TYPE_RESULT\t{}\t{}\t{}\t{}\t{}",
+                page.node.type_name(),
                 copies,
                 actual_extra_bytes,
                 approx_total_bytes,
-                ratio,
-            });
-
-            measured_types += 1;
-            if actual_extra_bytes > 0 {
-                non_zero_increase_types += 1;
-            }
+                ratio
+            );
 
             assert!(
                 approx_total_bytes > 0,
@@ -792,6 +847,27 @@ mod memory_tests {
                 page.node.type_name(),
                 ratio
             );
+            return;
+        }
+
+        let pages = representative_page_by_type();
+        assert!(!pages.is_empty(), "expected representative pages for all node types");
+
+        let mut rows: Vec<PerTypeMemoryRow> = Vec::with_capacity(pages.len());
+
+        let mut non_zero_increase_types = 0usize;
+        let mut measured_types = 0usize;
+
+        for page in pages {
+            let row = measure_one_type_in_subprocess(page.node.type_name());
+            rows.push(row);
+
+            let latest_row = rows.last().expect("row just pushed must exist");
+
+            measured_types += 1;
+            if latest_row.actual_extra_bytes > 0 {
+                non_zero_increase_types += 1;
+            }
         }
 
         rows.sort_by(|a, b| b.ratio.partial_cmp(&a.ratio).unwrap_or(Ordering::Equal));
