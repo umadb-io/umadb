@@ -105,8 +105,8 @@ fn string_heap_bytes(s: &String) -> usize {
 }
 
 #[inline]
-fn vec_heap_bytes<T>(v: &[T]) -> usize {
-    v.len() * mem::size_of::<T>()
+fn vec_heap_bytes<T>(v: &Vec<T>) -> usize {
+    v.capacity() * mem::size_of::<T>()
 }
 
 #[inline]

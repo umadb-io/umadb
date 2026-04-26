@@ -626,10 +626,13 @@ mod memory_tests {
         process.memory()
     }
 
-    fn measure_clone_memory_ratio(page: &umadb_core::page::Page, copies: usize) -> (usize, usize, f64) {
-        let mut sys = System::new_all();
-        let pid = Pid::from_u32(std::process::id());
-
+    fn measure_clone_memory_ratio(
+        page: &umadb_core::page::Page,
+        copies: usize,
+        retained_clones: &mut Vec<umadb_core::page::Page>,
+        sys: &mut System,
+        pid: Pid,
+    ) -> (usize, usize, f64) {
         sys.refresh_processes(ProcessesToUpdate::Some(&[pid]), true);
         let process_before = sys.process(pid).expect("current process not found");
         let mem_before = get_process_memory(process_before);
@@ -637,11 +640,10 @@ mod memory_tests {
         let approx_one = page_approx_deserialized_bytes(page);
         let approx_total = approx_one.saturating_mul(copies);
 
-        let mut clones = Vec::with_capacity(copies);
         for _ in 0..copies {
-            clones.push(page.clone());
+            retained_clones.push(page.clone());
         }
-        black_box(&clones);
+        black_box(retained_clones);
 
         sys.refresh_processes(ProcessesToUpdate::Some(&[pid]), true);
         let process_after = sys.process(pid).expect("current process not found after clone");
@@ -743,6 +745,9 @@ mod memory_tests {
         assert!(!pages.is_empty(), "expected representative pages for all node types");
 
         let mut rows: Vec<PerTypeMemoryRow> = Vec::with_capacity(pages.len());
+        let mut retained_clones: Vec<umadb_core::page::Page> = Vec::new();
+        let mut sys = System::new_all();
+        let pid = Pid::from_u32(std::process::id());
 
         let mut non_zero_increase_types = 0usize;
         let mut measured_types = 0usize;
@@ -753,7 +758,7 @@ mod memory_tests {
             let copies = (target_total_approx_bytes / approx_one).clamp(4_000, 120_000);
 
             let (actual_extra_bytes, approx_total_bytes, ratio) =
-                measure_clone_memory_ratio(&page, copies);
+                measure_clone_memory_ratio(&page, copies, &mut retained_clones, &mut sys, pid);
 
             rows.push(PerTypeMemoryRow {
                 kind: page.node.type_name(),
