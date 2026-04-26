@@ -591,6 +591,8 @@ mod memory_tests {
     use std::cmp::Ordering;
     use std::collections::HashMap;
     use std::hint::black_box;
+    use std::mem::size_of;
+    use std::sync::Arc;
     use sysinfo::{Pid, Process, ProcessesToUpdate, System};
     use umadb_core::page::page_approx_deserialized_bytes;
 
@@ -629,7 +631,7 @@ mod memory_tests {
     fn measure_clone_memory_ratio(
         page: &umadb_core::page::Page,
         copies: usize,
-        retained_clones: &mut Vec<umadb_core::page::Page>,
+        retained_clones: &mut Vec<Arc<umadb_core::page::Page>>,
         sys: &mut System,
         pid: Pid,
     ) -> (usize, usize, f64) {
@@ -637,11 +639,17 @@ mod memory_tests {
         let process_before = sys.process(pid).expect("current process not found");
         let mem_before = get_process_memory(process_before);
 
-        let approx_one = page_approx_deserialized_bytes(page);
+        let approx_page_one = page_approx_deserialized_bytes(page);
+        let vec_slot_one = size_of::<Arc<umadb_core::page::Page>>();
+        let arc_header_one = 2 * size_of::<usize>();
+        let approx_one = approx_page_one
+            .saturating_add(vec_slot_one)
+            .saturating_add(arc_header_one);
         let approx_total = approx_one.saturating_mul(copies);
 
+        retained_clones.reserve(copies);
         for _ in 0..copies {
-            retained_clones.push(page.clone());
+            retained_clones.push(Arc::new(page.clone()));
         }
         black_box(retained_clones);
 
@@ -745,7 +753,7 @@ mod memory_tests {
         assert!(!pages.is_empty(), "expected representative pages for all node types");
 
         let mut rows: Vec<PerTypeMemoryRow> = Vec::with_capacity(pages.len());
-        let mut retained_clones: Vec<umadb_core::page::Page> = Vec::new();
+        let mut retained_clones: Vec<Arc<umadb_core::page::Page>> = Vec::new();
         let mut sys = System::new_all();
         let pid = Pid::from_u32(std::process::id());
 
