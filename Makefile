@@ -67,6 +67,7 @@ build-umadb-bin-release:
 test:
 	$(MAKE) test-workspace-exclude-python
 	$(MAKE) test-umadb-python
+	cargo test -p umadb-benches compare_actual_vs_approx_memory_per_page_type -- --nocapture
 
 test-workspace-exclude-python:
 	cargo test --workspace --exclude umadb-python
