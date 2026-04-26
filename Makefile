@@ -19,6 +19,7 @@ UVX ?= uvx@$(UV_VERSION)
 .PHONY: bench-read bench-read-throttled
 .PHONY: bench-read-cond
 .PHONY: bench-read-with-writers
+.PHONY: bench-page-approx-deserialized-bytes
 .PHONY: bench-all
 .PHONY: release-dry-run
 .PHONY: release-execute
@@ -173,6 +174,9 @@ bench-read-with-writers:
 bench-throughput-vs-volume:
 	@trap 'kill 0' INT TERM; \
 	cargo bench -p umadb-benches --bench throughput_vs_volume
+
+bench-page-approx-deserialized-bytes:
+	cargo bench -p umadb-benches --bench page_approx_deserialized_bytes_bench
 
 
 release-crates-dry-run:
