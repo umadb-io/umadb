@@ -179,7 +179,7 @@ fn node_approx_heap_bytes(node: &Node) -> usize {
 
 #[inline]
 pub fn page_approx_deserialized_bytes(page: &Page) -> usize {
-    mem::size_of::<Page>() + mem::size_of::<Node>() + node_approx_heap_bytes(&page.node)
+    mem::size_of::<Page>() + node_approx_heap_bytes(&page.node)
 }
 
 pub fn serialize_page_into(
