@@ -24,6 +24,10 @@ jobs:
       uses: arduino/setup-protoc@v3
       with:
         repo-token: ${{ secrets.GITHUB_TOKEN }}
+    - name: Compare actual vs approx memory per page
+      run: make test-compare-actual-vs-approx-memory-per-page
+    - name: Profile page weigher
+      run: make bench-page-approx-deserialized-bytes
     - uses: actions/setup-python@v5
       with:
         python-version: ${{ matrix.python-version }}
@@ -35,5 +39,3 @@ jobs:
       run: make build
     - name: Tests
       run: make test
-    - name: Profile page weigher
-      run: make bench-page-approx-deserialized-bytes

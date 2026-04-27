@@ -4,6 +4,7 @@ use crate::header_node::HeaderNode;
 use crate::node::Node;
 use std::mem;
 use std::ops::Range;
+use std::sync::Arc;
 use umadb_dcb::{DcbError, DcbResult};
 
 // Page structure
@@ -179,7 +180,32 @@ fn node_approx_heap_bytes(node: &Node) -> usize {
 
 #[inline]
 pub fn page_approx_deserialized_bytes(page: &Page) -> usize {
-    mem::size_of::<Page>() + node_approx_heap_bytes(&page.node)
+    // Factors copies from benchmark on Ubuntu
+    let factor = match &page.node {
+        Node::TrackingInternal(_) => 1.57,
+        Node::EventLeaf(_) => 1.46,
+        Node::FreeListTsnInternal(_) => 1.27,
+        Node::TagInternal(_) => 1.27,
+        Node::EventInternal(_) => 1.27,
+        Node::FreeListLeaf(_) => 1.26,
+        Node::TagsInternal(_) => 1.25,
+        Node::FreeListInternal(_) => 1.25,
+        Node::TrackingLeaf(_) => 1.23,
+        Node::TagsLeaf(_) => 1.23,
+        Node::EventOverflow(_) => 1.19,
+        Node::TagLeaf(_) => 1.18,
+        Node::FreeListTsnLeaf(_) => 1.17,
+        Node::Header(_) => 1.15,
+    };
+
+    let arc_slot_bytes = mem::size_of::<Arc<Page>>();
+    let arc_header_bytes = 2 * mem::size_of::<usize>();
+    let base = mem::size_of::<Page>()
+        + node_approx_heap_bytes(&page.node)
+        + arc_slot_bytes
+        + arc_header_bytes;
+
+    (base as f64 * factor).ceil() as usize
 }
 
 pub fn serialize_page_into(

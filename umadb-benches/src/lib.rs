@@ -592,7 +592,6 @@ mod memory_tests {
     use std::collections::HashMap;
     use std::env;
     use std::hint::black_box;
-    use std::mem::size_of;
     use std::process::Command;
     use std::str;
     use std::sync::Arc;
@@ -642,12 +641,7 @@ mod memory_tests {
         let process_before = sys.process(pid).expect("current process not found");
         let mem_before = get_process_memory(process_before);
 
-        let approx_page_one = page_approx_deserialized_bytes(page);
-        let vec_slot_one = size_of::<Arc<umadb_core::page::Page>>();
-        let arc_header_one = 2 * size_of::<usize>();
-        let approx_one = approx_page_one
-            .saturating_add(vec_slot_one)
-            .saturating_add(arc_header_one);
+        let approx_one = page_approx_deserialized_bytes(page);
         let approx_total = approx_one.saturating_mul(copies);
 
         retained_clones.reserve(copies);
