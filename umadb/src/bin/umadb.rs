@@ -1,4 +1,5 @@
 use clap::{CommandFactory, FromArgMatches, Parser};
+use std::io::IsTerminal;
 use tokio::signal;
 use tokio::sync::oneshot;
 use umadb_server::{
@@ -6,16 +7,45 @@ use umadb_server::{
     start_server_with_api_key, uptime,
 };
 
-#[allow(dead_code)]
-const BANNER_BIG: &str = r#"
-  _    _                 _____  ____
- | |  | |               |  __ \|  _ \
- | |  | |_ __ ___   __ _| |  | | |_) |
- | |  | | '_ ` _ \ / _` | |  | |  _ <
- | |__| | | | | | | (_| | |__| | |_) |
-  \____/|_| |_| |_|\__,_|_____/|____/ "#;
 
-const BANNER: &str = BANNER_BIG;
+pub fn print_banner() {
+    const ART: &[&str] = &[
+        r"██╗  ██╗ ███╗   ███╗  █████╗  ██████╗  ██████╗ ",
+        r"██║  ██║ ████╗ ████║ ██╔══██╗ ██╔══██╗ ██╔══██╗",
+        r"██║  ██║ ██╔████╔██║ ███████║ ██║  ██║ ██████╔╝",
+        r"██║  ██║ ██║╚██╔╝██║ ██╔══██║ ██║  ██║ ██╔══██╗",
+        r"╚█████╔╝ ██║ ╚═╝ ██║ ██║  ██║ ██████╔╝ ██████╔╝",
+        r" ╚════╝  ╚═╝     ╚═╝ ╚═╝  ╚═╝ ╚═════╝  ╚═════╝ ",
+    ];
+    const PAD: &str = "    ";
+    const VERSION: &str = env!("CARGO_PKG_VERSION");
+
+    println!();
+    const COLORS: &[&str] = &[
+        "\x1b[38;5;214m",
+        "\x1b[38;5;214m",
+        "\x1b[38;5;214m",
+        "\x1b[38;5;214m",
+        "\x1b[38;5;214m",
+        "\x1b[38;5;220m",
+    ];
+    let art_width = ART[0].chars().count();
+    let version_width = VERSION.chars().count() + 1;
+    let offset = " ".repeat(art_width - version_width - 6 );
+    if std::io::stdout().is_terminal() {
+        for (line, color) in ART.iter().zip(COLORS) {
+            println!("{PAD}\x1b[1m{color}{line}\x1b[0m");
+        }
+        println!("{PAD}\x1b[2m{offset}v{VERSION}\x1b[0m");
+    } else {
+        for line in ART {
+            println!("{PAD}{line}");
+        }
+        println!("{PAD}{offset}v{VERSION}");
+    }
+    println!();
+}
+
 
 #[derive(Parser, Debug)]
 #[command(version)]
@@ -90,13 +120,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
         let _ = tx.send(());
     });
 
-    // println!("{}", BANNER);
-    // println!("v{}", env!("CARGO_PKG_VERSION"));
-    // let mut rng = rng();
-    // let banner = BANNERS.choose(&mut rng).unwrap();
-    let banner = BANNER;
-    println!("{}  v{}", banner, env!("CARGO_PKG_VERSION"));
-    println!();
+    print_banner();
 
     match (cert, key, api_key) {
         (Some(cert), Some(key), Some(api_key)) => {
