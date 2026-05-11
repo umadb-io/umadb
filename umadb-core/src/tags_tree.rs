@@ -1808,6 +1808,99 @@ mod tests {
         assert_eq!(empty_iter.collect::<Vec<Position>>(), Vec::new());
     }
 
+    #[test]
+    fn test_per_tag_internal_cow_propagation() {
+        // Use a very small page size to force a multi-level per-tag tree quickly
+        let (_tmp, db) = construct_db(128);
+        let tag = th(1);
+        let mut inserted = Vec::new();
+
+        fn get_pt_root_id(db: &Mvcc, tag: TagHash) -> PageID {
+            let reader = db.reader().unwrap();
+            let mut curr_id = reader.tags_tree_root_id;
+            loop {
+                let page = db.read_page(curr_id).unwrap();
+                match &page.node {
+                    Node::TagsLeaf(leaf) => {
+                        if let Ok(idx) = leaf.keys.binary_search(&tag) {
+                            return leaf.values[idx].root_id;
+                        }
+                        return PageID(0);
+                    }
+                    Node::TagsInternal(internal) => {
+                        let idx = match internal.keys.binary_search(&tag) {
+                            Ok(i) => i + 1,
+                            Err(i) => i,
+                        };
+                        curr_id = internal.child_ids[idx];
+                    }
+                    _ => panic!("Unexpected node type"),
+                }
+            }
+        }
+
+        fn get_pt_tree_depth(db: &Mvcc, pt_root_id: PageID) -> usize {
+            if pt_root_id == PageID(0) { return 0; }
+            let mut depth = 1;
+            let mut curr_id = pt_root_id;
+            loop {
+                let page = db.read_page(curr_id).unwrap();
+                match &page.node {
+                    Node::TagInternal(internal) => {
+                        depth += 1;
+                        curr_id = internal.child_ids[0];
+                    }
+                    Node::TagLeaf(_) => break,
+                    _ => panic!("Unexpected node type in per-tag tree"),
+                }
+            }
+            depth
+        }
+
+        // Phase 1: Grow the per-tag tree to at least 3 levels.
+        // We commit frequently to ensure nodes are clean.
+        let mut depth = 0;
+        while depth < 3 {
+            let mut writer = db.writer().unwrap();
+            for _ in 0..10 {
+                let p = writer.issue_position();
+                tags_tree_insert(&db, &mut writer, tag, p).unwrap();
+                inserted.push(p);
+            }
+            db.commit(&mut writer).unwrap();
+            let pt_root = get_pt_root_id(&db, tag);
+            depth = get_pt_tree_depth(&db, pt_root);
+        }
+
+        let pt_root_t1 = get_pt_root_id(&db, tag);
+        assert!(depth >= 3, "Depth should be at least 3, got {}", depth);
+
+        // Phase 2: Trigger COW on a non-root internal node.
+        // We do this by inserting one more position.
+        // Since all nodes are currently clean (committed), the first leaf we hit will COW,
+        // then its parent (Middle Internal) will COW (hitting line 223),
+        // then its parent (Root Internal) will COW (or be updated).
+        {
+            let mut writer = db.writer().unwrap();
+            let p = writer.issue_position();
+            tags_tree_insert(&db, &mut writer, tag, p).unwrap();
+            inserted.push(p);
+            db.commit(&mut writer).unwrap();
+        }
+
+        let pt_root_t2 = get_pt_root_id(&db, tag);
+        assert_ne!(pt_root_t1, pt_root_t2, "Per-tag root should have changed due to COW");
+
+        // Verify data integrity
+        let reader = db.reader().unwrap();
+        let positions = tags_tree_lookup(&db, reader.tags_tree_root_id, tag, Position(0), false).unwrap();
+        assert_eq!(inserted.len(), positions.len());
+        inserted.sort();
+        let mut sorted_positions = positions.clone();
+        sorted_positions.sort();
+        assert_eq!(inserted, sorted_positions);
+    }
+
     // #[test]
     // fn benchmark_insert_and_lookup_varied_sizes_one_tag_one_position() {
     //     // Benchmark-like test; prints durations for different sizes. Run with:
