@@ -3,7 +3,7 @@ pub mod server_helper;
 pub mod bench_api {
     use std::path::Path;
     use umadb_core::common::{PageID, Position, Tsn};
-    use umadb_core::db::DEFAULT_PAGE_SIZE;
+    use umadb_core::mvcc::DEFAULT_PAGE_SIZE;
     use umadb_core::events_tree_nodes::{
         EventInternalNode, EventLeafNode, EventOverflowNode, EventRecord, EventValue,
     };
@@ -12,7 +12,7 @@ pub mod bench_api {
         FreeListTsnLeafNode,
     };
     use umadb_core::header_node::HeaderNode;
-    use umadb_core::mvcc::{Mvcc, ReadMethod, Writer};
+    use umadb_core::mvcc::{Mvcc, Writer, StorageOptions};
     use umadb_core::node::Node;
     use umadb_core::page::{PAGE_HEADER_SIZE, Page};
     use umadb_core::tags_tree_nodes::{TagInternalNode, TagLeafNode, TagsInternalNode, TagsLeafNode, TagsLeafValue};
@@ -29,12 +29,11 @@ pub mod bench_api {
         pub fn new(path: &Path, page_size: usize) -> DcbResult<Self> {
             let mvcc = Mvcc::new(
                 path,
-                page_size,
                 false,
-                ReadMethod::from_env(),
-                0,
-                0,
-                true,
+                StorageOptions {
+                    page_size,
+                    ..Default::default()
+                },
             )?;
             Ok(BenchDb { mvcc })
         }

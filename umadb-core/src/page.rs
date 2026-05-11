@@ -290,7 +290,7 @@ mod tests {
         let calculated_size = page.calc_serialized_size();
 
         // Serialize the page into a fixed-size buffer using serialize_into_vec
-        let mut page_buf = vec![0u8; crate::db::DEFAULT_PAGE_SIZE];
+        let mut page_buf = vec![0u8; crate::mvcc::DEFAULT_PAGE_SIZE];
         serialize_page_into(&mut page_buf, &page.node, true)
             .expect("Failed to serialize page into buffer");
 

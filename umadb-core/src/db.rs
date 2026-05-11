@@ -3,7 +3,7 @@ use std::path::Path;
 use crate::common::{PageID, Position};
 use crate::events_tree::{EventIterator, event_tree_append, event_tree_lookup};
 use crate::events_tree_nodes::EventRecord;
-use crate::mvcc::{Mvcc, ReadMethod, Writer};
+use crate::mvcc::{Mvcc, Writer, StorageOptions};
 use crate::node::Node;
 use crate::page::Page;
 use crate::tags_tree::{TagsTreeIterator, tags_tree_insert};
@@ -18,7 +18,6 @@ use umadb_dcb::{
 };
 use uuid::Uuid;
 
-pub static DEFAULT_PAGE_SIZE: usize = 4096;
 pub const DEFAULT_DB_FILENAME: &str = "uma.db";
 
 /// Database on-disk schema version for HeaderNode and related structures.
@@ -36,24 +35,16 @@ impl UmaDb {
     pub fn new<P: AsRef<Path>>(path: P) -> DcbResult<Self> {
         Self::new_with_options(
             path,
-            DEFAULT_PAGE_SIZE,
             false,
-            ReadMethod::from_env(),
-            0,
-            0,
-            true,
+            StorageOptions::default(),
         )
     }
 
     /// Create a new EventStore with explicit options.
     pub fn new_with_options<P: AsRef<Path>>(
         path: P,
-        page_size: usize,
         verbose: bool,
-        read_method: ReadMethod,
-        page_cache_max_pages: usize,
-        page_cache_max_mb: usize,
-        zero_fill_pages: bool,
+        options: StorageOptions,
     ) -> DcbResult<Self> {
         let p = path.as_ref();
         let file_path = if p.is_dir() {
@@ -63,12 +54,8 @@ impl UmaDb {
         };
         let mvcc = Mvcc::new(
             &file_path,
-            page_size,
             verbose,
-            read_method,
-            page_cache_max_pages,
-            page_cache_max_mb,
-            zero_fill_pages,
+            options,
         )?;
         Ok(Self {
             mvcc: Arc::new(mvcc),
@@ -1082,6 +1069,7 @@ pub fn shadow_for_batch_abort(src: &DcbError) -> DcbError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::mvcc::DEFAULT_PAGE_SIZE;
     use crate::page::Page;
     use serial_test::serial;
     use std::collections::HashMap;
@@ -1090,6 +1078,7 @@ mod tests {
         DcbAppendCondition, DcbEvent, DcbEventStoreSync, DcbQuery, DcbQueryItem, DcbError,
     };
     use uuid::Uuid;
+
 
     #[test]
     #[serial]
@@ -1134,12 +1123,11 @@ mod tests {
         // Use a small page size to trigger splits with few inserts
         let mvcc = Mvcc::new(
             &db_path,
-            256,
             false,
-            ReadMethod::from_env(),
-            0,
-            0,
-            true,
+            StorageOptions {
+                page_size: 256,
+                ..Default::default()
+            },
         )
         .unwrap();
         let uma = UmaDb::from_arc(Arc::new(mvcc));
@@ -1174,12 +1162,11 @@ mod tests {
         // Small page size to force both leaf and internal splits quickly
         let mvcc = Mvcc::new(
             &db_path,
-            128,
             false,
-            ReadMethod::from_env(),
-            0,
-            0,
-            true,
+            StorageOptions {
+                page_size: 128,
+                ..Default::default()
+            },
         )
         .unwrap();
         let uma = UmaDb::from_arc(Arc::new(mvcc));
@@ -1380,12 +1367,8 @@ mod tests {
         let db_path = temp_dir.path().join("mvcc-api-test.db");
         let db = Mvcc::new(
             db_path.as_ref(),
-            DEFAULT_PAGE_SIZE,
             VERBOSE,
-            ReadMethod::from_env(),
-            0,
-            0,
-            true,
+            StorageOptions::default(),
         )
         .unwrap();
         let input = standard_events();
@@ -1691,12 +1674,8 @@ mod tests {
         let db_path = temp_dir.path().join("mvcc-fallback-types-only.db");
         let mut db = Mvcc::new(
             db_path.as_ref(),
-            DEFAULT_PAGE_SIZE,
             VERBOSE,
-            ReadMethod::from_env(),
-            0,
-            0,
-            true,
+            StorageOptions::default(),
         )
         .unwrap();
 

@@ -23,15 +23,13 @@ use tokio_stream::wrappers::ReceiverStream;
 use tonic::transport::{Identity, ServerTlsConfig};
 use tonic::{Request, Response, Status, transport::Server};
 use umadb_core::db::{
-    DEFAULT_DB_FILENAME, DEFAULT_PAGE_SIZE, UmaDb, clone_dcb_error, is_integrity_error,
+    DEFAULT_DB_FILENAME, UmaDb, clone_dcb_error, is_integrity_error,
     is_request_idempotent, read_conditional, shadow_for_batch_abort,
 };
-use umadb_core::mvcc::Mvcc;
+pub use umadb_core::mvcc::{DEFAULT_PAGE_SIZE, Mvcc, ReadMethod, StorageOptions};
 use umadb_dcb::{
     DcbAppendCondition, DcbError, DcbEvent, DcbQuery, DcbResult, DcbSequencedEvent, TrackingInfo,
 };
-
-pub use umadb_core::mvcc::ReadMethod;
 
 use tokio::runtime::Runtime;
 use tonic::codegen::http;
@@ -137,25 +135,6 @@ static START_TIME: LazyLock<Instant> = LazyLock::new(Instant::now);
 const APPEND_BATCH_MAX_EVENTS: usize = 2000;
 const READ_RESPONSE_BATCH_SIZE_DEFAULT: u32 = 100;
 const READ_RESPONSE_BATCH_SIZE_MAX: u32 = 5000;
-
-#[derive(Debug, Clone)]
-pub struct StorageOptions {
-    pub read_method: ReadMethod,
-    pub page_cache_max_pages: usize,
-    pub page_cache_max_mb: usize,
-    pub zero_fill_pages: bool,
-}
-
-impl Default for StorageOptions {
-    fn default() -> Self {
-        Self {
-            read_method: ReadMethod::from_env(),
-            page_cache_max_pages: 0,
-            page_cache_max_mb: 0,
-            zero_fill_pages: true,
-        }
-    }
-}
 
 // Optional TLS configuration helpers
 #[derive(Clone, Debug)]
@@ -1037,12 +1016,8 @@ impl RequestHandler {
         };
         let mvcc = Arc::new(Mvcc::new(
             &file_path,
-            DEFAULT_PAGE_SIZE,
             false,
-            storage_options.read_method,
-            storage_options.page_cache_max_pages,
-            storage_options.page_cache_max_mb,
-            storage_options.zero_fill_pages,
+            storage_options,
         )?);
 
         // Initialize the head watch channel with the current head.

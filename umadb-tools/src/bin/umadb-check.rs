@@ -3,8 +3,8 @@ use std::env;
 use std::os::unix::fs::FileExt;
 use std::path::PathBuf;
 use umadb_core::common::{PageID, Position};
-use umadb_core::db::{DEFAULT_DB_FILENAME, DEFAULT_PAGE_SIZE, read_conditional, tag_to_hash};
-use umadb_core::mvcc::{Mvcc, ReadMethod};
+use umadb_core::db::{read_conditional, tag_to_hash, DEFAULT_DB_FILENAME};
+use umadb_core::mvcc::{Mvcc, StorageOptions, DEFAULT_PAGE_SIZE};
 use umadb_core::node::Node;
 use umadb_core::page::Page;
 use umadb_core::tags_tree_nodes::{
@@ -118,12 +118,11 @@ fn real_main() -> DcbResult<()> {
     // No writes are performed by this tool.
     let mvcc = Mvcc::new(
         p.as_path(),
-        page_size,
         args.verbose,
-        ReadMethod::from_env(),
-        0,
-        0,
-        true,
+        StorageOptions {
+            page_size,
+            ..Default::default()
+        },
     )?;
 
     // Progressive report prelude

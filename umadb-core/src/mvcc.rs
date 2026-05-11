@@ -32,6 +32,8 @@ const GET_LATEST_HEADER_DELAY: Duration = Duration::from_millis(10);
 const HEADER_PAGE_ID_0: PageID = PageID(0);
 const HEADER_PAGE_ID_1: PageID = PageID(1);
 
+pub const DEFAULT_PAGE_SIZE: usize = 4096;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReadMethod {
     Mmap,
@@ -59,6 +61,27 @@ impl ReadMethod {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct StorageOptions {
+    pub page_size: usize,
+    pub read_method: ReadMethod,
+    pub page_cache_max_pages: usize,
+    pub page_cache_max_mb: usize,
+    pub zero_fill_pages: bool,
+}
+
+impl Default for StorageOptions {
+    fn default() -> Self {
+        Self {
+            page_size: DEFAULT_PAGE_SIZE,
+            read_method: ReadMethod::from_env(),
+            page_cache_max_pages: 0,
+            page_cache_max_mb: 0,
+            zero_fill_pages: true,
+        }
+    }
+}
+
 // Main MVCC structure
 pub struct Mvcc {
     pub pager: Pager,
@@ -82,19 +105,15 @@ pub struct Mvcc {
 impl Mvcc {
     pub fn new(
         path: &Path,
-        page_size: usize,
         verbose: bool,
-        read_method: ReadMethod,
-        page_cache_max_pages: usize,
-        page_cache_max_mb: usize,
-        zero_fill_pages: bool,
+        options: StorageOptions,
     ) -> DcbResult<Self> {
-        let pager = Pager::new(path, page_size)?;
+        let pager = Pager::new(path, options.page_size)?;
         println!("UmaDB opened file {}", path.canonicalize()?.display());
 
         println!(
             "UmaDB reading with {}",
-            match read_method {
+            match options.read_method {
                 ReadMethod::Mmap => "memory map",
                 ReadMethod::FileIo => "file I/O",
             }
@@ -102,25 +121,25 @@ impl Mvcc {
 
         println!(
             "UmaDB zero-fill pages: {}",
-            if zero_fill_pages { "true" } else { "false" }
+            if options.zero_fill_pages { "true" } else { "false" }
         );
 
-        let page_cache = if page_cache_max_mb > 0 {
+        let page_cache = if options.page_cache_max_mb > 0 {
             println!(
                 "UmaDB page cache max MB: {}",
-                page_cache_max_mb
+                options.page_cache_max_mb
             );
             Some(
                 Cache::builder()
-                    .max_capacity(1000000 * page_cache_max_mb as u64)
+                    .max_capacity(1000000 * options.page_cache_max_mb as u64)
                     .weigher(|_page_id, page: &Arc<Page>| {
                         page_approx_deserialized_bytes(page.as_ref()).min(u32::MAX as usize) as u32
                     })
                     .build(),
             )
-        } else if page_cache_max_pages > 0 {
-            println!("UmaDB page cache max pages: {}", page_cache_max_pages);
-            Some(Cache::new(page_cache_max_pages as u64))
+        } else if options.page_cache_max_pages > 0 {
+            println!("UmaDB page cache max pages: {}", options.page_cache_max_pages);
+            Some(Cache::new(options.page_cache_max_pages as u64))
         } else {
             println!("UmaDB page cache not enabled");
             None
@@ -130,8 +149,8 @@ impl Mvcc {
             pager,
             reader_tsns: Arc::new(DashMap::new()),
             writer_lock: Mutex::new(()),
-            page_size,
-            max_node_size: page_size - PAGE_HEADER_SIZE,
+            page_size: options.page_size,
+            max_node_size: options.page_size - PAGE_HEADER_SIZE,
             headers: Mutex::new(vec![
                 Page {
                     page_id: PageID(0),
@@ -142,12 +161,12 @@ impl Mvcc {
                     node: Node::Header(HeaderNode::default()),
                 },
             ]),
-            header_page_buf: Mutex::new(vec![0u8; page_size]),
-            page_buf: Mutex::new(vec![0u8; page_size]),
+            header_page_buf: Mutex::new(vec![0u8; options.page_size]),
+            page_buf: Mutex::new(vec![0u8; options.page_size]),
             reader_id_counter: AtomicUsize::new(0),
             verbose,
-            zero_fill_pages,
-            read_method,
+            zero_fill_pages: options.zero_fill_pages,
+            read_method: options.read_method,
             page_cache
         };
 
@@ -2111,12 +2130,11 @@ mod tests {
         {
             let db = Mvcc::new(
                 &db_path,
-                4096,
                 VERBOSE,
-                ReadMethod::from_env(),
-                0,
-                0,
-                true,
+                StorageOptions {
+                    page_size: 4096,
+                    ..Default::default()
+                },
             )
             .unwrap();
             assert!(db.pager.is_file_new);
@@ -2125,12 +2143,11 @@ mod tests {
         {
             let db = Mvcc::new(
                 &db_path,
-                4096,
                 VERBOSE,
-                ReadMethod::from_env(),
-                0,
-                0,
-                true,
+                StorageOptions {
+                    page_size: 4096,
+                    ..Default::default()
+                },
             )
             .unwrap();
             assert!(!db.pager.is_file_new);
@@ -2144,12 +2161,11 @@ mod tests {
         let db_path = temp_dir.path().join("mvcc-test.db");
         let db = Mvcc::new(
             &db_path,
-            4096,
             VERBOSE,
-            ReadMethod::from_env(),
-            0,
-            0,
-            true,
+            StorageOptions {
+                page_size: 4096,
+                ..Default::default()
+            },
         )
         .unwrap();
 
@@ -2196,12 +2212,11 @@ mod tests {
         let db_path = temp_dir.path().join("mvcc-test.db");
         let db = Mvcc::new(
             &db_path,
-            4096,
             VERBOSE,
-            ReadMethod::from_env(),
-            0,
-            0,
-            true,
+            StorageOptions {
+                page_size: 4096,
+                ..Default::default()
+            },
         )
         .unwrap();
 
@@ -2294,12 +2309,11 @@ mod tests {
         let db_path = temp_dir.path().join("mvcc-test.db");
         let db = Mvcc::new(
             &db_path,
-            4096,
             VERBOSE,
-            ReadMethod::from_env(),
-            0,
-            0,
-            true,
+            StorageOptions {
+                page_size: 4096,
+                ..Default::default()
+            },
         )
         .unwrap();
         // First transaction
@@ -2410,16 +2424,15 @@ mod tests {
         fn construct_mvcc(page_size: usize) -> (tempfile::TempDir, Mvcc) {
             let temp_dir = tempdir().unwrap();
             let db_path = temp_dir.path().join("mvcc-test.db");
-        let db = Mvcc::new(
-            &db_path,
-            page_size,
-            VERBOSE,
-            ReadMethod::from_env(),
-            0,
-            0,
-            true,
-        )
-        .unwrap();
+            let db = Mvcc::new(
+                &db_path,
+                VERBOSE,
+                StorageOptions {
+                    page_size,
+                    ..Default::default()
+                },
+            )
+            .unwrap();
             (temp_dir, db)
         }
 
@@ -4501,12 +4514,11 @@ mod tests {
 
             let mvcc = Mvcc::new(
                 &db_path,
-                page_size,
                 verbose,
-                ReadMethod::from_env(),
-                0,
-                0,
-                true,
+                StorageOptions {
+                    page_size,
+                    ..Default::default()
+                },
             )
             .expect("must create new db");
 
@@ -4538,12 +4550,11 @@ mod tests {
             // 4) Attempt to open again; expect an InternalError complaining about schema version
             match Mvcc::new(
                 &db_path,
-                page_size,
                 verbose,
-                ReadMethod::from_env(),
-                0,
-                0,
-                true,
+                StorageOptions {
+                    page_size,
+                    ..Default::default()
+                },
             ) {
                 Ok(_) => panic!("opening should have failed due to newer on-disk schema"),
                 Err(DcbError::InternalError(msg)) => {

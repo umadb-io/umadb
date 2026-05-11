@@ -86,6 +86,10 @@ struct Args {
     /// Zero-fill pages
     #[arg(long = "zero-fill-pages", env = "UMADB_ZERO_FILL_PAGES", default_value = "true", action = clap::ArgAction::Set)]
     zero_fill_pages: bool,
+
+    /// Page size in bytes
+    #[arg(long = "page-size", env = "UMADB_PAGE_SIZE", default_value = "4096")]
+    page_size: usize,
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -118,6 +122,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
     let key = args.key;
     let api_key = args.api_key;
     let storage_options = umadb_server::StorageOptions {
+        page_size: args.page_size,
         read_method: args.read_method.parse().unwrap_or(umadb_server::ReadMethod::Mmap),
         page_cache_max_pages: args.page_cache_max_pages,
         page_cache_max_mb: args.page_cache_max_mb,
