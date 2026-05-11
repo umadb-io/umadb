@@ -23,10 +23,10 @@ use tokio_stream::wrappers::ReceiverStream;
 use tonic::transport::{Identity, ServerTlsConfig};
 use tonic::{Request, Response, Status, transport::Server};
 use umadb_core::db::{
-    DEFAULT_DB_FILENAME, UmaDb, clone_dcb_error, is_integrity_error,
+    UmaDb, clone_dcb_error, is_integrity_error,
     is_request_idempotent, read_conditional, shadow_for_batch_abort,
 };
-pub use umadb_core::mvcc::{DEFAULT_PAGE_SIZE, Mvcc, ReadMethod, StorageOptions};
+pub use umadb_core::mvcc::{DEFAULT_DB_FILENAME, DEFAULT_PAGE_SIZE, Mvcc, ReadMethod, StorageOptions};
 use umadb_dcb::{
     DcbAppendCondition, DcbError, DcbEvent, DcbQuery, DcbResult, DcbSequencedEvent, TrackingInfo,
 };

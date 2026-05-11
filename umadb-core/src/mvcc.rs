@@ -33,6 +33,7 @@ const HEADER_PAGE_ID_0: PageID = PageID(0);
 const HEADER_PAGE_ID_1: PageID = PageID(1);
 
 pub const DEFAULT_PAGE_SIZE: usize = 4096;
+pub const DEFAULT_DB_FILENAME: &str = "uma.db";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReadMethod {

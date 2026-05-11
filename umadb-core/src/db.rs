@@ -3,7 +3,7 @@ use std::path::Path;
 use crate::common::{PageID, Position};
 use crate::events_tree::{EventIterator, event_tree_append, event_tree_lookup};
 use crate::events_tree_nodes::EventRecord;
-use crate::mvcc::{Mvcc, Writer, StorageOptions};
+use crate::mvcc::{Mvcc, Writer, StorageOptions, DEFAULT_DB_FILENAME};
 use crate::node::Node;
 use crate::page::Page;
 use crate::tags_tree::{TagsTreeIterator, tags_tree_insert};
@@ -17,8 +17,6 @@ use umadb_dcb::{
     DcbSequencedEvent, DcbError, TrackingInfo,
 };
 use uuid::Uuid;
-
-pub const DEFAULT_DB_FILENAME: &str = "uma.db";
 
 /// Database on-disk schema version for HeaderNode and related structures.
 /// Set to 1 for current releases; previous versions of the code used 0.
