@@ -2,13 +2,13 @@ use crate::common::{PageID, Tsn};
 use byteorder::{ByteOrder, LittleEndian};
 use umadb_dcb::{DcbError, DcbResult};
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct FreeListLeafNode {
     pub keys: Vec<Tsn>,
     pub values: Vec<FreeListLeafValue>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct FreeListLeafValue {
     pub page_ids: Vec<PageID>,
     pub root_id: PageID,
@@ -380,11 +380,12 @@ impl FreeListTsnLeafNode {
         Ok(FreeListTsnLeafNode { page_ids })
     }
 
-    /// Returns true if calculated size with new page_id doesn't exceed the given size
-    pub fn would_fit_new_page_id(&self, max_node_size: usize) -> bool {
-        // Only grows by 8 bytes for the extra PageID
-        self.calc_serialized_size() + 8 <= max_node_size
-    }
+    // This isn't being used, but perhaps it could/should be...
+    // /// Returns true if calculated size with new page_id doesn't exceed the given size
+    // pub fn would_fit_new_page_id(&self, max_node_size: usize) -> bool {
+    //     // Only grows by 8 bytes for the extra PageID
+    //     self.calc_serialized_size() + 8 <= max_node_size
+    // }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
