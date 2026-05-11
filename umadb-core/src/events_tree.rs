@@ -590,7 +590,8 @@ impl<'a> EventIterator<'a> {
                                 // println!(" - will remove");
                             }
                         } else {
-                            // TODO: Clarify if this is always because internal node is empty?
+                            // Shouldn't get here unless an internal
+                            // node has no keys, which it should never do.
                             remove_page = true
                         };
                     }
@@ -1618,4 +1619,68 @@ mod tests {
     //         );
     //     }
     // }
+
+    #[test]
+    #[serial]
+    fn test_read_events_all_backwards_with_internal_nodes() {
+        // Setup a temporary database with a small page size to force internal nodes quickly
+        let (_temp_dir, db) = construct_db(128);
+
+        let mut has_split_internal = false;
+        let mut appended: Vec<(Position, EventRecord)> = Vec::new();
+
+        // 1. Insert events until the root is an internal node that points to other internal nodes
+        while !has_split_internal {
+            let mut writer = db.writer().unwrap();
+            let position = writer.issue_position();
+            let record = EventRecord {
+                event_type: "TestEvent".to_string(),
+                data: vec![1, 2, 3, 4],
+                tags: vec!["test".to_string()],
+                uuid: None,
+            };
+            appended.push((position, record.clone()));
+            event_tree_append(&db, &mut writer, record, position).unwrap();
+
+            let root_page = writer.dirty.get(&writer.events_tree_root_id).unwrap();
+            if let Node::EventInternal(root_node) = &root_page.node {
+                if !root_node.child_ids.is_empty() {
+                    let child_id = root_node.child_ids[0];
+                    if let Some(child_page) = writer.dirty.get(&child_id) {
+                        if let Node::EventInternal(_) = &child_page.node {
+                            has_split_internal = true;
+                        }
+                    }
+                }
+            }
+            db.commit(&mut writer).unwrap();
+        }
+
+        // 2. Iterate backwards from the end (start = None)
+        let reader = db.reader().unwrap();
+        let dirty = HashMap::new();
+        let mut events_iterator = EventIterator::new(
+            &db,
+            &dirty,
+            reader.events_tree_root_id,
+            None, // This triggers the branch for line 561
+            true  // Backwards
+        );
+
+        let mut scanned = Vec::new();
+        loop {
+            let batch = events_iterator.next_batch(10, None).unwrap();
+            if batch.is_empty() { break; }
+            scanned.extend(batch);
+        }
+
+        // 3. Verify all events are returned in reverse order
+        let mut expected = appended.clone();
+        expected.reverse();
+
+        assert_eq!(scanned.len(), expected.len());
+        for i in 0..expected.len() {
+            assert_eq!(scanned[i].0, expected[i].0);
+        }
+    }
 }
