@@ -17,7 +17,7 @@ use crate::tags_tree_nodes::set_tag_key_width;
 use dashmap::DashMap;
 use std::collections::HashMap;
 use std::collections::VecDeque;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -65,6 +65,7 @@ impl ReadMethod {
 
 #[derive(Debug, Clone)]
 pub struct StorageOptions {
+    pub db_path: PathBuf,
     pub page_size: usize,
     pub read_method: ReadMethod,
     pub page_cache_max_pages: usize,
@@ -75,6 +76,7 @@ pub struct StorageOptions {
 impl Default for StorageOptions {
     fn default() -> Self {
         Self {
+            db_path: DEFAULT_DB_FILENAME.into(),
             page_size: DEFAULT_PAGE_SIZE,
             read_method: ReadMethod::default(),
             page_cache_max_pages: 0,
@@ -85,6 +87,19 @@ impl Default for StorageOptions {
 }
 
 impl StorageOptions {
+    pub fn db_path<P: AsRef<Path>>(self, db_path: P) -> Self {
+        let p = db_path.as_ref();
+        let db_path = if p.is_dir() {
+            p.join(DEFAULT_DB_FILENAME)
+        } else {
+            p.to_path_buf()
+        };
+        Self {
+            db_path,
+            ..self
+        }
+    }
+
     pub fn page_size(self, page_size: usize) -> Self {
         Self {
             page_size,
@@ -143,12 +158,11 @@ pub struct Mvcc {
 
 impl Mvcc {
     pub fn new(
-        path: &Path,
         verbose: bool,
         options: StorageOptions,
     ) -> DcbResult<Self> {
-        let pager = Pager::new(path, options.page_size)?;
-        println!("UmaDB opened file {}", path.canonicalize()?.display());
+        let pager = Pager::new(&options.db_path, options.page_size)?;
+        println!("UmaDB opened file {}", options.db_path.canonicalize()?.display());
 
         println!(
             "UmaDB reading with {}",
@@ -2168,9 +2182,10 @@ mod tests {
 
         {
             let db = Mvcc::new(
-                &db_path,
                 VERBOSE,
-                StorageOptions::default().page_size(4096),
+                StorageOptions::default()
+                    .db_path(db_path.clone())
+                    .page_size(4096),
             )
             .unwrap();
             assert!(db.pager.is_file_new);
@@ -2178,9 +2193,10 @@ mod tests {
 
         {
             let db = Mvcc::new(
-                &db_path,
                 VERBOSE,
-                StorageOptions::default().page_size(4096),
+                StorageOptions::default()
+                    .db_path(db_path.clone())
+                    .page_size(4096),
             )
             .unwrap();
             assert!(!db.pager.is_file_new);
@@ -2193,9 +2209,10 @@ mod tests {
         let temp_dir = tempdir().unwrap();
         let db_path = temp_dir.path().join("mvcc-test.db");
         let db = Mvcc::new(
-            &db_path,
             VERBOSE,
-            StorageOptions::default().page_size(4096),
+            StorageOptions::default().
+                db_path(db_path).
+                page_size(4096),
         )
         .unwrap();
 
@@ -2241,9 +2258,8 @@ mod tests {
         let temp_dir = tempdir().unwrap();
         let db_path = temp_dir.path().join("mvcc-test.db");
         let db = Mvcc::new(
-            &db_path,
             VERBOSE,
-            StorageOptions::default().page_size(4096),
+            StorageOptions::default().db_path(db_path).page_size(4096),
         )
         .unwrap();
 
@@ -2335,9 +2351,8 @@ mod tests {
         let temp_dir = tempdir().unwrap();
         let db_path = temp_dir.path().join("mvcc-test.db");
         let db = Mvcc::new(
-            &db_path,
             VERBOSE,
-            StorageOptions::default().page_size(4096),
+            StorageOptions::default().db_path(db_path).page_size(4096),
         )
         .unwrap();
         // First transaction
@@ -2449,9 +2464,8 @@ mod tests {
             let temp_dir = tempdir().unwrap();
             let db_path = temp_dir.path().join("mvcc-test.db");
             let db = Mvcc::new(
-                &db_path,
                 VERBOSE,
-                StorageOptions::default().page_size(page_size),
+                StorageOptions::default().db_path(db_path).page_size(page_size),
             )
             .unwrap();
             (temp_dir, db)
@@ -4534,9 +4548,8 @@ mod tests {
             let verbose = false;
 
             let mvcc = Mvcc::new(
-                &db_path,
                 verbose,
-                StorageOptions::default().page_size(page_size),
+                StorageOptions::default().db_path(db_path.clone()).page_size(page_size),
             )
             .expect("must create new db");
 
@@ -4567,9 +4580,8 @@ mod tests {
 
             // 4) Attempt to open again; expect an InternalError complaining about schema version
             match Mvcc::new(
-                &db_path,
                 verbose,
-                StorageOptions::default().page_size(page_size),
+                StorageOptions::default().db_path(db_path).page_size(page_size),
             ) {
                 Ok(_) => panic!("opening should have failed due to newer on-disk schema"),
                 Err(DcbError::InternalError(msg)) => {

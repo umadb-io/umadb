@@ -3,7 +3,7 @@ use std::path::Path;
 use crate::common::{PageID, Position};
 use crate::events_tree::{EventIterator, event_tree_append, event_tree_lookup};
 use crate::events_tree_nodes::EventRecord;
-use crate::mvcc::{Mvcc, Writer, StorageOptions, DEFAULT_DB_FILENAME};
+use crate::mvcc::{Mvcc, Writer, StorageOptions};
 use crate::node::Node;
 use crate::page::Page;
 use crate::tags_tree::{TagsTreeIterator, tags_tree_insert};
@@ -32,26 +32,17 @@ impl UmaDb {
     /// If a directory path is provided, a file named "uma.db" will be used inside it.
     pub fn new<P: AsRef<Path>>(path: P) -> DcbResult<Self> {
         Self::new_with_options(
-            path,
             false,
-            StorageOptions::default(),
+            StorageOptions::default().db_path(path),
         )
     }
 
     /// Create a new EventStore with explicit options.
-    pub fn new_with_options<P: AsRef<Path>>(
-        path: P,
+    pub fn new_with_options(
         verbose: bool,
         options: StorageOptions,
     ) -> DcbResult<Self> {
-        let p = path.as_ref();
-        let file_path = if p.is_dir() {
-            p.join(DEFAULT_DB_FILENAME)
-        } else {
-            p.to_path_buf()
-        };
         let mvcc = Mvcc::new(
-            &file_path,
             verbose,
             options,
         )?;
@@ -1120,9 +1111,8 @@ mod tests {
         let db_path = temp_dir.path().join("tracking-split.db");
         // Use a small page size to trigger splits with few inserts
         let mvcc = Mvcc::new(
-            &db_path,
             false,
-            StorageOptions::default().page_size(256),
+            StorageOptions::default().db_path(db_path).page_size(256),
         )
         .unwrap();
         let uma = UmaDb::from_arc(Arc::new(mvcc));
@@ -1156,9 +1146,8 @@ mod tests {
         let db_path = temp_dir.path().join("tracking-internal-split.db");
         // Small page size to force both leaf and internal splits quickly
         let mvcc = Mvcc::new(
-            &db_path,
             false,
-            StorageOptions::default().page_size(128),
+            StorageOptions::default().db_path(db_path).page_size(128),
         )
         .unwrap();
         let uma = UmaDb::from_arc(Arc::new(mvcc));
@@ -1358,9 +1347,8 @@ mod tests {
         let temp_dir = tempdir().unwrap();
         let db_path = temp_dir.path().join("mvcc-api-test.db");
         let db = Mvcc::new(
-            db_path.as_ref(),
             VERBOSE,
-            StorageOptions::default(),
+            StorageOptions::default().db_path(db_path),
         )
         .unwrap();
         let input = standard_events();
@@ -1665,9 +1653,8 @@ mod tests {
         let temp_dir = tempdir().unwrap();
         let db_path = temp_dir.path().join("mvcc-fallback-types-only.db");
         let mut db = Mvcc::new(
-            db_path.as_ref(),
             VERBOSE,
-            StorageOptions::default(),
+            StorageOptions::default().db_path(db_path),
         )
         .unwrap();
 
@@ -1804,7 +1791,7 @@ mod tests {
     #[serial]
     fn test_event_store() {
         let temp_dir = tempdir().unwrap();
-        let store = UmaDb::new(temp_dir.path()).unwrap();
+        let store = UmaDb::new(&temp_dir).unwrap();
 
         // Head is None on empty store
         assert_eq!(None, store.head().unwrap());

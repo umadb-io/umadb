@@ -122,6 +122,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
     let key = args.key;
     let api_key = args.api_key;
     let storage_options = umadb_server::StorageOptions::default()
+        .db_path(args.db_path)
         .page_size(args.page_size)
         .read_method(args.read_method.parse().unwrap_or(umadb_server::ReadMethod::Mmap))
         .page_cache_max_pages(args.page_cache_max_pages)
@@ -152,39 +153,37 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
     match (cert, key, api_key) {
         (Some(cert), Some(key), Some(api_key)) => {
             start_server_secure_from_files_with_api_key_with_options(
-                args.db_path,
                 &args.listen,
                 rx,
                 cert,
                 key,
                 api_key,
                 storage_options,
-            )
-            .await?
+            ).await?
         }
         (Some(cert), Some(key), None) => {
             start_server_secure_from_files_with_options(
-                args.db_path,
                 &args.listen,
                 rx,
                 cert,
                 key,
                 storage_options,
-            )
-            .await?
+            ).await?
         }
         (None, None, Some(api_key)) => {
             start_server_with_api_key_with_options(
-                args.db_path,
                 &args.listen,
                 rx,
                 api_key,
                 storage_options,
-            )
-            .await?
+            ).await?
         }
         (None, None, None) => {
-            start_server_with_options(args.db_path, &args.listen, rx, storage_options).await?
+            start_server_with_options(
+                &args.listen,
+                rx,
+                storage_options
+            ).await?
         }
         _ => {
             eprintln!(

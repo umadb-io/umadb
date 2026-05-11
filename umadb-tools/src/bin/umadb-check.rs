@@ -4,7 +4,7 @@ use std::os::unix::fs::FileExt;
 use std::path::PathBuf;
 use umadb_core::common::{PageID, Position};
 use umadb_core::db::{read_conditional, tag_to_hash};
-use umadb_core::mvcc::{Mvcc, StorageOptions, DEFAULT_PAGE_SIZE, DEFAULT_DB_FILENAME};
+use umadb_core::mvcc::{Mvcc, StorageOptions, DEFAULT_PAGE_SIZE};
 use umadb_core::node::Node;
 use umadb_core::page::Page;
 use umadb_core::tags_tree_nodes::{
@@ -97,18 +97,13 @@ fn main() {
 fn real_main() -> DcbResult<()> {
     let args = parse_args().map_err(DcbError::InternalError)?;
 
-    let path = args.path.unwrap();
-    let p = if path.is_dir() {
-        path.join(DEFAULT_DB_FILENAME)
-    } else {
-        path
-    };
+    let db_path = args.path.unwrap();
 
     // Quick existence check so we can fail fast with a friendly message
-    if !p.exists() {
+    if !db_path.exists() {
         return Err(DcbError::InternalError(format!(
             "Database file not found: {}",
-            p.display()
+            db_path.display()
         )));
     }
 
@@ -117,13 +112,12 @@ fn real_main() -> DcbResult<()> {
     // Open MVCC in normal mode; the library controls file access and reads.
     // No writes are performed by this tool.
     let mvcc = Mvcc::new(
-        p.as_path(),
         args.verbose,
-        StorageOptions::default().page_size(page_size),
+        StorageOptions::default().db_path(&db_path).page_size(page_size),
     )?;
 
     // Progressive report prelude
-    println!("UmaDB file: {}", p.display());
+    println!("UmaDB file: {}", db_path.display());
     println!("Page size: {} bytes", page_size);
     println!("Stage 1: Checking headers...");
 

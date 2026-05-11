@@ -926,9 +926,8 @@ mod tests {
         let temp_dir = tempdir().unwrap();
         let db_path = temp_dir.path().join("mvcc-test.db");
         let db = Mvcc::new(
-            &db_path,
             VERBOSE,
-            StorageOptions::default().page_size(page_size),
+            StorageOptions::default().db_path(db_path).page_size(page_size),
         )
         .unwrap();
         (temp_dir, db)

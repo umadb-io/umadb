@@ -24,12 +24,11 @@ fn get_max_threads() -> Option<usize> {
         .and_then(|s| s.parse().ok())
 }
 
-fn init_db_with_events(num_events: usize) -> (tempfile::TempDir, String) {
+fn init_db_with_events(num_events: usize) -> (tempfile::TempDir) {
     let dir = tempdir().expect("tempdir");
-    let path = dir.path().to_str().unwrap().to_string();
 
     // Populate the database using the local EventStore (fast, in-process)
-    let store = UmaDb::new(&path).expect("create event store");
+    let store = UmaDb::new(&dir).expect("create event store");
 
     // Prepare events and append in moderate batches to avoid huge allocations
     let batch_size = 1000usize.min(num_events.max(1));
@@ -50,7 +49,7 @@ fn init_db_with_events(num_events: usize) -> (tempfile::TempDir, String) {
         remaining -= current;
     }
 
-    (dir, path)
+    dir
 }
 
 pub fn grpc_append_benchmark(c: &mut Criterion) {
@@ -68,7 +67,7 @@ pub fn grpc_append_benchmark(c: &mut Criterion) {
     for &threads in &thread_counts {
         // Initialize DB and server with 10_000 events (as requested)
         let initial_events = 1_000_000usize;
-        let (_tmp_dir, db_path) = init_db_with_events(initial_events);
+        let tmp_dir = init_db_with_events(initial_events);
 
         // Find a free localhost port
         let listener = TcpListener::bind("127.0.0.1:0").expect("bind to ephemeral port");
@@ -79,7 +78,7 @@ pub fn grpc_append_benchmark(c: &mut Criterion) {
         let addr_http = format!("http://{}", addr);
 
         // Start the gRPC server in a background thread
-        let server_handle = start_bench_server(db_path, addr.clone());
+        let server_handle = start_bench_server(tmp_dir.path().to_str().unwrap().to_string(), addr.clone());
 
         let group_name = format!(
             "grpc_append_{}_per_request{}",

@@ -26,11 +26,10 @@ pub mod bench_api {
     }
 
     impl BenchDb {
-        pub fn new(path: &Path, page_size: usize) -> DcbResult<Self> {
+        pub fn new(db_path: &Path, page_size: usize) -> DcbResult<Self> {
             let mvcc = Mvcc::new(
-                path,
                 false,
-                StorageOptions::default().page_size(page_size),
+                StorageOptions::default().db_path(db_path).page_size(page_size),
             )?;
             Ok(BenchDb { mvcc })
         }

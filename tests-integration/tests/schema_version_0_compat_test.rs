@@ -125,9 +125,8 @@ fn schema_version_0_roundtrip_read_write_and_tags() -> Result<(), Box<dyn std::e
     {
         use umadb_core::mvcc::{Mvcc, StorageOptions};
         let mvcc = Mvcc::new(
-            &db_path,
             false,
-            StorageOptions::default(),
+            StorageOptions::default().db_path(&db_path),
         )?;
         let header_page = mvcc.get_latest_header_page()?;
         let header = header_page.as_header_node()?;
