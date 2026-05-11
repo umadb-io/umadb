@@ -54,14 +54,6 @@ impl FromStr for ReadMethod {
     }
 }
 
-impl ReadMethod {
-    pub fn from_env() -> Self {
-        std::env::var("UMADB_READ_METHOD")
-            .ok()
-            .and_then(|s| s.parse().ok())
-            .unwrap_or(ReadMethod::Mmap)
-    }
-}
 
 #[derive(Debug, Clone)]
 pub struct StorageOptions {
