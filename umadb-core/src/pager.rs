@@ -676,6 +676,116 @@ mod tests {
     }
 
     #[test]
+    fn test_mmap_large_file_multiple_windows() {
+        let page_size = 4096usize;
+        let path = temp_file_path("mmap_large_test.db");
+        let pager = Pager::new(&path, page_size).expect("pager new");
+        let ppm = pager.debug_pages_per_mmap();
+
+        // We want to test across at least 3 windows to ensure mapping logic is sound.
+        let num_pages = (ppm * 2 + 10) as u64;
+
+        for p in 0..num_pages {
+            let data = vec![(p % 256) as u8; page_size];
+            pager.write_page(PageID(p), &data).expect("write page");
+        }
+        pager.fsync().expect("fsync");
+
+        // Read from each window
+        // Window 0
+        let r0 = pager.read_page_mmap_slice(PageID(0)).expect("read p0");
+        assert_eq!(r0.as_slice()[0], 0);
+
+        // Window 1
+        let r1 = pager.read_page_mmap_slice(PageID(ppm as u64)).expect("read p_ppm");
+        assert_eq!(r1.as_slice()[0], (ppm % 256) as u8);
+
+        // Window 2
+        let r2 = pager.read_page_mmap_slice(PageID(ppm as u64 * 2)).expect("read p_2ppm");
+        assert_eq!(r2.as_slice()[0], ((ppm * 2) % 256) as u8);
+
+        assert_eq!(pager.debug_mmap_count(), 3);
+    }
+
+    #[test]
+    fn test_mmap_on_demand_resizing() {
+        let page_size = 1024usize;
+        let path = temp_file_path("mmap_resize_test.db");
+        let pager = Pager::new(&path, page_size).expect("pager new");
+        let ppm = pager.debug_pages_per_mmap();
+
+        // 1. Write one page and read it via mmap
+        let data0 = vec![0xAA; page_size];
+        pager.write_page(PageID(0), &data0).expect("write p0");
+        let r0 = pager.read_page_mmap_slice(PageID(0)).expect("read p0 mmap");
+        assert_eq!(r0.as_slice(), &data0[..]);
+
+        // 2. Write a page in the NEXT window. This should trigger file growth and a new mmap.
+        let target_page_id = PageID(ppm as u64);
+        let data_target = vec![0xBB; page_size];
+        pager.write_page(target_page_id, &data_target).expect("write target page");
+
+        let r_target = pager.read_page_mmap_slice(target_page_id).expect("read target mmap");
+        assert_eq!(r_target.as_slice(), &data_target[..]);
+
+        // Verify we have two mmaps
+        assert_eq!(pager.debug_mmap_count(), 2);
+
+        // 3. Verify that the file size has indeed grown.
+        let metadata = std::fs::metadata(&path).expect("metadata");
+        // It should be at least (ppm * 2 * page_size) because of how preallocate works in write_page.
+        // write_page calls preallocate with (ppm * page_size) when page_id + 1 exceeds current length.
+        assert!(metadata.len() >= (ppm as u64 * 2 * page_size as u64));
+    }
+
+    #[test]
+    fn test_mmap_file_io_equivalence_during_growth() {
+        let page_size = 4096usize;
+        let path = temp_file_path("mmap_equivalence_test.db");
+        let pager = Pager::new(&path, page_size).expect("pager new");
+        let ppm = pager.debug_pages_per_mmap();
+
+        for i in 0..3 {
+            let page_id = PageID((i * ppm) as u64);
+            let data = vec![(i + 1) as u8; page_size];
+            pager.write_page(page_id, &data).expect("write");
+
+            let mmap_res = pager.read_page_mmap_slice(page_id).expect("mmap read");
+            let file_res = pager.read_page(page_id).expect("file read");
+
+            assert_eq!(mmap_res.as_slice(), file_res.as_slice(), "Mismatch at window {}", i);
+        }
+    }
+
+    #[test]
+    fn test_mmap_concurrent_reads() {
+        use std::sync::Arc;
+        let page_size = 4096usize;
+        let path = temp_file_path("mmap_concurrent_test.db");
+        let pager = Arc::new(Pager::new(&path, page_size).expect("pager new"));
+
+        let data = vec![0xCC; page_size];
+        pager.write_page(PageID(0), &data).expect("write p0");
+
+        let mut handles = vec![];
+        for _ in 0..10 {
+            let p = Arc::clone(&pager);
+            handles.push(std::thread::spawn(move || {
+                for _ in 0..100 {
+                    let r = p.read_page_mmap_slice(PageID(0)).expect("concurrent read");
+                    assert_eq!(r.as_slice()[0], 0xCC);
+                }
+            }));
+        }
+
+        for h in handles {
+            h.join().expect("thread failed");
+        }
+
+        assert_eq!(pager.debug_mmap_count(), 1);
+    }
+
+    #[test]
     fn lock_file_persists_and_unlocks() {
         let page_size = 1024usize;
         let path = temp_file_path("pager_lock_test.db");

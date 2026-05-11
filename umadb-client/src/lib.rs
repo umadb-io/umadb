@@ -176,24 +176,24 @@ impl SyncUmaDbClient {
         })
     }
 
-    pub fn connect_with_tls_options(
-        url: String,
-        tls_options: Option<ClientTlsOptions>,
-        batch_size: Option<u32>,
-    ) -> DcbResult<Self> {
-        let (rt, handle) = Self::get_rt_handle();
-        let async_client = handle.block_on(AsyncUmaDbClient::connect_with_tls_options(
-            url,
-            tls_options,
-            batch_size,
-            None,
-        ))?;
-        Ok(Self {
-            async_client,
-            _runtime: rt, // Keep runtime alive for the client lifetime
-            handle,
-        })
-    }
+    // pub fn connect_with_tls_options(
+    //     url: String,
+    //     tls_options: Option<ClientTlsOptions>,
+    //     batch_size: Option<u32>,
+    // ) -> DcbResult<Self> {
+    //     let (rt, handle) = Self::get_rt_handle();
+    //     let async_client = handle.block_on(AsyncUmaDbClient::connect_with_tls_options(
+    //         url,
+    //         tls_options,
+    //         batch_size,
+    //         None,
+    //     ))?;
+    //     Ok(Self {
+    //         async_client,
+    //         _runtime: rt, // Keep runtime alive for the client lifetime
+    //         handle,
+    //     })
+    // }
 
     fn get_rt_handle() -> (Option<Runtime>, Handle) {
         let (rt, handle) = {
