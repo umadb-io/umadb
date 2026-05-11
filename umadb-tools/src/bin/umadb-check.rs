@@ -119,10 +119,7 @@ fn real_main() -> DcbResult<()> {
     let mvcc = Mvcc::new(
         p.as_path(),
         args.verbose,
-        StorageOptions {
-            page_size,
-            ..Default::default()
-        },
+        StorageOptions::default().page_size(page_size),
     )?;
 
     // Progressive report prelude

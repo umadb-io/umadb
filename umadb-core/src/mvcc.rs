@@ -82,6 +82,15 @@ impl Default for StorageOptions {
     }
 }
 
+impl StorageOptions {
+    pub fn page_size(self, page_size: usize) -> Self {
+        Self {
+            page_size,
+            ..self
+        }
+    }
+}
+
 // Main MVCC structure
 pub struct Mvcc {
     pub pager: Pager,
@@ -2131,10 +2140,7 @@ mod tests {
             let db = Mvcc::new(
                 &db_path,
                 VERBOSE,
-                StorageOptions {
-                    page_size: 4096,
-                    ..Default::default()
-                },
+                StorageOptions::default().page_size(4096),
             )
             .unwrap();
             assert!(db.pager.is_file_new);
@@ -2144,10 +2150,7 @@ mod tests {
             let db = Mvcc::new(
                 &db_path,
                 VERBOSE,
-                StorageOptions {
-                    page_size: 4096,
-                    ..Default::default()
-                },
+                StorageOptions::default().page_size(4096),
             )
             .unwrap();
             assert!(!db.pager.is_file_new);
@@ -2162,10 +2165,7 @@ mod tests {
         let db = Mvcc::new(
             &db_path,
             VERBOSE,
-            StorageOptions {
-                page_size: 4096,
-                ..Default::default()
-            },
+            StorageOptions::default().page_size(4096),
         )
         .unwrap();
 
@@ -2213,10 +2213,7 @@ mod tests {
         let db = Mvcc::new(
             &db_path,
             VERBOSE,
-            StorageOptions {
-                page_size: 4096,
-                ..Default::default()
-            },
+            StorageOptions::default().page_size(4096),
         )
         .unwrap();
 
@@ -2310,10 +2307,7 @@ mod tests {
         let db = Mvcc::new(
             &db_path,
             VERBOSE,
-            StorageOptions {
-                page_size: 4096,
-                ..Default::default()
-            },
+            StorageOptions::default().page_size(4096),
         )
         .unwrap();
         // First transaction
@@ -2427,10 +2421,7 @@ mod tests {
             let db = Mvcc::new(
                 &db_path,
                 VERBOSE,
-                StorageOptions {
-                    page_size,
-                    ..Default::default()
-                },
+                StorageOptions::default().page_size(page_size),
             )
             .unwrap();
             (temp_dir, db)
@@ -4515,10 +4506,7 @@ mod tests {
             let mvcc = Mvcc::new(
                 &db_path,
                 verbose,
-                StorageOptions {
-                    page_size,
-                    ..Default::default()
-                },
+                StorageOptions::default().page_size(page_size),
             )
             .expect("must create new db");
 
@@ -4551,10 +4539,7 @@ mod tests {
             match Mvcc::new(
                 &db_path,
                 verbose,
-                StorageOptions {
-                    page_size,
-                    ..Default::default()
-                },
+                StorageOptions::default().page_size(page_size),
             ) {
                 Ok(_) => panic!("opening should have failed due to newer on-disk schema"),
                 Err(DcbError::InternalError(msg)) => {

@@ -1124,10 +1124,7 @@ mod tests {
         let mvcc = Mvcc::new(
             &db_path,
             false,
-            StorageOptions {
-                page_size: 256,
-                ..Default::default()
-            },
+            StorageOptions::default().page_size(256),
         )
         .unwrap();
         let uma = UmaDb::from_arc(Arc::new(mvcc));
@@ -1163,10 +1160,7 @@ mod tests {
         let mvcc = Mvcc::new(
             &db_path,
             false,
-            StorageOptions {
-                page_size: 128,
-                ..Default::default()
-            },
+            StorageOptions::default().page_size(128),
         )
         .unwrap();
         let uma = UmaDb::from_arc(Arc::new(mvcc));

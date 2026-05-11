@@ -30,10 +30,7 @@ pub mod bench_api {
             let mvcc = Mvcc::new(
                 path,
                 false,
-                StorageOptions {
-                    page_size,
-                    ..Default::default()
-                },
+                StorageOptions::default().page_size(page_size),
             )?;
             Ok(BenchDb { mvcc })
         }

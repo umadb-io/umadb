@@ -713,10 +713,7 @@ mod tests {
         let db = Mvcc::new(
             &db_path,
             VERBOSE,
-            StorageOptions {
-                page_size,
-                ..Default::default()
-            },
+            StorageOptions::default().page_size(page_size),
         )
         .unwrap();
         (temp_dir, db)
