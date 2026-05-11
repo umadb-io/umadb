@@ -24,7 +24,7 @@ fn get_max_threads() -> Option<usize> {
         .and_then(|s| s.parse().ok())
 }
 
-fn init_db_with_events(num_events: usize) -> (tempfile::TempDir) {
+fn init_db_with_events(num_events: usize) -> tempfile::TempDir {
     let dir = tempdir().expect("tempdir");
 
     // Populate the database using the local EventStore (fast, in-process)

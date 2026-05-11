@@ -2,11 +2,7 @@ use clap::{CommandFactory, FromArgMatches, Parser};
 use std::io::IsTerminal;
 use tokio::signal;
 use tokio::sync::oneshot;
-use umadb_server::{
-    start_server_secure_from_files_with_api_key_with_options,
-    start_server_secure_from_files_with_options, start_server_with_api_key_with_options,
-    start_server_with_options, uptime,
-};
+use umadb_server::{start_server_with_options, uptime, ServerOptions, ServerTlsOptions, StorageOptions};
 
 
 pub fn print_banner() {
@@ -61,11 +57,11 @@ struct Args {
 
     /// Path to server TLS certificate (PEM), optional
     #[arg(long = "tls-cert", env = "UMADB_TLS_CERT", required = false)]
-    cert: Option<String>,
+    cert_path: Option<String>,
 
     /// Path to server TLS private key (PEM), optional
     #[arg(long = "tls-key", env = "UMADB_TLS_KEY", required = false)]
-    key: Option<String>,
+    key_path: Option<String>,
 
     /// API key for authenticating clients, optional
     #[arg(long = "api-key", env = "UMADB_API_KEY", required = false)]
@@ -118,16 +114,32 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
     let matches = cmd.get_matches();
     let args = Args::from_arg_matches(&matches)?; // <-- FromArgMatches trait
 
-    let cert = args.cert;
-    let key = args.key;
-    let api_key = args.api_key;
-    let storage_options = umadb_server::StorageOptions::default()
+    if args.cert_path.is_some() != args.key_path.is_some() {
+        eprintln!(
+            "Both --tls-cert and --tls-key (or UMADB_TLS_CERT and UMADB_TLS_KEY) must be provided for TLS"
+        );
+        std::process::exit(2);
+    }
+
+    let server_tls_options = ServerTlsOptions::from_path_strings(
+        args.cert_path,
+        args.key_path,
+    )?;
+
+    let storage_options = StorageOptions::default()
         .db_path(args.db_path)
         .page_size(args.page_size)
         .read_method(args.read_method.parse().unwrap_or(umadb_server::ReadMethod::Mmap))
         .page_cache_max_pages(args.page_cache_max_pages)
         .page_cache_max_mb(args.page_cache_max_mb)
         .zero_fill_pages(args.zero_fill_pages);
+
+    let server_options = ServerOptions{
+        listen_addr: args.listen,
+        tls: server_tls_options,
+        api_key: args.api_key,
+        storage: storage_options,
+    };
 
     let (tx, rx) = oneshot::channel::<()>();
     tokio::spawn(async move {
@@ -150,48 +162,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
 
     print_banner();
 
-    match (cert, key, api_key) {
-        (Some(cert), Some(key), Some(api_key)) => {
-            start_server_secure_from_files_with_api_key_with_options(
-                &args.listen,
-                rx,
-                cert,
-                key,
-                api_key,
-                storage_options,
-            ).await?
-        }
-        (Some(cert), Some(key), None) => {
-            start_server_secure_from_files_with_options(
-                &args.listen,
-                rx,
-                cert,
-                key,
-                storage_options,
-            ).await?
-        }
-        (None, None, Some(api_key)) => {
-            start_server_with_api_key_with_options(
-                &args.listen,
-                rx,
-                api_key,
-                storage_options,
-            ).await?
-        }
-        (None, None, None) => {
-            start_server_with_options(
-                &args.listen,
-                rx,
-                storage_options
-            ).await?
-        }
-        _ => {
-            eprintln!(
-                "Both --tls-cert and --tls-key (or UMADB_TLS_CERT and UMADB_TLS_KEY) must be provided for TLS"
-            );
-            std::process::exit(2);
-        }
-    }
+    start_server_with_options(server_options, rx).await?;
 
     Ok(())
 }

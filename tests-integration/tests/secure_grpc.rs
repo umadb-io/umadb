@@ -5,8 +5,9 @@ use rcgen::generate_simple_self_signed;
 use tempfile::tempdir;
 use tokio::time::sleep;
 use umadb_client::{AsyncUmaDbClient, ClientTlsOptions};
+use umadb_core::mvcc::StorageOptions;
 use umadb_dcb::{DcbEvent, DcbEventStoreAsync};
-use umadb_server::start_server_secure;
+use umadb_server::{start_server_with_options, ServerOptions, ServerTlsOptions};
 
 // Helper to pick a free localhost port
 fn get_free_port() -> u16 {
@@ -36,25 +37,25 @@ async fn secure_grpc_end_to_end_append_and_read() {
 
     // Start secure server
     let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-    let db_path_clone = db_path.clone();
     let addr_clone = addr.clone();
-    let cert_clone = cert_pem.clone();
-    let key_clone = key_pem.clone();
+    let cert_pem_clone = cert_pem.clone();
+    let key_pem_clone = key_pem.clone();
     let server_task = tokio::spawn(async move {
-        let _ = start_server_secure(
-            db_path_clone,
-            &addr_clone,
+        let _ = start_server_with_options(
+            ServerOptions{
+                listen_addr: addr_clone,
+                tls: Some(ServerTlsOptions { cert_pem: cert_pem_clone, key_pem: key_pem_clone }),
+                api_key: None,
+                storage: StorageOptions::default().db_path(db_path),
+            },
             shutdown_rx,
-            cert_clone,
-            key_clone,
-        )
-        .await;
+        ).await;
     });
 
     // Build TLS opts for client (trust the self-signed cert and use SNI localhost)
     let tls = ClientTlsOptions {
         domain: Some("localhost".to_string()),
-        ca_pem: Some(cert_pem.clone()),
+        ca_pem: Some(cert_pem),
     };
 
     // Retry connect loop to avoid race with server startup

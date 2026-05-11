@@ -1,6 +1,6 @@
 use futures::Stream;
 use std::fs;
-use std::path::Path;
+use std::path::{Path};
 use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::LazyLock;
@@ -8,16 +8,6 @@ use std::thread;
 use std::time::Instant;
 use tokio::sync::{mpsc, oneshot, watch};
 
-/// A guard that sends a signal through a oneshot channel when dropped.
-struct CancellationGuard(Option<oneshot::Sender<()>>);
-
-impl Drop for CancellationGuard {
-    fn drop(&mut self) {
-        if let Some(tx) = self.0.take() {
-            let _ = tx.send(());
-        }
-    }
-}
 
 use tokio_stream::wrappers::ReceiverStream;
 use tonic::transport::{Identity, ServerTlsConfig};
@@ -41,6 +31,56 @@ use std::future::Future;
 use std::task::{Context, Poll};
 use tonic::server::NamedService;
 use umadb_proto::status_from_dcb_error;
+
+// Server options
+#[derive(Clone, Debug)]
+pub struct ServerOptions {
+    pub listen_addr: String,
+    pub tls: Option<ServerTlsOptions>,
+    pub api_key: Option<String>,
+    pub storage: StorageOptions,
+}
+
+// Server TLS configuration
+#[derive(Clone, Debug)]
+pub struct ServerTlsOptions {
+    pub cert_pem: Vec<u8>,
+    pub key_pem: Vec<u8>,
+}
+
+impl ServerTlsOptions {
+    pub fn from_path_strings(cert_path: Option<String>, key_path: Option<String>) -> Result<Option<Self>, Box<dyn std::error::Error>> {
+        match (cert_path, key_path) {
+            (Some(cert_path), Some(key_path)) => {
+                let cert_pem = read_file(cert_path.clone(), "TLS certificate")?;
+                let key_pem = read_file(key_path.clone(), "TLS key")?;
+                Ok(Some(ServerTlsOptions{cert_pem, key_pem}))
+
+            },
+            (None, None) => Ok(None),
+            _ => Err("both cert_path and key_path must be provided for TLS".into()).into(),
+        }
+    }
+}
+
+fn read_file(path: String, purpose: &str) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+    Ok(fs::read(
+        path.clone()
+    ).map_err(|e| -> Box<dyn std::error::Error> {
+        format!("failed to open {purpose} file '{path}': {}", e).into()
+    })?)
+}
+
+/// A guard that sends a signal through a oneshot channel when dropped.
+struct CancellationGuard(Option<oneshot::Sender<()>>);
+
+impl Drop for CancellationGuard {
+    fn drop(&mut self) {
+        if let Some(tx) = self.0.take() {
+            let _ = tx.send(());
+        }
+    }
+}
 
 // This is just to maintain compatibility for the very early unversioned API (pre-v1).
 #[derive(Clone, Debug)]
@@ -136,13 +176,6 @@ const APPEND_BATCH_MAX_EVENTS: usize = 2000;
 const READ_RESPONSE_BATCH_SIZE_DEFAULT: u32 = 100;
 const READ_RESPONSE_BATCH_SIZE_MAX: u32 = 5000;
 
-// Optional TLS configuration helpers
-#[derive(Clone, Debug)]
-pub struct ServerTlsOptions {
-    pub cert_pem: Vec<u8>,
-    pub key_pem: Vec<u8>,
-}
-
 pub fn uptime() -> std::time::Duration {
     START_TIME.elapsed()
 }
@@ -173,246 +206,20 @@ pub async fn start_server<P: AsRef<Path>>(
     addr: &str,
     shutdown_rx: oneshot::Receiver<()>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    start_server_internal(addr, shutdown_rx, None, None, StorageOptions::default().db_path(db_path)).await
+    let options = ServerOptions{
+        listen_addr: addr.to_string(),
+        tls: None,
+        api_key: None,
+        storage: StorageOptions::default().db_path(db_path.as_ref()),
+    };
+    start_server_with_options(options, shutdown_rx).await
 }
 
 pub async fn start_server_with_options(
-    addr: &str,
+    options: ServerOptions,
     shutdown_rx: oneshot::Receiver<()>,
-    storage_options: StorageOptions,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    start_server_internal(addr, shutdown_rx, None, None, storage_options).await
-}
-
-/// Start server with TLS using PEM-encoded cert and key.
-pub async fn start_server_secure<P: AsRef<Path>>(
-    db_path: P,
-    addr: &str,
-    shutdown_rx: oneshot::Receiver<()>,
-    cert_pem: Vec<u8>,
-    key_pem: Vec<u8>,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let tls = ServerTlsOptions { cert_pem, key_pem };
-    start_server_internal(
-        addr,
-        shutdown_rx,
-        Some(tls),
-        None,
-        StorageOptions::default().db_path(db_path),
-    )
-    .await
-}
-
-pub async fn start_server_secure_with_options(
-    addr: &str,
-    shutdown_rx: oneshot::Receiver<()>,
-    cert_pem: Vec<u8>,
-    key_pem: Vec<u8>,
-    storage_options: StorageOptions,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let tls = ServerTlsOptions { cert_pem, key_pem };
-    start_server_internal(addr, shutdown_rx, Some(tls), None, storage_options).await
-}
-
-pub async fn start_server_secure_from_files<
-    P: AsRef<Path> + Send + 'static,
-    CP: AsRef<Path>,
-    KP: AsRef<Path>,
->(
-    db_path: P,
-    addr: &str,
-    shutdown_rx: oneshot::Receiver<()>,
-    cert_path: CP,
-    key_path: KP,
-) -> Result<(), Box<dyn std::error::Error>> {
-    start_server_secure_from_files_with_options(
-        addr,
-        shutdown_rx,
-        cert_path,
-        key_path,
-        StorageOptions::default().db_path(db_path),
-    )
-    .await
-}
-
-pub async fn start_server_secure_from_files_with_options<
-    CP: AsRef<Path>,
-    KP: AsRef<Path>,
->(
-    addr: &str,
-    shutdown_rx: oneshot::Receiver<()>,
-    cert_path: CP,
-    key_path: KP,
-    storage_options: StorageOptions,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let cert_path_ref = cert_path.as_ref();
-    let cert_pem = fs::read(cert_path_ref).map_err(|e| -> Box<dyn std::error::Error> {
-        format!(
-            "failed to open TLS certificate file '{}': {}",
-            cert_path_ref.display(),
-            e
-        )
-        .into()
-    })?;
-
-    let key_path_ref = key_path.as_ref();
-    let key_pem = fs::read(key_path_ref).map_err(|e| -> Box<dyn std::error::Error> {
-        format!(
-            "failed to open TLS key file '{}': {}",
-            key_path_ref.display(),
-            e
-        )
-        .into()
-    })?;
-    start_server_secure_with_options(addr, shutdown_rx, cert_pem, key_pem, storage_options)
-        .await
-}
-
-/// Start server (insecure) requiring an API key for all RPCs.
-pub async fn start_server_with_api_key<P: AsRef<Path>>(
-    path: P,
-    addr: &str,
-    shutdown_rx: oneshot::Receiver<()>,
-    api_key: String,
-) -> Result<(), Box<dyn std::error::Error>> {
-    start_server_internal(
-        addr,
-        shutdown_rx,
-        None,
-        Some(api_key),
-        StorageOptions::default().db_path(path),
-    )
-    .await
-}
-
-pub async fn start_server_with_api_key_with_options(
-    addr: &str,
-    shutdown_rx: oneshot::Receiver<()>,
-    api_key: String,
-    storage_options: StorageOptions,
-) -> Result<(), Box<dyn std::error::Error>> {
-    start_server_internal(
-        addr,
-        shutdown_rx,
-        None,
-        Some(api_key),
-        storage_options,
-    )
-    .await
-}
-
-/// Start TLS server requiring an API key for all RPCs.
-pub async fn start_server_secure_with_api_key<P: AsRef<Path>>(
-    path: P,
-    addr: &str,
-    shutdown_rx: oneshot::Receiver<()>,
-    cert_pem: Vec<u8>,
-    key_pem: Vec<u8>,
-    api_key: String,
-) -> Result<(), Box<dyn std::error::Error>> {
-    start_server_secure_with_api_key_with_options(
-        addr,
-        shutdown_rx,
-        cert_pem,
-        key_pem,
-        api_key,
-        StorageOptions::default().db_path(path),
-    )
-    .await
-}
-
-/// TLS server from files requiring an API key
-pub async fn start_server_secure_from_files_with_api_key<
-    P: AsRef<Path>,
-    CP: AsRef<Path>,
-    KP: AsRef<Path>,
->(
-    path: P,
-    addr: &str,
-    shutdown_rx: oneshot::Receiver<()>,
-    cert_path: CP,
-    key_path: KP,
-    api_key: String,
-) -> Result<(), Box<dyn std::error::Error>> {
-    start_server_secure_from_files_with_api_key_with_options(
-        addr,
-        shutdown_rx,
-        cert_path,
-        key_path,
-        api_key,
-        StorageOptions::default().db_path(path),
-    )
-    .await
-}
-
-pub async fn start_server_secure_from_files_with_api_key_with_options<
-    CP: AsRef<Path>,
-    KP: AsRef<Path>,
->(
-    addr: &str,
-    shutdown_rx: oneshot::Receiver<()>,
-    cert_path: CP,
-    key_path: KP,
-    api_key: String,
-    storage_options: StorageOptions,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let cert_path_ref = cert_path.as_ref();
-    let cert_pem = fs::read(cert_path_ref).map_err(|e| -> Box<dyn std::error::Error> {
-        format!(
-            "failed to open TLS certificate file '{}': {}",
-            cert_path_ref.display(),
-            e
-        )
-        .into()
-    })?;
-
-    let key_path_ref = key_path.as_ref();
-    let key_pem = fs::read(key_path_ref).map_err(|e| -> Box<dyn std::error::Error> {
-        format!(
-            "failed to open TLS key file '{}': {}",
-            key_path_ref.display(),
-            e
-        )
-        .into()
-    })?;
-    start_server_secure_with_api_key_with_options(
-        addr,
-        shutdown_rx,
-        cert_pem,
-        key_pem,
-        api_key,
-        storage_options,
-    )
-    .await
-}
-
-pub async fn start_server_secure_with_api_key_with_options(
-    addr: &str,
-    shutdown_rx: oneshot::Receiver<()>,
-    cert_pem: Vec<u8>,
-    key_pem: Vec<u8>,
-    api_key: String,
-    storage_options: StorageOptions,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let tls = ServerTlsOptions { cert_pem, key_pem };
-    start_server_internal(
-        addr,
-        shutdown_rx,
-        Some(tls),
-        Some(api_key),
-        storage_options,
-    )
-    .await
-}
-
-async fn start_server_internal(
-    addr: &str,
-    shutdown_rx: oneshot::Receiver<()>,
-    tls: Option<ServerTlsOptions>,
-    api_key: Option<String>,
-    storage_options: StorageOptions,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let addr = addr.parse()?;
+    let addr = options.listen_addr.parse()?;
     // ---- Bind incoming manually like tonic ----
     let incoming = match TcpIncoming::bind(addr) {
         Ok(incoming) => incoming,
@@ -430,8 +237,8 @@ async fn start_server_internal(
     let (srv_shutdown_tx, srv_shutdown_rx) = watch::channel(false);
     let dcb_server = match DcbServer::new(
         srv_shutdown_rx,
-        api_key.clone(),
-        storage_options,
+        options.api_key.clone(),
+        options.storage,
     ) {
             Ok(server) => server,
             Err(err) => {
@@ -443,13 +250,13 @@ async fn start_server_internal(
             "UmaDB has {:?} events",
             dcb_server.request_handler.head().unwrap_or(Some(0)).unwrap_or(0)
         );
-    let tls_mode_display_str = if tls.is_some() {
+    let tls_mode_display_str = if options.tls.is_some() {
         "with TLS"
     } else {
         "without TLS"
     };
 
-    let api_key_display_str = if api_key.is_some() {
+    let api_key_display_str = if options.api_key.is_some() {
         "with API key"
     } else {
         "without API key"
@@ -468,7 +275,7 @@ async fn start_server_internal(
     let health_reporter_for_shutdown = health_reporter.clone();
 
     // Apply PathRewriterLayer at the server level to intercept all requests before routing
-    let mut builder = build_server_builder_with_options(tls)
+    let mut builder = build_server_builder_with_options(options.tls)
         .layer(PathRewriterLayer)
         .add_service(health_service);
 
