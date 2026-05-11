@@ -4586,4 +4586,103 @@ mod tests {
             }
         }
     }
+
+    #[cfg(test)]
+    mod page_cache_tests {
+        use super::*;
+        use serial_test::serial;
+        use tempfile::tempdir;
+
+        #[test]
+        #[serial]
+        fn test_mvcc_page_cache_max_pages() {
+            let temp_dir = tempdir().unwrap();
+            let db_path = temp_dir.path().join("cache-pages.db");
+            let options = StorageOptions::default()
+                .db_path(&db_path)
+                .page_cache_max_pages(10);
+            
+            let mvcc = Mvcc::new(false, options).expect("mvcc new");
+            assert!(mvcc.page_cache.is_some());
+
+            // Write some data
+            let mut writer = mvcc.writer().expect("writer");
+            let p1 = writer.alloc_page_id();
+            let page = Page::new(p1, Node::FreeListLeaf(crate::free_lists_tree_nodes::FreeListLeafNode::default()));
+            writer.insert_dirty(page).expect("insert dirty");
+            mvcc.commit(&mut writer).expect("commit");
+
+            // Page should be in cache now after commit
+            {
+                let cache = mvcc.page_cache.as_ref().unwrap();
+                assert!(cache.get(&p1).is_some());
+                assert!(cache.get(&HEADER_PAGE_ID_0).is_some() || cache.get(&HEADER_PAGE_ID_1).is_some());
+            }
+
+            // Read page - should hit cache
+            let _read_page = mvcc.read_page(p1).expect("read page");
+        }
+
+        #[test]
+        #[serial]
+        fn test_mvcc_page_cache_max_mb() {
+            let temp_dir = tempdir().unwrap();
+            let db_path = temp_dir.path().join("cache-mb.db");
+            let options = StorageOptions::default()
+                .db_path(&db_path)
+                .page_cache_max_mb(1); // 1 MB
+            
+            let mvcc = Mvcc::new(false, options).expect("mvcc new");
+            assert!(mvcc.page_cache.is_some());
+
+            // Write some data
+            let mut writer = mvcc.writer().expect("writer");
+            let p1 = writer.alloc_page_id();
+            let page = Page::new(p1, Node::FreeListLeaf(crate::free_lists_tree_nodes::FreeListLeafNode::default()));
+            writer.insert_dirty(page).expect("insert dirty");
+            mvcc.commit(&mut writer).expect("commit");
+
+            // Page should be in cache
+            {
+                let cache = mvcc.page_cache.as_ref().unwrap();
+                assert!(cache.get(&p1).is_some());
+            }
+
+            // Read page
+            let _read_page = mvcc.read_page(p1).expect("read page");
+        }
+
+        #[test]
+        #[serial]
+        fn test_mvcc_page_cache_eviction() {
+            let temp_dir = tempdir().unwrap();
+            let db_path = temp_dir.path().join("cache-eviction.db");
+            let options = StorageOptions::default()
+                .db_path(&db_path)
+                .page_cache_max_pages(2);
+            
+            let mvcc = Mvcc::new(false, options).expect("mvcc new");
+            
+            // 1. Write 3 pages. Cache limit is 2.
+            // Commit will try to insert all dirty pages + header.
+            let mut writer = mvcc.writer().expect("writer");
+            let p1 = writer.alloc_page_id();
+            let p2 = writer.alloc_page_id();
+            let p3 = writer.alloc_page_id();
+            
+            writer.insert_dirty(Page::new(p1, Node::FreeListLeaf(Default::default()))).unwrap();
+            writer.insert_dirty(Page::new(p2, Node::FreeListLeaf(Default::default()))).unwrap();
+            writer.insert_dirty(Page::new(p3, Node::FreeListLeaf(Default::default()))).unwrap();
+            
+            mvcc.commit(&mut writer).expect("commit");
+
+            // Some pages should have been evicted or not admitted if we exceed 2.
+            // Moka cache might not evict immediately, but let's check entry count.
+            let cache = mvcc.page_cache.as_ref().unwrap();
+            // We can't strictly assert count == 2 because eviction is async in moka, 
+            // but we can call run_pending_tasks if available or just wait.
+            cache.run_pending_tasks();
+            assert!(cache.entry_count() <= 2);
+        }
+    }
 }
