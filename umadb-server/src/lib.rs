@@ -7,6 +7,18 @@ use std::sync::LazyLock;
 use std::thread;
 use std::time::Instant;
 use tokio::sync::{mpsc, oneshot, watch};
+
+/// A guard that sends a signal through a oneshot channel when dropped.
+struct CancellationGuard(Option<oneshot::Sender<()>>);
+
+impl Drop for CancellationGuard {
+    fn drop(&mut self) {
+        if let Some(tx) = self.0.take() {
+            let _ = tx.send(());
+        }
+    }
+}
+
 use tokio_stream::wrappers::ReceiverStream;
 use tonic::transport::{Identity, ServerTlsConfig};
 use tonic::{Request, Response, Status, transport::Server};
@@ -756,19 +768,34 @@ impl umadb_proto::v1::dcb_server::Dcb for DcbServer {
         };
         let condition = req.condition.map(|c| c.into());
 
+        let cancel_signal = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let cancel_signal_for_task = cancel_signal.clone();
+
+        // Create a way to watch for the request being cancelled/dropped
+        let (cancel_tx, cancel_rx) = oneshot::channel();
+        let _guard = CancellationGuard(Some(cancel_tx));
+
+        // Spawn a monitoring task that survives the gRPC future being dropped
+        let cancel_signal_for_monitoring = cancel_signal.clone();
+        tokio::spawn(async move {
+            // This resolves when _guard is dropped (client disconnects)
+            // or when the gRPC method finishes normally.
+            let _ = cancel_rx.await;
+            cancel_signal_for_monitoring.store(true, std::sync::atomic::Ordering::SeqCst);
+        });
+
         // Call the event store append method
-        match self
-            .request_handler
-            .append(
-                events,
-                condition,
-                req.tracking_info.map(|t| TrackingInfo {
-                    source: t.source,
-                    position: t.position,
-                }),
-            )
-            .await
-        {
+        let res = self.request_handler.append(
+            events,
+            condition,
+            req.tracking_info.map(|t| TrackingInfo {
+                source: t.source,
+                position: t.position,
+            }),
+            Some(cancel_signal_for_task.clone()),
+        ).await;
+
+        match res {
             Ok(position) => Ok(Response::new(umadb_proto::v1::AppendResponse { position })),
             Err(e) => Err(status_from_dcb_error(e)),
         }
@@ -813,6 +840,7 @@ enum WriterRequest {
         condition: Option<DcbAppendCondition>,
         tracking_info: Option<TrackingInfo>,
         response_tx: oneshot::Sender<DcbResult<u64>>,
+        cancel: Option<Arc<std::sync::atomic::AtomicBool>>,
     },
     Shutdown,
 }
@@ -865,6 +893,7 @@ impl RequestHandler {
                             condition,
                             tracking_info,
                             response_tx,
+                            cancel,
                         } => {
                             // Batch processing: drain any immediately available requests
                             // let mut items: Vec<(Vec<DCBEvent>, Option<DCBAppendCondition>)> =
@@ -897,6 +926,7 @@ impl RequestHandler {
                                 tracking_info,
                                 mvcc,
                                 &mut writer,
+                                cancel,
                             );
                             // Record result and possibly mark abort
                             match &result {
@@ -928,6 +958,7 @@ impl RequestHandler {
                                         condition,
                                         tracking_info,
                                         response_tx,
+                                        cancel,
                                     }) => {
                                         let ev_len = events.len();
                                         let idx_in_batch = responders.len();
@@ -938,6 +969,7 @@ impl RequestHandler {
                                             tracking_info,
                                             mvcc,
                                             &mut writer,
+                                            cancel,
                                         );
                                         match &res_next {
                                             Ok(_) => results.push(res_next),
@@ -1099,6 +1131,7 @@ impl RequestHandler {
         events: Vec<DcbEvent>,
         condition: Option<DcbAppendCondition>,
         tracking_info: Option<TrackingInfo>,
+        cancel: Option<Arc<std::sync::atomic::AtomicBool>>,
     ) -> DcbResult<u64> {
         // Concurrent pre-check of the given condition using a reader in a blocking thread.
         let pre_append_decision = if let Some(mut given_condition) = condition {
@@ -1134,6 +1167,7 @@ impl RequestHandler {
                     &events,
                     given_condition.fail_if_events_match.clone(),
                     from,
+                    cancel.clone(),
                 ) {
                     Ok(Some(last_recorded_position)) => {
                         // Request is idempotent; skip actual append
@@ -1184,6 +1218,7 @@ impl RequestHandler {
                         condition: adjusted_condition,
                         tracking_info,
                         response_tx,
+                        cancel,
                     })
                     .await
                     .map_err(|_| {

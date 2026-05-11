@@ -111,7 +111,14 @@ impl UmaDb {
             if abort_idx.is_some() {
                 break;
             }
-            let res = Self::process_append_request(events, condition, tracking, mvcc, &mut writer);
+            let res = Self::process_append_request(
+                events,
+                condition,
+                tracking,
+                mvcc,
+                &mut writer,
+                None,
+            );
             match &res {
                 Ok(_) => results.push(res),
                 Err(e) if is_integrity_error(e) => results.push(Err(clone_dcb_error(e))),
@@ -153,6 +160,7 @@ impl UmaDb {
         tracking_info: Option<TrackingInfo>,
         mvcc: &Arc<Mvcc>,
         writer: &mut Writer,
+        cancel: Option<Arc<std::sync::atomic::AtomicBool>>,
     ) -> DcbResult<u64> {
         // Check condition using read_conditional (limit 1), starting after the provided position
         if let Some(cond) = condition {
@@ -167,7 +175,7 @@ impl UmaDb {
                 false,
                 Some(1),
                 false,
-                None,
+                cancel.clone(),
             );
             match read_result1 {
                 Ok(found_vec) => {
@@ -182,6 +190,7 @@ impl UmaDb {
                             &events,
                             cond.fail_if_events_match.clone(),
                             from,
+                            cancel.clone(),
                         ) {
                             Ok(Some(last_recorded_position)) => Ok(last_recorded_position),
                             Ok(None) => {
@@ -306,8 +315,14 @@ impl DcbEventStoreSync for UmaDb {
         }
         let mvcc = &self.mvcc;
         let mut writer = mvcc.writer()?;
-        let result =
-            Self::process_append_request(events, condition, tracking_info, mvcc, &mut writer);
+        let result = Self::process_append_request(
+            events,
+            condition,
+            tracking_info,
+            mvcc,
+            &mut writer,
+            None,
+        );
         mvcc.commit(&mut writer)?;
         result
     }
@@ -927,6 +942,7 @@ pub fn is_request_idempotent(
     events: &Vec<DcbEvent>,
     fail_if_events_match: DcbQuery,
     start: Option<Position>,
+    cancel: Option<Arc<std::sync::atomic::AtomicBool>>,
 ) -> DcbResult<Option<u64>> {
     // Check events for event IDs. If all have events IDs then
     // call read_conditional again with limit=event.len() and then
@@ -952,7 +968,7 @@ pub fn is_request_idempotent(
             false,
             Some(submitted_events_len as u32),
             false,
-            None,
+            cancel,
         );
         match read_result {
             Ok(found_events) => {
