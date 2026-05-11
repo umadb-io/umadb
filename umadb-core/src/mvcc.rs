@@ -35,8 +35,9 @@ const HEADER_PAGE_ID_1: PageID = PageID(1);
 pub const DEFAULT_PAGE_SIZE: usize = 4096;
 pub const DEFAULT_DB_FILENAME: &str = "uma.db";
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ReadMethod {
+    #[default]
     Mmap,
     FileIo,
 }
@@ -75,7 +76,7 @@ impl Default for StorageOptions {
     fn default() -> Self {
         Self {
             page_size: DEFAULT_PAGE_SIZE,
-            read_method: ReadMethod::from_env(),
+            read_method: ReadMethod::default(),
             page_cache_max_pages: 0,
             page_cache_max_mb: 0,
             zero_fill_pages: true,
@@ -87,6 +88,34 @@ impl StorageOptions {
     pub fn page_size(self, page_size: usize) -> Self {
         Self {
             page_size,
+            ..self
+        }
+    }
+
+    pub fn read_method(self, read_method: ReadMethod) -> Self {
+        Self {
+            read_method,
+            ..self
+        }
+    }
+
+    pub fn page_cache_max_pages(self, page_cache_max_pages: usize) -> Self {
+        Self {
+            page_cache_max_pages,
+            ..self
+        }
+    }
+
+    pub fn page_cache_max_mb(self, page_cache_max_mb: usize) -> Self {
+        Self {
+            page_cache_max_mb,
+            ..self
+        }
+    }
+
+    pub fn zero_fill_pages(self, zero_fill_pages: bool) -> Self {
+        Self {
+            zero_fill_pages,
             ..self
         }
     }

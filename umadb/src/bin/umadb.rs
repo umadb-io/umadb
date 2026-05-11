@@ -121,13 +121,12 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
     let cert = args.cert;
     let key = args.key;
     let api_key = args.api_key;
-    let storage_options = umadb_server::StorageOptions {
-        page_size: args.page_size,
-        read_method: args.read_method.parse().unwrap_or(umadb_server::ReadMethod::Mmap),
-        page_cache_max_pages: args.page_cache_max_pages,
-        page_cache_max_mb: args.page_cache_max_mb,
-        zero_fill_pages: args.zero_fill_pages,
-    };
+    let storage_options = umadb_server::StorageOptions::default()
+        .page_size(args.page_size)
+        .read_method(args.read_method.parse().unwrap_or(umadb_server::ReadMethod::Mmap))
+        .page_cache_max_pages(args.page_cache_max_pages)
+        .page_cache_max_mb(args.page_cache_max_mb)
+        .zero_fill_pages(args.zero_fill_pages);
 
     let (tx, rx) = oneshot::channel::<()>();
     tokio::spawn(async move {
