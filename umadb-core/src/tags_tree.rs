@@ -155,6 +155,7 @@ pub fn tags_tree_insert(
                 let page_ref = writer.get_page_ref(mvcc, current_page_id)?;
                 match &page_ref.node {
                     Node::TagInternal(internal) => {
+                        // We don't reach match Ok(i) here bc we don't have duplicate positions.
                         let child_idx = match internal.keys.binary_search(&pos) {
                             Ok(i) => i + 1,
                             Err(i) => i,

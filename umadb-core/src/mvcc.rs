@@ -1536,6 +1536,7 @@ impl Writer {
             match &current_page_ref.node {
                 Node::FreeListTsnLeaf(_) => break,
                 Node::FreeListTsnInternal(internal) => {
+                    // Note: we never actually match Ok(idx) because inserted PageIDs are unique.
                     let child_idx = match internal.keys.binary_search_by(|k| k.0.cmp(&key.0)) {
                         Ok(idx) => idx + 1, // on equal, go right (matches existing >= loop)
                         Err(idx) => idx,    // first separator greater than key
