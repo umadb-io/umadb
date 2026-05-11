@@ -54,8 +54,8 @@ umadb [OPTIONS]
 
 ### Options
 
-- `--db-path` - Path to the database file or directory
-- `--listen` - Server bind address (e.g. `127.0.0.1:50051`)
+- `--db-path` - Path to the database file or directory (also via UMADB_DB_PATH)
+- `--listen` - Server bind address (e.g. `127.0.0.1:50051`) (also via UMADB_LISTEN)
 - `--tls-cert` - Optional file path to TLS server certificate (also via UMADB_TLS_CERT)
 - `--tls-key` - Optional file path to TLS server private key (also via UMADB_TLS_KEY)
 - `--api-key` - Optional API key for authenticating clients (also via UMADB_API_KEY)

@@ -51,23 +51,23 @@ pub fn print_banner() {
 #[command(version)]
 struct Args {
     /// Address to bind to
-    #[arg(long = "listen", default_value = "127.0.0.1:50051")]
+    #[arg(long = "listen", env = "UMADB_LISTEN", default_value = "127.0.0.1:50051")]
     listen: String,
 
     /// Path to database file or directory
-    #[arg(long = "db-path", default_value = "./uma.db")]
+    #[arg(long = "db-path", env = "UMADB_DB_PATH", default_value = "./uma.db")]
     db_path: String,
 
     /// Path to server TLS certificate (PEM), optional
-    #[arg(long = "tls-cert", required = false)]
+    #[arg(long = "tls-cert", env = "UMADB_TLS_CERT", required = false)]
     cert: Option<String>,
 
     /// Path to server TLS private key (PEM), optional
-    #[arg(long = "tls-key", required = false)]
+    #[arg(long = "tls-key", env = "UMADB_TLS_KEY", required = false)]
     key: Option<String>,
 
     /// API key for authenticating clients, optional
-    #[arg(long = "api-key", required = false)]
+    #[arg(long = "api-key", env = "UMADB_API_KEY", required = false)]
     api_key: Option<String>,
 }
 
@@ -97,9 +97,9 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
     let matches = cmd.get_matches();
     let args = Args::from_arg_matches(&matches)?; // <-- FromArgMatches trait
 
-    let cert = args.cert.or_else(|| std::env::var("UMADB_TLS_CERT").ok());
-    let key = args.key.or_else(|| std::env::var("UMADB_TLS_KEY").ok());
-    let api_key = args.api_key.or_else(|| std::env::var("UMADB_API_KEY").ok());
+    let cert = args.cert;
+    let key = args.key;
+    let api_key = args.api_key;
 
     let (tx, rx) = oneshot::channel::<()>();
     tokio::spawn(async move {
