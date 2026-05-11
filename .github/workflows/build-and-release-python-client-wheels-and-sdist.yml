@@ -119,7 +119,7 @@ jobs:
 
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: wheels-linux-${{ matrix.python-version }}-${{ matrix.platform.target }}
           path: dist
@@ -219,7 +219,7 @@ jobs:
             END
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: wheels-musllinux-${{ matrix.python-version }}-${{ matrix.platform.target }}
           path: dist
@@ -262,7 +262,7 @@ jobs:
           python -c "import umadb"
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: wheels-windows-${{ matrix.python-version }}-${{ matrix.platform.target }}
           path: dist
@@ -304,7 +304,7 @@ jobs:
           python -c "import umadb"
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: wheels-macos-${{ matrix.python-version }}-${{ matrix.platform.target }}
           path: dist
@@ -321,7 +321,7 @@ jobs:
           args: --out dist --manifest-path umadb-python/Cargo.toml
 
       - name: Upload sdist
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: wheels-sdist
           path: dist
@@ -339,7 +339,7 @@ jobs:
       # Used to generate artifact attestation
       attestations: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
       - name: Generate artifact attestation
         uses: actions/attest-build-provenance@v2
         with:
