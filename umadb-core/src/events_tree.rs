@@ -497,7 +497,11 @@ impl<'a> EventIterator<'a> {
         }
     }
 
-    pub fn next_batch(&mut self, batch_size: u32) -> DcbResult<Vec<(Position, EventRecord)>> {
+    pub fn next_batch(
+        &mut self,
+        batch_size: u32,
+        cancel: Option<&std::sync::Arc<std::sync::atomic::AtomicBool>>,
+    ) -> DcbResult<Vec<(Position, EventRecord)>> {
         let mut result: Vec<(Position, EventRecord)> = Vec::with_capacity(batch_size as usize);
         if batch_size == 0 {
             return Ok(result);
@@ -506,6 +510,11 @@ impl<'a> EventIterator<'a> {
             return Ok(result);
         }
         while result.len() < batch_size as usize {
+            if let Some(c) = cancel {
+                if c.load(std::sync::atomic::Ordering::Relaxed) {
+                    return Err(DcbError::CancelledByUser());
+                }
+            }
             let Some((page_id, mut stacked_idx)) = self.stack.pop() else {
                 break; // traversal finished
             };
@@ -1164,7 +1173,7 @@ mod tests {
         // Progressively iterate over events using batches
         let mut scanned: Vec<(Position, EventRecord)> = Vec::new();
         loop {
-            let batch = events_iterator.next_batch(3).unwrap();
+            let batch = events_iterator.next_batch(3, None).unwrap();
             if batch.is_empty() {
                 break;
             }
@@ -1294,7 +1303,7 @@ mod tests {
             // Progressively iterate over events using batches
             let mut scanned: Vec<(Position, EventRecord)> = Vec::new();
             loop {
-                let batch = events_iterator.next_batch(3).unwrap();
+                let batch = events_iterator.next_batch(3, None).unwrap();
                 if batch.is_empty() {
                     break;
                 }
@@ -1413,7 +1422,7 @@ mod tests {
             // Progressively iterate over events using batches
             let mut scanned: Vec<(Position, EventRecord)> = Vec::new();
             loop {
-                let batch = events_iterator.next_batch(3).unwrap();
+                let batch = events_iterator.next_batch(3, None).unwrap();
                 if batch.is_empty() {
                     break;
                 }

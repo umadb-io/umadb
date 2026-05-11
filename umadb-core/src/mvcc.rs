@@ -313,6 +313,7 @@ impl Mvcc {
                         true,
                         Some(1),
                         false,
+                        None,
                     ) {
                         Ok(mut v) => {
                             if let Some(ev) = v.pop() {

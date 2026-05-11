@@ -458,6 +458,7 @@ fn real_main() -> DcbResult<()> {
             false,
             Some(1024),
             false,
+            None,
         ) {
             Ok(batch) => {
                 if batch.is_empty() {
@@ -538,6 +539,7 @@ fn real_main() -> DcbResult<()> {
         true,    // backwards: start from the end
         Some(1), // only need the last event
         false,
+        None,
     ) {
         Ok(mut v) => {
             if let Some(ev) = v.pop() {

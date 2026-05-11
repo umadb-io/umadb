@@ -437,6 +437,9 @@ impl umadb_proto::v1::dcb_server::Dcb for DcbServer {
         // Clone the shutdown watch receiver.
         let mut shutdown_watch_rx = self.shutdown_watch_rx.clone();
 
+        let cancel_signal = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let cancel_signal_for_task = cancel_signal.clone();
+
         // Spawn a task to handle the read operation and stream multiple batches
         tokio::spawn(async move {
             // Ensure we can reuse the same query across batches
@@ -458,15 +461,12 @@ impl umadb_proto::v1::dcb_server::Dcb for DcbServer {
                 None
             };
             loop {
-                // If this is a subscription, exit if the client
-                // has gone away or the server is shutting down.
-                if subscribe {
-                    if tx.is_closed() {
-                        break;
-                    }
-                    if *shutdown_watch_rx.borrow() {
-                        break;
-                    }
+                // TODO: Can remove this check when we sure that cancel_signal_for_task
+                //  is fully respected by all paths in spawn_blocking(handler.read).
+                // Exit if the client has gone away or the server is shutting down.
+                if tx.is_closed() || *shutdown_watch_rx.borrow() {
+                    cancel_signal_for_task.store(true, std::sync::atomic::Ordering::SeqCst);
+                    break;
                 }
                 // Determine per-iteration limit.
                 let read_limit = remaining_limit.min(batch_size);
@@ -477,13 +477,29 @@ impl umadb_proto::v1::dcb_server::Dcb for DcbServer {
                 let handler = request_handler.clone();
                 let query_val = query_clone.clone();
                 let limit_val = Some(read_limit);
-                match tokio::task::spawn_blocking(move || {
-                    handler.read(query_val, next_start, backwards, limit_val)
-                })
-                .await
-                .map_err(|e| DcbError::InternalError(e.to_string()))
-                .and_then(|res| res)
-                {
+                let cancel_for_blocking = cancel_signal_for_task.clone();
+                let mut blocking_handle = tokio::task::spawn_blocking(move || {
+                    handler.read(query_val, next_start, backwards, limit_val, Some(cancel_for_blocking))
+                });
+
+                let res = tokio::select! {
+                    res = &mut blocking_handle => {
+                        res.map_err(|e| DcbError::InternalError(e.to_string())).and_then(|res| res)
+                    }
+                    _ = tx.closed() => {
+                        cancel_signal_for_task.store(true, std::sync::atomic::Ordering::SeqCst);
+                        // Await the task to ensure it finishes and doesn't leak
+                        let _ = blocking_handle.await;
+                        break;
+                    }
+                    _ = shutdown_watch_rx.changed() => {
+                        cancel_signal_for_task.store(true, std::sync::atomic::Ordering::SeqCst);
+                        let _ = blocking_handle.await;
+                        break;
+                    }
+                };
+
+                match res {
                     Ok((dcb_sequenced_events, head)) => {
                         // Capture the original length before consuming events
                         let original_len = dcb_sequenced_events.len();
@@ -583,7 +599,11 @@ impl umadb_proto::v1::dcb_server::Dcb for DcbServer {
                         tokio::task::yield_now().await;
                     }
                     Err(e) => {
-                        let _ = tx.send(Err(status_from_dcb_error(e))).await;
+                        if matches!(e, DcbError::CancelledByUser()) {
+                            // Silently stop if cancelled by user
+                        } else {
+                            let _ = tx.send(Err(status_from_dcb_error(e))).await;
+                        }
                         break;
                     }
                 }
@@ -620,6 +640,9 @@ impl umadb_proto::v1::dcb_server::Dcb for DcbServer {
         // Clone the shutdown watch receiver.
         let mut shutdown_watch_rx = self.shutdown_watch_rx.clone();
 
+        let cancel_signal = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let cancel_signal_for_task = cancel_signal.clone();
+
         // Spawn a task to handle the subscribe operation and stream multiple batches
         tokio::spawn(async move {
             // Ensure we can reuse the same query across batches
@@ -630,24 +653,39 @@ impl umadb_proto::v1::dcb_server::Dcb for DcbServer {
             let mut head_rx = request_handler.watch_head();
 
             loop {
+                // TODO: Can remove this check when we sure that cancel_signal_for_task
+                //  is fully respected by all paths in spawn_blocking(handler.read).
                 // Exit if the client has gone away or the server is shutting down.
-                if tx.is_closed() {
-                    break;
-                }
-                if *shutdown_watch_rx.borrow() {
+                if tx.is_closed() || *shutdown_watch_rx.borrow() {
+                    cancel_signal_for_task.store(true, std::sync::atomic::Ordering::SeqCst);
                     break;
                 }
 
                 let handler = request_handler.clone();
                 let query_val = query_clone.clone();
                 let batch_size_val = Some(batch_size);
-                match tokio::task::spawn_blocking(move || {
-                    handler.read(query_val, next_after, false, batch_size_val)
-                })
-                .await
-                .map_err(|e| DcbError::InternalError(e.to_string()))
-                .and_then(|res| res)
-                {
+                let cancel_for_blocking = cancel_signal_for_task.clone();
+                let mut blocking_handle = tokio::task::spawn_blocking(move || {
+                    handler.read(query_val, next_after, false, batch_size_val, Some(cancel_for_blocking))
+                });
+
+                let res = tokio::select! {
+                    res = &mut blocking_handle => {
+                        res.map_err(|e| DcbError::InternalError(e.to_string())).and_then(|res| res)
+                    }
+                    _ = tx.closed() => {
+                        cancel_signal_for_task.store(true, std::sync::atomic::Ordering::SeqCst);
+                        let _ = blocking_handle.await;
+                        break;
+                    }
+                    _ = shutdown_watch_rx.changed() => {
+                        cancel_signal_for_task.store(true, std::sync::atomic::Ordering::SeqCst);
+                        let _ = blocking_handle.await;
+                        break;
+                    }
+                };
+
+                match res {
                     Ok((dcb_sequenced_events, _head)) => {
                         // Map events to protobuf type
                         let sequenced_event_protos: Vec<umadb_proto::v1::SequencedEvent> =
@@ -684,7 +722,11 @@ impl umadb_proto::v1::dcb_server::Dcb for DcbServer {
                         tokio::task::yield_now().await;
                     }
                     Err(e) => {
-                        let _ = tx.send(Err(status_from_dcb_error(e))).await;
+                        if matches!(e, DcbError::CancelledByUser()) {
+                            // Silently stop if cancelled by user
+                        } else {
+                            let _ = tx.send(Err(status_from_dcb_error(e))).await;
+                        }
                         break;
                     }
                 }
@@ -997,6 +1039,7 @@ impl RequestHandler {
         start: Option<u64>,
         backwards: bool,
         limit: Option<u32>,
+        cancel: Option<Arc<std::sync::atomic::AtomicBool>>,
     ) -> DcbResult<(Vec<DcbSequencedEvent>, Option<u64>)> {
         let reader = self.mvcc.reader()?;
         let last_committed_position = reader.next_position.0.saturating_sub(1);
@@ -1014,8 +1057,12 @@ impl RequestHandler {
             backwards,
             limit,
             false,
+            cancel,
         )
-        .map_err(|e| DcbError::Corruption(format!("{e}")))?;
+        .map_err(|e| match e {
+            DcbError::CancelledByUser() => DcbError::CancelledByUser(),
+            _ => DcbError::Corruption(format!("{e}")),
+        })?;
 
         let head = if limit.is_none() {
             if last_committed_position == 0 {
@@ -1074,6 +1121,7 @@ impl RequestHandler {
                 false,
                 Some(1),
                 false,
+                None,
             )?;
 
             if let Some(matched) = found.first() {
@@ -1123,11 +1171,11 @@ impl RequestHandler {
         // Handle the pre-check decision
         match pre_append_decision {
             PreAppendDecision::AlreadyAppended(last_found_position) => {
-                // ✅ Request was idempotent — just return the existing position.
+                // Request was idempotent — just return the existing position.
                 Ok(last_found_position)
             }
             PreAppendDecision::UseCondition(adjusted_condition) => {
-                // ✅ Proceed with append operation on the writer thread.
+                // Proceed with append operation on the writer thread.
                 let (response_tx, response_rx) = oneshot::channel();
 
                 self.writer_request_tx

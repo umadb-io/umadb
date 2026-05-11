@@ -167,6 +167,7 @@ impl UmaDb {
                 false,
                 Some(1),
                 false,
+                None,
             );
             match read_result1 {
                 Ok(found_vec) => {
@@ -259,6 +260,7 @@ impl DcbEventStoreSync for UmaDb {
             backwards,
             limit,
             false,
+            None,
         )?;
 
         // Compute head according to semantics
@@ -598,6 +600,7 @@ pub fn read_conditional(
     backwards: bool,
     limit: Option<u32>,
     force_sequential_read: bool,
+    cancel: Option<Arc<std::sync::atomic::AtomicBool>>,
 ) -> DcbResult<Vec<DcbSequencedEvent>> {
     const SCAN_BATCH_SIZE: u32 = 256;
     // Special case: explicit zero limit
@@ -610,7 +613,12 @@ pub fn read_conditional(
         let mut iter = EventIterator::new(mvcc, dirty, events_tree_root_id, start, backwards);
         let mut out: Vec<DcbSequencedEvent> = Vec::new();
         'outer_all: loop {
-            let batch = iter.next_batch(limit.unwrap_or(SCAN_BATCH_SIZE))?;
+            if let Some(ref c) = cancel {
+                if c.load(std::sync::atomic::Ordering::Relaxed) {
+                    return Err(DcbError::CancelledByUser());
+                }
+            }
+            let batch = iter.next_batch(limit.unwrap_or(SCAN_BATCH_SIZE), cancel.as_ref())?;
             if batch.is_empty() {
                 break;
             }
@@ -655,7 +663,12 @@ pub fn read_conditional(
             false
         };
         'outer_fallback: loop {
-            let batch = iter.next_batch(SCAN_BATCH_SIZE)?;
+            if let Some(ref c) = cancel {
+                if c.load(std::sync::atomic::Ordering::Relaxed) {
+                    return Err(DcbError::CancelledByUser());
+                }
+            }
+            let batch = iter.next_batch(SCAN_BATCH_SIZE, cancel.as_ref())?;
             if batch.is_empty() {
                 break;
             }
@@ -803,6 +816,11 @@ pub fn read_conditional(
 
     let mut out: Vec<DcbSequencedEvent> = Vec::new();
     for (pos, tags_present, qiis_present) in GroupByPositionIterator::new(merged) {
+        if let Some(ref c) = cancel {
+            if c.load(std::sync::atomic::Ordering::Relaxed) {
+                return Err(DcbError::CancelledByUser());
+            }
+        }
         // Find any query item whose required tag set is subset of tags_present
         let matching_qiis: Vec<usize> = qiis_present
             .iter()
@@ -934,6 +952,7 @@ pub fn is_request_idempotent(
             false,
             Some(submitted_events_len as u32),
             false,
+            None,
         );
         match read_result {
             Ok(found_events) => {
@@ -1263,6 +1282,7 @@ mod tests {
             backwards,
             limit,
             false,
+            None,
         )
     }
 
