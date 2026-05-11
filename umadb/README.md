@@ -59,6 +59,10 @@ umadb [OPTIONS]
 - `--tls-cert` - Optional file path to TLS server certificate (also via UMADB_TLS_CERT)
 - `--tls-key` - Optional file path to TLS server private key (also via UMADB_TLS_KEY)
 - `--api-key` - Optional API key for authenticating clients (also via UMADB_API_KEY)
+- `--read-method` - Read method (mmap or fileio) (also via UMADB_READ_METHOD)
+- `--page-cache-max-pages` - Page cache max pages (0 to disable) (also via UMADB_PAGE_CACHE_MAX_PAGES)
+- `--page-cache-max-mb` - Page cache max size in MB (0 to disable) (also via UMADB_PAGE_CACHE_MAX_MB)
+- `--zero-fill-pages` - Zero-fill pages (true/false) (also via UMADB_ZERO_FILL_PAGES)
 - `-h, --help` - Print help
 - `-V, --version` - Print version
 

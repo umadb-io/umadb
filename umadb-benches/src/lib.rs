@@ -12,7 +12,7 @@ pub mod bench_api {
         FreeListTsnLeafNode,
     };
     use umadb_core::header_node::HeaderNode;
-    use umadb_core::mvcc::{Mvcc, Writer};
+    use umadb_core::mvcc::{Mvcc, ReadMethod, Writer};
     use umadb_core::node::Node;
     use umadb_core::page::{PAGE_HEADER_SIZE, Page};
     use umadb_core::tags_tree_nodes::{TagInternalNode, TagLeafNode, TagsInternalNode, TagsLeafNode, TagsLeafValue};
@@ -27,7 +27,15 @@ pub mod bench_api {
 
     impl BenchDb {
         pub fn new(path: &Path, page_size: usize) -> DcbResult<Self> {
-            let mvcc = Mvcc::new(path, page_size, false)?;
+            let mvcc = Mvcc::new(
+                path,
+                page_size,
+                false,
+                ReadMethod::from_env(),
+                0,
+                0,
+                true,
+            )?;
             Ok(BenchDb { mvcc })
         }
 

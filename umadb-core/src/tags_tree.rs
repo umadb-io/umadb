@@ -888,7 +888,7 @@ impl<'a> TagsTreeIterator<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::mvcc::Mvcc;
+    use crate::mvcc::{Mvcc, ReadMethod};
     use tempfile::{TempDir, tempdir};
 
     static VERBOSE: bool = false;
@@ -925,7 +925,16 @@ mod tests {
     fn construct_db(page_size: usize) -> (TempDir, Mvcc) {
         let temp_dir = tempdir().unwrap();
         let db_path = temp_dir.path().join("mvcc-test.db");
-        let db = Mvcc::new(&db_path, page_size, VERBOSE).unwrap();
+        let db = Mvcc::new(
+            &db_path,
+            page_size,
+            VERBOSE,
+            ReadMethod::from_env(),
+            0,
+            0,
+            true,
+        )
+        .unwrap();
         (temp_dir, db)
     }
 

@@ -3,8 +3,9 @@ use std::io::IsTerminal;
 use tokio::signal;
 use tokio::sync::oneshot;
 use umadb_server::{
-    start_server, start_server_secure_from_files, start_server_secure_from_files_with_api_key,
-    start_server_with_api_key, uptime,
+    start_server_secure_from_files_with_api_key_with_options,
+    start_server_secure_from_files_with_options, start_server_with_api_key_with_options,
+    start_server_with_options, uptime,
 };
 
 
@@ -69,6 +70,22 @@ struct Args {
     /// API key for authenticating clients, optional
     #[arg(long = "api-key", env = "UMADB_API_KEY", required = false)]
     api_key: Option<String>,
+
+    /// Read method (mmap or fileio)
+    #[arg(long = "read-method", env = "UMADB_READ_METHOD", default_value = "mmap")]
+    read_method: String,
+
+    /// Page cache max pages (0 to disable)
+    #[arg(long = "page-cache-max-pages", env = "UMADB_PAGE_CACHE_MAX_PAGES", default_value = "0")]
+    page_cache_max_pages: usize,
+
+    /// Page cache max size in MB (0 to disable)
+    #[arg(long = "page-cache-max-mb", env = "UMADB_PAGE_CACHE_MAX_MB", default_value = "0")]
+    page_cache_max_mb: usize,
+
+    /// Zero-fill pages
+    #[arg(long = "zero-fill-pages", env = "UMADB_ZERO_FILL_PAGES", default_value = "true", action = clap::ArgAction::Set)]
+    zero_fill_pages: bool,
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -100,6 +117,12 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
     let cert = args.cert;
     let key = args.key;
     let api_key = args.api_key;
+    let storage_options = umadb_server::StorageOptions {
+        read_method: args.read_method.parse().unwrap_or(umadb_server::ReadMethod::Mmap),
+        page_cache_max_pages: args.page_cache_max_pages,
+        page_cache_max_mb: args.page_cache_max_mb,
+        zero_fill_pages: args.zero_fill_pages,
+    };
 
     let (tx, rx) = oneshot::channel::<()>();
     tokio::spawn(async move {
@@ -124,23 +147,41 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
 
     match (cert, key, api_key) {
         (Some(cert), Some(key), Some(api_key)) => {
-            start_server_secure_from_files_with_api_key(
+            start_server_secure_from_files_with_api_key_with_options(
                 args.db_path,
                 &args.listen,
                 rx,
                 cert,
                 key,
                 api_key,
+                storage_options,
             )
             .await?
         }
         (Some(cert), Some(key), None) => {
-            start_server_secure_from_files(args.db_path, &args.listen, rx, cert, key).await?
+            start_server_secure_from_files_with_options(
+                args.db_path,
+                &args.listen,
+                rx,
+                cert,
+                key,
+                storage_options,
+            )
+            .await?
         }
         (None, None, Some(api_key)) => {
-            start_server_with_api_key(args.db_path, &args.listen, rx, api_key).await?
+            start_server_with_api_key_with_options(
+                args.db_path,
+                &args.listen,
+                rx,
+                api_key,
+                storage_options,
+            )
+            .await?
         }
-        (None, None, None) => start_server(args.db_path, &args.listen, rx).await?,
+        (None, None, None) => {
+            start_server_with_options(args.db_path, &args.listen, rx, storage_options).await?
+        }
         _ => {
             eprintln!(
                 "Both --tls-cert and --tls-key (or UMADB_TLS_CERT and UMADB_TLS_KEY) must be provided for TLS"

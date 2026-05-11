@@ -28,8 +28,10 @@ use umadb_core::db::{
 };
 use umadb_core::mvcc::Mvcc;
 use umadb_dcb::{
-    DcbAppendCondition, DcbEvent, DcbQuery, DcbResult, DcbSequencedEvent, DcbError, TrackingInfo,
+    DcbAppendCondition, DcbError, DcbEvent, DcbQuery, DcbResult, DcbSequencedEvent, TrackingInfo,
 };
+
+pub use umadb_core::mvcc::ReadMethod;
 
 use tokio::runtime::Runtime;
 use tonic::codegen::http;
@@ -136,6 +138,25 @@ const APPEND_BATCH_MAX_EVENTS: usize = 2000;
 const READ_RESPONSE_BATCH_SIZE_DEFAULT: u32 = 100;
 const READ_RESPONSE_BATCH_SIZE_MAX: u32 = 5000;
 
+#[derive(Debug, Clone)]
+pub struct StorageOptions {
+    pub read_method: ReadMethod,
+    pub page_cache_max_pages: usize,
+    pub page_cache_max_mb: usize,
+    pub zero_fill_pages: bool,
+}
+
+impl Default for StorageOptions {
+    fn default() -> Self {
+        Self {
+            read_method: ReadMethod::from_env(),
+            page_cache_max_pages: 0,
+            page_cache_max_mb: 0,
+            zero_fill_pages: true,
+        }
+    }
+}
+
 // Optional TLS configuration helpers
 #[derive(Clone, Debug)]
 pub struct ServerTlsOptions {
@@ -173,7 +194,16 @@ pub async fn start_server<P: AsRef<Path> + Send + 'static>(
     addr: &str,
     shutdown_rx: oneshot::Receiver<()>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    start_server_internal(path, addr, shutdown_rx, None, None).await
+    start_server_internal(path, addr, shutdown_rx, None, None, StorageOptions::default()).await
+}
+
+pub async fn start_server_with_options<P: AsRef<Path> + Send + 'static>(
+    path: P,
+    addr: &str,
+    shutdown_rx: oneshot::Receiver<()>,
+    storage_options: StorageOptions,
+) -> Result<(), Box<dyn std::error::Error>> {
+    start_server_internal(path, addr, shutdown_rx, None, None, storage_options).await
 }
 
 /// Start server with TLS using PEM-encoded cert and key.
@@ -185,10 +215,29 @@ pub async fn start_server_secure<P: AsRef<Path> + Send + 'static>(
     key_pem: Vec<u8>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let tls = ServerTlsOptions { cert_pem, key_pem };
-    start_server_internal(path, addr, shutdown_rx, Some(tls), None).await
+    start_server_internal(
+        path,
+        addr,
+        shutdown_rx,
+        Some(tls),
+        None,
+        StorageOptions::default(),
+    )
+    .await
 }
 
-/// Convenience: load cert and key from filesystem paths
+pub async fn start_server_secure_with_options<P: AsRef<Path> + Send + 'static>(
+    path: P,
+    addr: &str,
+    shutdown_rx: oneshot::Receiver<()>,
+    cert_pem: Vec<u8>,
+    key_pem: Vec<u8>,
+    storage_options: StorageOptions,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let tls = ServerTlsOptions { cert_pem, key_pem };
+    start_server_internal(path, addr, shutdown_rx, Some(tls), None, storage_options).await
+}
+
 pub async fn start_server_secure_from_files<
     P: AsRef<Path> + Send + 'static,
     CP: AsRef<Path>,
@@ -199,6 +248,29 @@ pub async fn start_server_secure_from_files<
     shutdown_rx: oneshot::Receiver<()>,
     cert_path: CP,
     key_path: KP,
+) -> Result<(), Box<dyn std::error::Error>> {
+    start_server_secure_from_files_with_options(
+        path,
+        addr,
+        shutdown_rx,
+        cert_path,
+        key_path,
+        StorageOptions::default(),
+    )
+    .await
+}
+
+pub async fn start_server_secure_from_files_with_options<
+    P: AsRef<Path> + Send + 'static,
+    CP: AsRef<Path>,
+    KP: AsRef<Path>,
+>(
+    path: P,
+    addr: &str,
+    shutdown_rx: oneshot::Receiver<()>,
+    cert_path: CP,
+    key_path: KP,
+    storage_options: StorageOptions,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let cert_path_ref = cert_path.as_ref();
     let cert_pem = fs::read(cert_path_ref).map_err(|e| -> Box<dyn std::error::Error> {
@@ -219,7 +291,8 @@ pub async fn start_server_secure_from_files<
         )
         .into()
     })?;
-    start_server_secure(path, addr, shutdown_rx, cert_pem, key_pem).await
+    start_server_secure_with_options(path, addr, shutdown_rx, cert_pem, key_pem, storage_options)
+        .await
 }
 
 /// Start server (insecure) requiring an API key for all RPCs.
@@ -229,7 +302,33 @@ pub async fn start_server_with_api_key<P: AsRef<Path> + Send + 'static>(
     shutdown_rx: oneshot::Receiver<()>,
     api_key: String,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    start_server_internal(path, addr, shutdown_rx, None, Some(api_key)).await
+    start_server_internal(
+        path,
+        addr,
+        shutdown_rx,
+        None,
+        Some(api_key),
+        StorageOptions::default(),
+    )
+    .await
+}
+
+pub async fn start_server_with_api_key_with_options<P: AsRef<Path> + Send + 'static>(
+    path: P,
+    addr: &str,
+    shutdown_rx: oneshot::Receiver<()>,
+    api_key: String,
+    storage_options: StorageOptions,
+) -> Result<(), Box<dyn std::error::Error>> {
+    start_server_internal(
+        path,
+        addr,
+        shutdown_rx,
+        None,
+        Some(api_key),
+        storage_options,
+    )
+    .await
 }
 
 /// Start TLS server requiring an API key for all RPCs.
@@ -241,8 +340,16 @@ pub async fn start_server_secure_with_api_key<P: AsRef<Path> + Send + 'static>(
     key_pem: Vec<u8>,
     api_key: String,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let tls = ServerTlsOptions { cert_pem, key_pem };
-    start_server_internal(path, addr, shutdown_rx, Some(tls), Some(api_key)).await
+    start_server_secure_with_api_key_with_options(
+        path,
+        addr,
+        shutdown_rx,
+        cert_pem,
+        key_pem,
+        api_key,
+        StorageOptions::default(),
+    )
+    .await
 }
 
 /// TLS server from files requiring an API key
@@ -258,6 +365,31 @@ pub async fn start_server_secure_from_files_with_api_key<
     key_path: KP,
     api_key: String,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    start_server_secure_from_files_with_api_key_with_options(
+        path,
+        addr,
+        shutdown_rx,
+        cert_path,
+        key_path,
+        api_key,
+        StorageOptions::default(),
+    )
+    .await
+}
+
+pub async fn start_server_secure_from_files_with_api_key_with_options<
+    P: AsRef<Path> + Send + 'static,
+    CP: AsRef<Path>,
+    KP: AsRef<Path>,
+>(
+    path: P,
+    addr: &str,
+    shutdown_rx: oneshot::Receiver<()>,
+    cert_path: CP,
+    key_path: KP,
+    api_key: String,
+    storage_options: StorageOptions,
+) -> Result<(), Box<dyn std::error::Error>> {
     let cert_path_ref = cert_path.as_ref();
     let cert_pem = fs::read(cert_path_ref).map_err(|e| -> Box<dyn std::error::Error> {
         format!(
@@ -277,7 +409,37 @@ pub async fn start_server_secure_from_files_with_api_key<
         )
         .into()
     })?;
-    start_server_secure_with_api_key(path, addr, shutdown_rx, cert_pem, key_pem, api_key).await
+    start_server_secure_with_api_key_with_options(
+        path,
+        addr,
+        shutdown_rx,
+        cert_pem,
+        key_pem,
+        api_key,
+        storage_options,
+    )
+    .await
+}
+
+pub async fn start_server_secure_with_api_key_with_options<P: AsRef<Path> + Send + 'static>(
+    path: P,
+    addr: &str,
+    shutdown_rx: oneshot::Receiver<()>,
+    cert_pem: Vec<u8>,
+    key_pem: Vec<u8>,
+    api_key: String,
+    storage_options: StorageOptions,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let tls = ServerTlsOptions { cert_pem, key_pem };
+    start_server_internal(
+        path,
+        addr,
+        shutdown_rx,
+        Some(tls),
+        Some(api_key),
+        storage_options,
+    )
+    .await
 }
 
 async fn start_server_internal<P: AsRef<Path> + Send + 'static>(
@@ -286,6 +448,7 @@ async fn start_server_internal<P: AsRef<Path> + Send + 'static>(
     shutdown_rx: oneshot::Receiver<()>,
     tls: Option<ServerTlsOptions>,
     api_key: Option<String>,
+    storage_options: StorageOptions,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let addr = addr.parse()?;
     // ---- Bind incoming manually like tonic ----
@@ -303,8 +466,12 @@ async fn start_server_internal<P: AsRef<Path> + Send + 'static>(
 
     // Create a shutdown broadcast channel for terminating ongoing subscriptions
     let (srv_shutdown_tx, srv_shutdown_rx) = watch::channel(false);
-    let dcb_server =
-        match DcbServer::new(path.as_ref().to_owned(), srv_shutdown_rx, api_key.clone()) {
+    let dcb_server = match DcbServer::new(
+        path.as_ref().to_owned(),
+        srv_shutdown_rx,
+        api_key.clone(),
+        storage_options,
+    ) {
             Ok(server) => server,
             Err(err) => {
                 return Err(Box::new(err));
@@ -383,8 +550,9 @@ impl DcbServer {
         path: P,
         shutdown_rx: watch::Receiver<bool>,
         api_key: Option<String>,
+        storage_options: StorageOptions,
     ) -> DcbResult<Self> {
-        let command_handler = RequestHandler::new(path)?;
+        let command_handler = RequestHandler::new(path, storage_options)?;
         Ok(Self {
             request_handler: command_handler,
             shutdown_watch_rx: shutdown_rx,
@@ -853,7 +1021,10 @@ struct RequestHandler {
 }
 
 impl RequestHandler {
-    fn new<P: AsRef<Path> + Send + 'static>(path: P) -> DcbResult<Self> {
+    fn new<P: AsRef<Path> + Send + 'static>(
+        path: P,
+        storage_options: StorageOptions,
+    ) -> DcbResult<Self> {
         // Create a channel for sending requests to the writer thread
         let (request_tx, mut request_rx) = mpsc::channel::<WriterRequest>(1024);
 
@@ -864,7 +1035,15 @@ impl RequestHandler {
         } else {
             p.to_path_buf()
         };
-        let mvcc = Arc::new(Mvcc::new(&file_path, DEFAULT_PAGE_SIZE, false)?);
+        let mvcc = Arc::new(Mvcc::new(
+            &file_path,
+            DEFAULT_PAGE_SIZE,
+            false,
+            storage_options.read_method,
+            storage_options.page_cache_max_pages,
+            storage_options.page_cache_max_mb,
+            storage_options.zero_fill_pages,
+        )?);
 
         // Initialize the head watch channel with the current head.
         let init_head = {

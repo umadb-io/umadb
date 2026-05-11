@@ -698,6 +698,7 @@ impl<'a> EventIterator<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::mvcc::{Mvcc, ReadMethod};
     use crate::node::Node;
     use rand::random;
     use serial_test::serial;
@@ -709,7 +710,16 @@ mod tests {
     fn construct_db(page_size: usize) -> (tempfile::TempDir, Mvcc) {
         let temp_dir = tempdir().unwrap();
         let db_path = temp_dir.path().join("mvcc-test.db");
-        let db = Mvcc::new(&db_path, page_size, VERBOSE).unwrap();
+        let db = Mvcc::new(
+            &db_path,
+            page_size,
+            VERBOSE,
+            ReadMethod::from_env(),
+            0,
+            0,
+            true,
+        )
+        .unwrap();
         (temp_dir, db)
     }
 

@@ -124,8 +124,16 @@ fn schema_version_0_roundtrip_read_write_and_tags() -> Result<(), Box<dyn std::e
     // Additionally, verify that the header's schema_version remains 0 (legacy) after appends
     {
         use umadb_core::db::DEFAULT_PAGE_SIZE;
-        use umadb_core::mvcc::Mvcc;
-        let mvcc = Mvcc::new(&db_path, DEFAULT_PAGE_SIZE, false)?;
+        use umadb_core::mvcc::{Mvcc, ReadMethod};
+        let mvcc = Mvcc::new(
+            &db_path,
+            DEFAULT_PAGE_SIZE,
+            false,
+            ReadMethod::from_env(),
+            0,
+            0,
+            true,
+        )?;
         let header_page = mvcc.get_latest_header_page()?;
         let header = header_page.as_header_node()?;
         assert_eq!(

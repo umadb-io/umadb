@@ -4,7 +4,7 @@ use std::os::unix::fs::FileExt;
 use std::path::PathBuf;
 use umadb_core::common::{PageID, Position};
 use umadb_core::db::{DEFAULT_DB_FILENAME, DEFAULT_PAGE_SIZE, read_conditional, tag_to_hash};
-use umadb_core::mvcc::Mvcc;
+use umadb_core::mvcc::{Mvcc, ReadMethod};
 use umadb_core::node::Node;
 use umadb_core::page::Page;
 use umadb_core::tags_tree_nodes::{
@@ -116,7 +116,15 @@ fn real_main() -> DcbResult<()> {
 
     // Open MVCC in normal mode; the library controls file access and reads.
     // No writes are performed by this tool.
-    let mvcc = Mvcc::new(p.as_path(), page_size, args.verbose)?;
+    let mvcc = Mvcc::new(
+        p.as_path(),
+        page_size,
+        args.verbose,
+        ReadMethod::from_env(),
+        0,
+        0,
+        true,
+    )?;
 
     // Progressive report prelude
     println!("UmaDB file: {}", p.display());
