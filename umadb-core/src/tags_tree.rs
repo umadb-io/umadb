@@ -333,7 +333,8 @@ pub fn tags_tree_insert(
         let sz = writer
             .get_page_ref(mvcc, dirty_leaf_page_id)?
             .calc_serialized_size();
-        // Start per-tag tree if page size is too large, and these positions take up lots of space.
+        // Start per-tag tree if the leaf page would overflow and
+        // the tag's inline positions occupy more than half the page.
         if sz > mvcc.page_size && inline_positions_len * 8 * 2 > mvcc.page_size {
             if verbose {
                 println!("Migrating inline positions to per-tag TagLeafNode for index {i}",);
