@@ -77,6 +77,7 @@ pub fn tags_tree_insert(
     // So we compute what to do, mutate minimally, then perform follow-up actions after dropping the borrow.
     let mut per_tag_append_root: Option<PageID> = None;
     let mut inline_appended_index: Option<usize> = None;
+    let mut inline_positions_len: usize = 0;
     {
         let leaf_page = writer.get_mut_dirty(dirty_leaf_page_id)?;
         match &mut leaf_page.node {
@@ -88,6 +89,7 @@ pub fn tags_tree_insert(
                             // Append inline for now; we may migrate after we drop the borrow
                             leaf.values[i].positions.push(pos);
                             inline_appended_index = Some(i);
+                            inline_positions_len = leaf.values[i].positions.len();
                             if verbose {
                                 println!("Appended position to existing tag at index {i}");
                             }
@@ -331,7 +333,8 @@ pub fn tags_tree_insert(
         let sz = writer
             .get_page_ref(mvcc, dirty_leaf_page_id)?
             .calc_serialized_size();
-        if sz > mvcc.page_size {
+        // Start per-tag tree if page size is too large, and these positions take up lots of space.
+        if sz > mvcc.page_size && inline_positions_len * 8 * 2 > mvcc.page_size {
             if verbose {
                 println!("Migrating inline positions to per-tag TagLeafNode for index {i}",);
             }
