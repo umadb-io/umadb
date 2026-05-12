@@ -169,17 +169,17 @@ impl TagsLeafNode {
         Ok(TagsLeafNode { keys, values })
     }
 
-    pub fn pop_last_key_and_value(&mut self) -> DcbResult<(TagHash, TagsLeafValue)> {
-        let last_key = self
-            .keys
-            .pop()
-            .ok_or_else(|| DcbError::DeserializationError("No keys to pop".to_string()))?;
-        let last_value = self
-            .values
-            .pop()
-            .ok_or_else(|| DcbError::DeserializationError("No values to pop".to_string()))?;
-        Ok((last_key, last_value))
-    }
+    // pub fn pop_last_key_and_value(&mut self) -> DcbResult<(TagHash, TagsLeafValue)> {
+    //     let last_key = self
+    //         .keys
+    //         .pop()
+    //         .ok_or_else(|| DcbError::DeserializationError("No keys to pop".to_string()))?;
+    //     let last_value = self
+    //         .values
+    //         .pop()
+    //         .ok_or_else(|| DcbError::DeserializationError("No values to pop".to_string()))?;
+    //     Ok((last_key, last_value))
+    // }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -260,25 +260,25 @@ impl TagsInternalNode {
         Ok(TagsInternalNode { keys, child_ids })
     }
 
-    pub fn replace_last_child_id(&mut self, old_id: PageID, new_id: PageID) -> DcbResult<()> {
-        let last_idx = self.child_ids.len() - 1;
-        if self.child_ids[last_idx] == old_id {
-            self.child_ids[last_idx] = new_id;
-            Ok(())
-        } else {
-            Err(DcbError::DatabaseCorrupted("Child ID mismatch".to_string()))
-        }
-    }
-
-    pub fn append_promoted_key_and_page_id(
-        &mut self,
-        promoted_key: TagHash,
-        promoted_page_id: PageID,
-    ) -> DcbResult<()> {
-        self.keys.push(promoted_key);
-        self.child_ids.push(promoted_page_id);
-        Ok(())
-    }
+    // pub fn replace_last_child_id(&mut self, old_id: PageID, new_id: PageID) -> DcbResult<()> {
+    //     let last_idx = self.child_ids.len() - 1;
+    //     if self.child_ids[last_idx] == old_id {
+    //         self.child_ids[last_idx] = new_id;
+    //         Ok(())
+    //     } else {
+    //         Err(DcbError::DatabaseCorrupted("Child ID mismatch".to_string()))
+    //     }
+    // }
+    //
+    // pub fn append_promoted_key_and_page_id(
+    //     &mut self,
+    //     promoted_key: TagHash,
+    //     promoted_page_id: PageID,
+    // ) -> DcbResult<()> {
+    //     self.keys.push(promoted_key);
+    //     self.child_ids.push(promoted_page_id);
+    //     Ok(())
+    // }
 
     pub(crate) fn split_off(&mut self) -> DcbResult<(TagHash, Vec<TagHash>, Vec<PageID>)> {
         // Split by moving half of the child_ids to a new node.
