@@ -123,29 +123,29 @@ pub fn tags_tree_insert(
     // If we need to append into an existing per-tag leaf page, do it now (avoid overlapping borrows)
     if let Some(mut tag_root_id) = per_tag_append_root.take() {
         // Ensure tag page is dirty (copy-on-write)
-        let dirty_tag_id = {
-            // No outstanding borrows of writer here
-            // Make sure the page is present in this writer's cache before COW
-            let _ = writer.get_page_ref(mvcc, tag_root_id)?;
-            writer.get_dirty_page_id(tag_root_id)?
-        };
-        if dirty_tag_id != tag_root_id {
-            // Update the root_id in the TagsLeaf value to the new dirty page id
-            tag_root_id = dirty_tag_id;
-            {
-                let leaf_page = writer.get_mut_dirty(dirty_leaf_page_id)?;
-                if let Node::TagsLeaf(leaf) = &mut leaf_page.node {
-                    let idx = leaf.keys.binary_search(&tag).map_err(|_| {
-                        DcbError::DatabaseCorrupted("Tag key not found after COW".to_string())
-                    })?;
-                    leaf.values[idx].root_id = tag_root_id;
-                } else {
-                    return Err(DcbError::DatabaseCorrupted(
-                        "Expected TagsLeaf node".to_string(),
-                    ));
-                }
-            }
-        }
+        // let dirty_tag_id = {
+        //     // No outstanding borrows of writer here
+        //     // Make sure the page is present in this writer's cache before COW
+        //     let _ = writer.get_page_ref(mvcc, tag_root_id)?;
+        //     writer.get_dirty_page_id(tag_root_id)?
+        // };
+        // if dirty_tag_id != tag_root_id {
+        //     // Update the root_id in the TagsLeaf value to the new dirty page id
+        //     tag_root_id = dirty_tag_id;
+        //     {
+        //         let leaf_page = writer.get_mut_dirty(dirty_leaf_page_id)?;
+        //         if let Node::TagsLeaf(leaf) = &mut leaf_page.node {
+        //             let idx = leaf.keys.binary_search(&tag).map_err(|_| {
+        //                 DcbError::DatabaseCorrupted("Tag key not found after COW".to_string())
+        //             })?;
+        //             leaf.values[idx].root_id = tag_root_id;
+        //         } else {
+        //             return Err(DcbError::DatabaseCorrupted(
+        //                 "Expected TagsLeaf node".to_string(),
+        //             ));
+        //         }
+        //     }
+        // }
         // Now insert into the per-tag subtree (handles TagLeaf and TagInternal roots)
         {
             // Traverse down to a leaf
@@ -348,30 +348,33 @@ pub fn tags_tree_insert(
             };
             // Create per-tag page or split into an internal if needed
             let new_root_id = {
-                let mut pos_vec = positions;
-                let page_bytes = crate::page::PAGE_HEADER_SIZE
-                    + TagLeafNode {
-                        positions: pos_vec.clone(),
-                    }
-                    .calc_serialized_size();
+                // let mut pos_vec = positions;
+                let mut new_tag_leaf_node = TagLeafNode { positions };
+                let page_bytes = crate::page::PAGE_HEADER_SIZE + new_tag_leaf_node.calc_serialized_size();
+                    // + TagLeafNode {
+                    //     positions: pos_vec.clone(),
+                    // }
+                    // .calc_serialized_size();
                 if page_bytes <= mvcc.page_size {
                     let tag_leaf_id = writer.alloc_page_id();
                     let tag_leaf_page = Page::new(
                         tag_leaf_id,
-                        Node::TagLeaf(TagLeafNode { positions: pos_vec }),
+                        Node::TagLeaf(new_tag_leaf_node),
                     );
                     writer.insert_dirty(tag_leaf_page)?;
                     tag_leaf_id
                 } else {
+                    // Note: We don't get here because the overhead of a tag in a TagsNode
+                    // is greater than the size of a new position, so moving all the old and
+                    // the new positions to a TagNode will never overflow a page. Just the
+                    // pre-tag-tree root ID
+
                     // Split: move the last position to the right leaf and create an internal root
-                    let last_pos = pos_vec.pop().ok_or_else(|| {
+                    let last_pos = new_tag_leaf_node.positions.pop().ok_or_else(|| {
                         DcbError::DatabaseCorrupted("No positions to split".to_string())
                     })?;
                     let left_bytes = crate::page::PAGE_HEADER_SIZE
-                        + TagLeafNode {
-                            positions: pos_vec.clone(),
-                        }
-                        .calc_serialized_size();
+                        + new_tag_leaf_node.calc_serialized_size();
                     if left_bytes > mvcc.page_size {
                         return Err(DcbError::DatabaseCorrupted(
                             "Recursive per-tag split not implemented".to_string(),
@@ -379,7 +382,7 @@ pub fn tags_tree_insert(
                     }
                     let left_id = {
                         let id = writer.alloc_page_id();
-                        let page = Page::new(id, Node::TagLeaf(TagLeafNode { positions: pos_vec }));
+                        let page = Page::new(id, Node::TagLeaf(new_tag_leaf_node));
                         writer.insert_dirty(page)?;
                         id
                     };
@@ -1862,7 +1865,7 @@ mod tests {
         let mut depth = 0;
         while depth < 3 {
             let mut writer = db.writer().unwrap();
-            for _ in 0..10 {
+            for _ in 0..15 {
                 let p = writer.issue_position();
                 tags_tree_insert(&db, &mut writer, tag, p).unwrap();
                 inserted.push(p);
@@ -1900,6 +1903,103 @@ mod tests {
         sorted_positions.sort();
         assert_eq!(inserted, sorted_positions);
     }
+
+    // #[test]
+    // fn test_per_tag_root_replacement_cow() {
+    //     // This test specifically targets line 294: tag_root_id = new_id;
+    //     // which happens when a per-tag subtree root is COWed.
+    //     let (_temp_dir, db) = construct_db(128);
+    //     let tag = th(12345);
+    //
+    //     fn get_pt_root_id_from_writer(db: &Mvcc, writer: &mut Writer, tag: TagHash) -> PageID {
+    //         let mut curr_id = writer.tags_tree_root_id;
+    //         loop {
+    //             let page = writer.get_page_ref(db, curr_id).unwrap();
+    //             match &page.node {
+    //                 Node::TagsLeaf(leaf) => {
+    //                     if let Ok(idx) = leaf.keys.binary_search(&tag) {
+    //                         return leaf.values[idx].root_id;
+    //                     }
+    //                     return PageID(0);
+    //                 }
+    //                 Node::TagsInternal(internal) => {
+    //                     let idx = match internal.keys.binary_search(&tag) {
+    //                         Ok(i) => i + 1,
+    //                         Err(i) => i,
+    //                     };
+    //                     curr_id = internal.child_ids[idx];
+    //                 }
+    //                 _ => panic!("Unexpected node type"),
+    //             }
+    //         }
+    //     }
+    //
+    //     fn get_pt_root_id(db: &Mvcc, tag: TagHash) -> PageID {
+    //         let reader = db.reader().unwrap();
+    //         let mut curr_id = reader.tags_tree_root_id;
+    //         loop {
+    //             let page = db.read_page(curr_id).unwrap();
+    //             match &page.node {
+    //                 Node::TagsLeaf(leaf) => {
+    //                     if let Ok(idx) = leaf.keys.binary_search(&tag) {
+    //                         return leaf.values[idx].root_id;
+    //                     }
+    //                     return PageID(0);
+    //                 }
+    //                 Node::TagsInternal(internal) => {
+    //                     let idx = match internal.keys.binary_search(&tag) {
+    //                         Ok(i) => i + 1,
+    //                         Err(i) => i,
+    //                     };
+    //                     curr_id = internal.child_ids[idx];
+    //                 }
+    //                 _ => panic!("Unexpected node type"),
+    //             }
+    //         }
+    //     }
+    //
+    //     // 1. Create a per-tag root (TagLeaf) and commit it.
+    //     // We need enough positions to move from inline to a per-tag leaf.
+    //     {
+    //         let mut writer = db.writer().unwrap();
+    //         for i in 0..30 {
+    //             tags_tree_insert(&db, &mut writer, tag, Position(i)).unwrap();
+    //         }
+    //         db.commit(&mut writer).unwrap();
+    //     }
+    //
+    //     let pt_root_t1 = get_pt_root_id(&db, tag);
+    //     assert_ne!(pt_root_t1, PageID(0), "Should have a per-tag root");
+    //
+    //     // 2. In a new transaction, append another position.
+    //     // This will COW the TagLeaf root.
+    //     {
+    //         let mut writer = db.writer().unwrap();
+    //         println!("PT root before insert: {:?}", get_pt_root_id(&db, tag));
+    //         tags_tree_insert(&db, &mut writer, tag, Position(100)).unwrap();
+    //         let pt_root_during = get_pt_root_id_from_writer(&db, &mut writer, tag);
+    //         println!("PT root during insert: {:?}", pt_root_during);
+    //         // Verify replacement_info was actually used
+    //         assert_ne!(get_pt_root_id(&db, tag), pt_root_during, "Root should change only after commit in the main tree");
+    //         db.commit(&mut writer).unwrap();
+    //     }
+    //
+    //     let pt_root_t2 = get_pt_root_id(&db, tag);
+    //     assert_ne!(pt_root_t1, pt_root_t2, "Per-tag root should have been COWed");
+    //
+    //     // 3. Force another COW by doing another transaction.
+    //     // This time, the PT root is already in the main tree, but it's "clean" again after commit.
+    //     {
+    //         let mut writer = db.writer().unwrap();
+    //         tags_tree_insert(&db, &mut writer, tag, Position(200)).unwrap();
+    //         db.commit(&mut writer).unwrap();
+    //     }
+    //
+    //     // Verify data
+    //     let reader = db.reader().unwrap();
+    //     let positions = tags_tree_lookup(&db, reader.tags_tree_root_id, tag, Position(0), false).unwrap();
+    //     assert_eq!(positions.len(), 32);
+    // }
 
     // #[test]
     // fn benchmark_insert_and_lookup_varied_sizes_one_tag_one_position() {
