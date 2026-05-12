@@ -2,7 +2,7 @@ use clap::{CommandFactory, FromArgMatches, Parser};
 use std::io::IsTerminal;
 use tokio::signal;
 use tokio::sync::oneshot;
-use umadb_server::{start_server_with_options, uptime, ServerOptions, ServerTlsOptions, StorageOptions};
+use umadb_server::{start_server_with_options, uptime, ServerOptions, ServerTlsOptions, StorageOptions, DEFAULT_PAGE_SIZE};
 
 
 pub fn print_banner() {
@@ -67,8 +67,8 @@ struct Args {
     #[arg(long = "api-key", env = "UMADB_API_KEY", required = false)]
     api_key: Option<String>,
 
-    /// Read method (mmap or fileio)
-    #[arg(long = "read-method", env = "UMADB_READ_METHOD", default_value = "mmap")]
+    /// Read method (fileio or mmap)
+    #[arg(long = "read-method", env = "UMADB_READ_METHOD", default_value = "fileio")]
     read_method: String,
 
     /// Page cache max pages (0 to disable)
@@ -82,10 +82,6 @@ struct Args {
     /// Zero-fill pages
     #[arg(long = "zero-fill-pages", env = "UMADB_ZERO_FILL_PAGES", default_value = "true", action = clap::ArgAction::Set)]
     zero_fill_pages: bool,
-
-    /// Page size in bytes
-    #[arg(long = "page-size", env = "UMADB_PAGE_SIZE", default_value = "4096")]
-    page_size: usize,
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -128,7 +124,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
 
     let storage_options = StorageOptions::default()
         .db_path(args.db_path)
-        .page_size(args.page_size)
+        .page_size(DEFAULT_PAGE_SIZE)
         .read_method(args.read_method.parse().unwrap_or(umadb_server::ReadMethod::Mmap))
         .page_cache_max_pages(args.page_cache_max_pages)
         .page_cache_max_mb(args.page_cache_max_mb)
