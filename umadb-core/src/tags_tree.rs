@@ -369,8 +369,12 @@ pub fn tags_tree_insert(
                 } else {
                     // Note: We don't get here because the overhead of a tag in a TagsNode
                     // is greater than the size of a new position, so moving all the old and
-                    // the new positions to a TagNode will never overflow a page. Just the
-                    // pre-tag-tree root ID
+                    // the new positions to a TagNode will never overflow a page. The overhead
+                    // of a tag in a TagsLeaf node is 16 (tag has) + 8 (root page ID) + 2 (len
+                    // positions) and in a TagLeaf node is 2 (len positions). Assuming a page
+                    // before adding a new position has 0 free bytes, and there is only
+                    // one tag, then putting all the old and new positions in a TagLeaf node
+                    // will create a page with 16 free bytes.
 
                     // Split: move the last position to the right leaf and create an internal root
                     let last_pos = new_tag_leaf_node.positions.pop().ok_or_else(|| {
