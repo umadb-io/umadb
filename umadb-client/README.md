@@ -20,7 +20,7 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-umadb-client = "0.5.7"
+umadb-client = "0.5.8"
 ```
 
 Basic example:

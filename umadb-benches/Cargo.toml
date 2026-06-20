@@ -8,10 +8,10 @@ homepage.workspace = true
 publish = false
 
 [dependencies]
-umadb-dcb = { path = "../umadb-dcb", version = "0.5.7"}
-umadb-core = { path = "../umadb-core", version = "0.5.7"}
-umadb-client = { path = "../umadb-client", version = "0.5.7"}
-umadb-server = { path = "../umadb-server", version = "0.5.7"}
+umadb-dcb = { path = "../umadb-dcb", version = "0.5.8"}
+umadb-core = { path = "../umadb-core", version = "0.5.8"}
+umadb-client = { path = "../umadb-client", version = "0.5.8"}
+umadb-server = { path = "../umadb-server", version = "0.5.8"}
 memory-stats = "1.2"
 futures = { workspace = true }
 sysinfo = "0.33"
