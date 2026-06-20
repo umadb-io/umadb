@@ -394,9 +394,8 @@ impl umadb_proto::v1::dcb_server::Dcb for DcbServer {
             let mut next_start = start;
             let mut sent_any = false;
             let mut remaining_limit = limit.unwrap_or(u32::MAX);
-            // Create a watch receiver for head updates (for subscriptions)
-            // TODO: Make this an Option and only do this for subscriptions?
-            let mut head_rx = request_handler.watch_head();
+            // Create a watch receiver for head updates only for subscriptions.
+            let mut head_rx = subscribe.then(|| request_handler.watch_head());
             let mut captured_db_head: Option<u64> = None;
             let mut have_captured_db_head: bool = false;
             loop {
@@ -474,7 +473,7 @@ impl umadb_proto::v1::dcb_server::Dcb for DcbServer {
                         };
 
                         if sequenced_event_protos.is_empty() {
-                            if subscribe {
+                            if let Some(head_rx) = head_rx.as_mut() {
                                 // For subscriptions, wait for new events instead of terminating.
                                 tokio::select! {
                                     _ = head_rx.changed() => {},
