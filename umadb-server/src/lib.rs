@@ -474,8 +474,8 @@ impl umadb_proto::v1::dcb_server::Dcb for DcbServer {
                                 // For subscriptions, wait for new events instead of terminating.
                                 tokio::select! {
                                     _ = head_rx.changed() => {},
-                                    _ = shutdown_watch_rx.changed() => {},
-                                    _ = tx.closed() => {},
+                                    _ = shutdown_watch_rx.changed() => break,
+                                    _ = tx.closed() => break,
                                 }
                                 // Keep looping, it's a subscription.
                                 continue;
