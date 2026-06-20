@@ -535,11 +535,7 @@ impl umadb_proto::v1::dcb_server::Dcb for DcbServer {
 
                         // Decrease the remaining overall limit if any, and stop if reached
                         if limit.is_some() {
-                            if remaining_limit <= sent_count {
-                                remaining_limit = 0;
-                            } else {
-                                remaining_limit -= sent_count;
-                            }
+                            remaining_limit = remaining_limit.saturating_sub(sent_count);
                             if remaining_limit == 0 {
                                 break;
                             }
