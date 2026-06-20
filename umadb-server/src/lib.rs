@@ -411,7 +411,7 @@ impl umadb_proto::v1::dcb_server::Dcb for DcbServer {
                 // Determine per-iteration limit.
                 let read_limit = remaining_limit.min(batch_size);
                 // If subscription and remaining exhausted (limit reached), terminate
-                if subscribe && limit.is_some() && remaining_limit == 0 {
+                if limit.is_some() && remaining_limit == 0 {
                     break;
                 }
                 let handler = request_handler.clone();
