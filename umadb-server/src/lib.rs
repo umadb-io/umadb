@@ -366,7 +366,7 @@ impl umadb_proto::v1::dcb_server::Dcb for DcbServer {
         let read_request = request.into_inner();
 
         // Convert protobuf query to DCB types
-        let mut query: Option<DcbQuery> = read_request.query.map(|q| q.into());
+        let query: Option<DcbQuery> = read_request.query.map(|q| q.into());
         let start = read_request.start;
         let backwards = read_request.backwards.unwrap_or(false);
         let limit = read_request.limit;
@@ -390,7 +390,7 @@ impl umadb_proto::v1::dcb_server::Dcb for DcbServer {
         // Spawn a task to handle the read operation and stream multiple batches
         tokio::spawn(async move {
             // Ensure we can reuse the same query across batches
-            let query_clone = query.take();
+            let query_clone = query;
             let mut next_start = start;
             let mut sent_any = false;
             let mut remaining_limit = limit.unwrap_or(u32::MAX);
@@ -399,8 +399,6 @@ impl umadb_proto::v1::dcb_server::Dcb for DcbServer {
             let mut captured_db_head: Option<u64> = None;
             let mut have_captured_db_head: bool = false;
             loop {
-                // println!("Server looping");
-
                 // TODO: Can remove this check when we sure that cancel_signal_for_task
                 //  is fully respected by all paths in spawn_blocking(handler.read).
                 // Exit if the client has gone away or the server is shutting down.
@@ -568,7 +566,7 @@ impl umadb_proto::v1::dcb_server::Dcb for DcbServer {
         let subscribe_request = request.into_inner();
 
         // Convert protobuf query to DCB types
-        let mut query: Option<DcbQuery> = subscribe_request.query.map(|q| q.into());
+        let query: Option<DcbQuery> = subscribe_request.query.map(|q| q.into());
         let after = subscribe_request.after;
         // Cap requested batch size.
         let batch_size = subscribe_request
@@ -589,7 +587,7 @@ impl umadb_proto::v1::dcb_server::Dcb for DcbServer {
         // Spawn a task to handle the subscribe operation and stream multiple batches
         tokio::spawn(async move {
             // Ensure we can reuse the same query across batches
-            let query_clone = query.take();
+            let query_clone = query;
             // Todo: End the subscription if after is Some(u64:MAX).
             let mut next_after = after.map(|a| a.saturating_add(1));
             // Create a watch receiver for head updates
