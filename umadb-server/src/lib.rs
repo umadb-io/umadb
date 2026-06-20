@@ -397,17 +397,11 @@ impl umadb_proto::v1::dcb_server::Dcb for DcbServer {
             // Create a watch receiver for head updates (for subscriptions)
             // TODO: Make this an Option and only do this for subscriptions?
             let mut head_rx = request_handler.watch_head();
-            // If non-subscription read, capture head to preserve point-in-time semantics
-            let captured_head = if !subscribe {
-                let handler = request_handler.clone();
-                tokio::task::spawn_blocking(move || handler.head())
-                    .await
-                    .unwrap_or(Ok(None))
-                    .unwrap_or(None)
-            } else {
-                None
-            };
+            let mut captured_db_head: Option<u64> = None;
+            let mut have_captured_db_head: bool = false;
             loop {
+                // println!("Server looping");
+
                 // TODO: Can remove this check when we sure that cancel_signal_for_task
                 //  is fully respected by all paths in spawn_blocking(handler.read).
                 // Exit if the client has gone away or the server is shutting down.
@@ -447,16 +441,23 @@ impl umadb_proto::v1::dcb_server::Dcb for DcbServer {
                 };
 
                 match res {
-                    Ok((dcb_sequenced_events, head)) => {
+                    Ok((dcb_sequenced_events, db_head)) => {
+                        // Capture the db head from the first read (only for non-subscriptions).
+                        if !have_captured_db_head && !subscribe {
+                            captured_db_head = db_head;
+                            have_captured_db_head = true;
+                        }
+
                         // Capture the original length before consuming events
                         let original_len = dcb_sequenced_events.len();
+                        let read_less_than_read_limit = (original_len as u32) < read_limit;
 
-                        // Filter and map events, discarding those with position > captured_head
+                        // Map events to protobuf messages, discarding if position too large.
                         let sequenced_event_protos: Vec<umadb_proto::v1::SequencedEvent> =
                             dcb_sequenced_events
                                 .into_iter()
                                 .filter(|e| {
-                                    if let Some(h) = captured_head {
+                                    if let Some(h) = captured_db_head {
                                         e.position <= h
                                     } else {
                                         true
@@ -465,54 +466,52 @@ impl umadb_proto::v1::dcb_server::Dcb for DcbServer {
                                 .map(umadb_proto::v1::SequencedEvent::from)
                                 .collect();
 
-                        let reached_captured_head = if captured_head.is_some() {
+                        let reached_captured_head = if captured_db_head.is_some() {
                             // Check if we filtered out any events
                             sequenced_event_protos.len() < original_len
                         } else {
                             false
                         };
 
-                        // Calculate head to send based on context
-                        // For subscriptions: use current head
-                        // For unlimited non-subscription reads: use captured_head
-                        // For limited reads: use last event position (or current head if empty)
-                        let last_event_position = sequenced_event_protos.last().map(|e| e.position);
-                        let head_to_send = if subscribe {
-                            head
-                        } else if limit.is_none() {
-                            captured_head
-                        } else {
-                            last_event_position.or(head)
-                        };
-
                         if sequenced_event_protos.is_empty() {
-                            // Only send an empty response to communicate head if this is the first
-                            if !sent_any {
-                                let response = umadb_proto::v1::ReadResponse {
-                                    events: vec![],
-                                    head: head_to_send,
-                                };
-                                let _ = tx.send(Ok(response)).await;
-                            }
-                            // For subscriptions, wait for new events instead of terminating
                             if subscribe {
-                                // Wait for either a new head or a server shutdown signal
+                                // For subscriptions, wait for new events instead of terminating.
                                 tokio::select! {
                                     _ = head_rx.changed() => {},
                                     _ = shutdown_watch_rx.changed() => {},
                                     _ = tx.closed() => {},
                                 }
+                                // Keep looping, it's a subscription.
                                 continue;
+                            } else if !sent_any {
+                                // At least send an empty response to communicate head.
+                                let response = umadb_proto::v1::ReadResponse {
+                                    events: vec![],
+                                    head: if limit.is_some() {
+                                        None
+                                    } else {
+                                        captured_db_head
+                                    },
+                                };
+                                let _ = tx.send(Ok(response)).await;
                             }
+                            // Stop looping, because there's nothing else to read.
                             break;
                         }
 
-                        // Capture values needed after sequenced_event_protos is moved
+
+                        // Capture values needed after sequenced_event_protos is moved.
                         let sent_count = sequenced_event_protos.len() as u32;
+
+                        let last_event_position = sequenced_event_protos.last().map(|e| e.position);
 
                         let response = umadb_proto::v1::ReadResponse {
                             events: sequenced_event_protos,
-                            head: head_to_send,
+                            head: if subscribe || limit.is_some() {
+                                last_event_position
+                            } else {
+                                captured_db_head
+                            },
                         };
 
                         if tx.send(Ok(response)).await.is_err() {
@@ -524,9 +523,9 @@ impl umadb_proto::v1::dcb_server::Dcb for DcbServer {
                         next_start =
                             last_event_position.map(|p| if !backwards { p + 1 } else { p - 1 });
 
-                        // Stop streaming further if we reached the
-                        // captured head boundary (non-subscriber only).
-                        if reached_captured_head && !subscribe {
+                        // Stop streaming further if we read less than limit or
+                        // reached the captured head boundary (non-subscriber only).
+                        if !subscribe && (read_less_than_read_limit || reached_captured_head)  {
                             break;
                         }
 
@@ -633,7 +632,7 @@ impl umadb_proto::v1::dcb_server::Dcb for DcbServer {
                 };
 
                 match res {
-                    Ok((dcb_sequenced_events, _head)) => {
+                    Ok((dcb_sequenced_events, _unused_db_head)) => {
                         // Map events to protobuf type
                         let sequenced_event_protos: Vec<umadb_proto::v1::SequencedEvent> =
                             dcb_sequenced_events
@@ -1008,7 +1007,11 @@ impl RequestHandler {
         cancel: Option<Arc<std::sync::atomic::AtomicBool>>,
     ) -> DcbResult<(Vec<DcbSequencedEvent>, Option<u64>)> {
         let reader = self.mvcc.reader()?;
-        let last_committed_position = reader.next_position.0.saturating_sub(1);
+        let db_head = if reader.next_position > Position(1) {
+            Some(reader.next_position.0.saturating_sub(1))
+        } else {
+            None
+        };
 
         let q = query.unwrap_or(DcbQuery { items: vec![] });
         let start_position = start.map(Position);
@@ -1030,17 +1033,7 @@ impl RequestHandler {
             _ => DcbError::Corruption(format!("{e}")),
         })?;
 
-        let head = if limit.is_none() {
-            if last_committed_position == 0 {
-                None
-            } else {
-                Some(last_committed_position)
-            }
-        } else {
-            events.last().map(|e| e.position)
-        };
-
-        Ok((events, head))
+        Ok((events, db_head))
     }
 
     fn head(&self) -> DcbResult<Option<u64>> {
