@@ -465,12 +465,9 @@ impl umadb_proto::v1::dcb_server::Dcb for DcbServer {
                                 .map(umadb_proto::v1::SequencedEvent::from)
                                 .collect();
 
-                        let reached_captured_head = if captured_db_head.is_some() {
-                            // Check if we filtered out any events
-                            sequenced_event_protos.len() < original_len
-                        } else {
-                            false
-                        };
+                        // Check if we filtered out any events
+                        let reached_captured_head =
+                            captured_db_head.is_some() && sequenced_event_protos.len() < original_len;
 
                         if sequenced_event_protos.is_empty() {
                             if let Some(head_rx) = head_rx.as_mut() {
