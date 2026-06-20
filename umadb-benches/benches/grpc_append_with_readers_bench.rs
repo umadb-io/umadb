@@ -64,7 +64,11 @@ pub fn grpc_append_with_readers_benchmark(c: &mut Criterion) {
 
         let group_name = format!(
             "grpc_append_4readers{}",
-            if server_handle.use_docker { "_with_docker" } else { "" }
+            if server_handle.use_docker {
+                "_with_docker"
+            } else {
+                ""
+            }
         );
         let mut group = c.benchmark_group(&group_name);
         group.sample_size(100);

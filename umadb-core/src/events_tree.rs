@@ -434,33 +434,33 @@ pub fn event_tree_lookup(
     let mut current_page_id: PageID = events_tree_root_id;
     loop {
         let step = with_page(mvcc, dirty, current_page_id, |page| match &page.node {
-                Node::EventInternal(internal) => {
-                    // Choose child based on upper bound of position in separator keys
-                    let idx = match internal.keys.binary_search(&position) {
-                        Ok(i) => i + 1,
-                        Err(i) => i,
-                    };
-                    if idx >= internal.child_ids.len() {
-                        return Err(DcbError::DatabaseCorrupted(
-                            "Child index out of bounds in event tree".to_string(),
-                        ));
-                    }
-                    Ok(LookupStep::Next(internal.child_ids[idx]))
+            Node::EventInternal(internal) => {
+                // Choose child based on upper bound of position in separator keys
+                let idx = match internal.keys.binary_search(&position) {
+                    Ok(i) => i + 1,
+                    Err(i) => i,
+                };
+                if idx >= internal.child_ids.len() {
+                    return Err(DcbError::DatabaseCorrupted(
+                        "Child index out of bounds in event tree".to_string(),
+                    ));
                 }
-                Node::EventLeaf(leaf) => match leaf.keys.binary_search(&position) {
-                    Ok(i) => {
-                        let rec = materialize_event_value(mvcc, dirty, &leaf.values[i])?;
-                        Ok(LookupStep::Found(rec))
-                    }
-                    Err(_) => Err(DcbError::DatabaseCorrupted(format!(
-                        "Event at position {position:?} not found",
-                    ))),
-                },
-                _ => Err(DcbError::DatabaseCorrupted(format!(
-                    "Expected EventInternal or EventLeaf node in event tree, got {}",
-                    page.node.type_name()
+                Ok(LookupStep::Next(internal.child_ids[idx]))
+            }
+            Node::EventLeaf(leaf) => match leaf.keys.binary_search(&position) {
+                Ok(i) => {
+                    let rec = materialize_event_value(mvcc, dirty, &leaf.values[i])?;
+                    Ok(LookupStep::Found(rec))
+                }
+                Err(_) => Err(DcbError::DatabaseCorrupted(format!(
+                    "Event at position {position:?} not found",
                 ))),
-            })?;
+            },
+            _ => Err(DcbError::DatabaseCorrupted(format!(
+                "Expected EventInternal or EventLeaf node in event tree, got {}",
+                page.node.type_name()
+            ))),
+        })?;
 
         match step {
             LookupStep::Next(next_page_id) => current_page_id = next_page_id,
@@ -713,7 +713,9 @@ mod tests {
         let db_path = temp_dir.path().join("mvcc-test.db");
         let db = Mvcc::new(
             VERBOSE,
-            StorageOptions::default().db_path(db_path).page_size(page_size),
+            StorageOptions::default()
+                .db_path(db_path)
+                .page_size(page_size),
         )
         .unwrap();
         (temp_dir, db)
@@ -1664,13 +1666,15 @@ mod tests {
             &dirty,
             reader.events_tree_root_id,
             None, // This triggers the branch for line 561
-            true  // Backwards
+            true, // Backwards
         );
 
         let mut scanned = Vec::new();
         loop {
             let batch = events_iterator.next_batch(10, None).unwrap();
-            if batch.is_empty() { break; }
+            if batch.is_empty() {
+                break;
+            }
             scanned.extend(batch);
         }
 

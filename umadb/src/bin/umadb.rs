@@ -2,8 +2,10 @@ use clap::{CommandFactory, FromArgMatches, Parser};
 use std::io::IsTerminal;
 use tokio::signal;
 use tokio::sync::oneshot;
-use umadb_server::{start_server_with_options, uptime, ServerOptions, ServerTlsOptions, StorageOptions, DEFAULT_PAGE_SIZE};
-
+use umadb_server::{
+    DEFAULT_PAGE_SIZE, ServerOptions, ServerTlsOptions, StorageOptions, start_server_with_options,
+    uptime,
+};
 
 pub fn print_banner() {
     const ART: &[&str] = &[
@@ -28,7 +30,7 @@ pub fn print_banner() {
     ];
     let art_width = ART[0].chars().count();
     let version_width = VERSION.chars().count() + 1;
-    let offset = " ".repeat(art_width - version_width - 6 );
+    let offset = " ".repeat(art_width - version_width - 6);
     if std::io::stdout().is_terminal() {
         for (line, color) in ART.iter().zip(COLORS) {
             println!("{PAD}\x1b[1m{color}{line}\x1b[0m");
@@ -43,12 +45,15 @@ pub fn print_banner() {
     println!();
 }
 
-
 #[derive(Parser, Debug)]
 #[command(version)]
 struct Args {
     /// Address to bind to
-    #[arg(long = "listen", env = "UMADB_LISTEN", default_value = "127.0.0.1:50051")]
+    #[arg(
+        long = "listen",
+        env = "UMADB_LISTEN",
+        default_value = "127.0.0.1:50051"
+    )]
     listen: String,
 
     /// Path to database file or directory
@@ -68,15 +73,27 @@ struct Args {
     api_key: Option<String>,
 
     /// Read method (fileio or mmap)
-    #[arg(long = "read-method", env = "UMADB_READ_METHOD", default_value = "fileio")]
+    #[arg(
+        long = "read-method",
+        env = "UMADB_READ_METHOD",
+        default_value = "fileio"
+    )]
     read_method: String,
 
     /// Page cache max pages (0 to disable)
-    #[arg(long = "page-cache-max-pages", env = "UMADB_PAGE_CACHE_MAX_PAGES", default_value = "0")]
+    #[arg(
+        long = "page-cache-max-pages",
+        env = "UMADB_PAGE_CACHE_MAX_PAGES",
+        default_value = "0"
+    )]
     page_cache_max_pages: usize,
 
     /// Page cache max size in MB (0 to disable)
-    #[arg(long = "page-cache-max-mb", env = "UMADB_PAGE_CACHE_MAX_MB", default_value = "0")]
+    #[arg(
+        long = "page-cache-max-mb",
+        env = "UMADB_PAGE_CACHE_MAX_MB",
+        default_value = "0"
+    )]
     page_cache_max_mb: usize,
 
     /// Zero-fill pages
@@ -117,20 +134,21 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
         std::process::exit(2);
     }
 
-    let server_tls_options = ServerTlsOptions::from_path_strings(
-        args.cert_path,
-        args.key_path,
-    )?;
+    let server_tls_options = ServerTlsOptions::from_path_strings(args.cert_path, args.key_path)?;
 
     let storage_options = StorageOptions::default()
         .db_path(args.db_path)
         .page_size(DEFAULT_PAGE_SIZE)
-        .read_method(args.read_method.parse().unwrap_or(umadb_server::ReadMethod::Mmap))
+        .read_method(
+            args.read_method
+                .parse()
+                .unwrap_or(umadb_server::ReadMethod::Mmap),
+        )
         .page_cache_max_pages(args.page_cache_max_pages)
         .page_cache_max_mb(args.page_cache_max_mb)
         .zero_fill_pages(args.zero_fill_pages);
 
-    let server_options = ServerOptions{
+    let server_options = ServerOptions {
         listen_addr: args.listen,
         tls: server_tls_options,
         api_key: args.api_key,

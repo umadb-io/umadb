@@ -15,6 +15,7 @@ use crate::pager::Pager;
 use crate::tags_tree_nodes::TagsLeafNode;
 use crate::tags_tree_nodes::set_tag_key_width;
 use dashmap::DashMap;
+use moka::sync::Cache;
 use std::collections::HashMap;
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
@@ -23,9 +24,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::sleep;
 use std::time::Duration;
-use moka::sync::Cache;
 use umadb_dcb::DcbError::InternalError;
-use umadb_dcb::{DcbQuery, DcbResult, DcbError};
+use umadb_dcb::{DcbError, DcbQuery, DcbResult};
 
 const GET_LATEST_HEADER_RETRIES: usize = 5;
 const GET_LATEST_HEADER_DELAY: Duration = Duration::from_millis(10);
@@ -53,7 +53,6 @@ impl FromStr for ReadMethod {
         }
     }
 }
-
 
 #[derive(Debug, Clone)]
 pub struct StorageOptions {
@@ -86,17 +85,11 @@ impl StorageOptions {
         } else {
             p.to_path_buf()
         };
-        Self {
-            db_path,
-            ..self
-        }
+        Self { db_path, ..self }
     }
 
     pub fn page_size(self, page_size: usize) -> Self {
-        Self {
-            page_size,
-            ..self
-        }
+        Self { page_size, ..self }
     }
 
     pub fn read_method(self, read_method: ReadMethod) -> Self {
@@ -149,12 +142,12 @@ pub struct Mvcc {
 }
 
 impl Mvcc {
-    pub fn new(
-        verbose: bool,
-        options: StorageOptions,
-    ) -> DcbResult<Self> {
+    pub fn new(verbose: bool, options: StorageOptions) -> DcbResult<Self> {
         let pager = Pager::new(&options.db_path, options.page_size)?;
-        println!("UmaDB opened file {}", options.db_path.canonicalize()?.display());
+        println!(
+            "UmaDB opened file {}",
+            options.db_path.canonicalize()?.display()
+        );
 
         println!(
             "UmaDB reading with {}",
@@ -166,14 +159,15 @@ impl Mvcc {
 
         println!(
             "UmaDB zero-fill pages: {}",
-            if options.zero_fill_pages { "true" } else { "false" }
+            if options.zero_fill_pages {
+                "true"
+            } else {
+                "false"
+            }
         );
 
         let page_cache = if options.page_cache_max_mb > 0 {
-            println!(
-                "UmaDB page cache max MB: {}",
-                options.page_cache_max_mb
-            );
+            println!("UmaDB page cache max MB: {}", options.page_cache_max_mb);
             Some(
                 Cache::builder()
                     .max_capacity(1000000 * options.page_cache_max_mb as u64)
@@ -183,7 +177,10 @@ impl Mvcc {
                     .build(),
             )
         } else if options.page_cache_max_pages > 0 {
-            println!("UmaDB page cache max pages: {}", options.page_cache_max_pages);
+            println!(
+                "UmaDB page cache max pages: {}",
+                options.page_cache_max_pages
+            );
             Some(Cache::new(options.page_cache_max_pages as u64))
         } else {
             println!("UmaDB page cache not enabled");
@@ -212,7 +209,7 @@ impl Mvcc {
             verbose,
             zero_fill_pages: options.zero_fill_pages,
             read_method: options.read_method,
-            page_cache
+            page_cache,
         };
 
         if mvcc.pager.is_file_new {
@@ -276,7 +273,6 @@ impl Mvcc {
 
             // Sync the file to disk.
             mvcc.fsync()?;
-
         } else {
             // Existing DB: hydrate headers from disk and set tag key width based on latest header
             if let Ok(header_page) = mvcc.get_latest_header_page() {
@@ -344,11 +340,7 @@ impl Mvcc {
                                     }
                                     // Re-write the header pages with identical fields but schema_version=0
                                     let mut buf = mvcc.page_buf.lock().unwrap();
-                                    serialize_page_into(
-                                        &mut buf,
-                                        &hp.node,
-                                        mvcc.zero_fill_pages,
-                                    )?;
+                                    serialize_page_into(&mut buf, &hp.node, mvcc.zero_fill_pages)?;
                                     mvcc.pager.write_page(hp.page_id, &buf)?;
                                 }
                             }
@@ -538,11 +530,7 @@ impl Mvcc {
 
                 // Write node using pre-allocated buffer.
                 let mut buf = self.page_buf.lock().unwrap();
-                serialize_page_into(
-                    &mut buf,
-                    &header.node,
-                    self.zero_fill_pages,
-                )?;
+                serialize_page_into(&mut buf, &header.node, self.zero_fill_pages)?;
                 self.pager.write_page(page_id, &buf)?;
                 Ok(())
             }
@@ -566,7 +554,7 @@ impl Mvcc {
                     println!("Read {page_id:?} from mmap, deserializing...");
                 }
                 Page::deserialize(page_id, mapped.as_slice())?
-            },
+            }
             ReadMethod::FileIo => {
                 let page = self.pager.read_page(page_id)?;
                 if self.verbose {
@@ -758,11 +746,12 @@ impl Mvcc {
         }
 
         // Mutate the owned header instance and serialize into the pre-allocated buffer
-        let (alternate_header_page_id, alternate_header_page_idx) = if writer.header_page_id == HEADER_PAGE_ID_0 {
-            (HEADER_PAGE_ID_1, 1)
-        } else {
-            (HEADER_PAGE_ID_0, 0)
-        };
+        let (alternate_header_page_id, alternate_header_page_idx) =
+            if writer.header_page_id == HEADER_PAGE_ID_0 {
+                (HEADER_PAGE_ID_1, 1)
+            } else {
+                (HEADER_PAGE_ID_0, 0)
+            };
         self.update_header(
             alternate_header_page_id,
             writer.tsn,
@@ -926,11 +915,11 @@ impl Writer {
                 let new_page_id = self.alloc_page_id();
                 let mut new_page = Arc::unwrap_or_clone(
                     self.deserialized.remove(&old_page_id).ok_or_else(|| {
-                    DcbError::DatabaseCorrupted(format!(
-                        "Deserialized page {:?} not found while marking dirty",
-                        old_page_id
-                    ))
-                })?,
+                        DcbError::DatabaseCorrupted(format!(
+                            "Deserialized page {:?} not found while marking dirty",
+                            old_page_id
+                        ))
+                    })?,
                 );
                 new_page.page_id = new_page_id;
 
@@ -2203,9 +2192,7 @@ mod tests {
         let db_path = temp_dir.path().join("mvcc-test.db");
         let db = Mvcc::new(
             VERBOSE,
-            StorageOptions::default().
-                db_path(db_path).
-                page_size(4096),
+            StorageOptions::default().db_path(db_path).page_size(4096),
         )
         .unwrap();
 
@@ -2458,7 +2445,9 @@ mod tests {
             let db_path = temp_dir.path().join("mvcc-test.db");
             let db = Mvcc::new(
                 VERBOSE,
-                StorageOptions::default().db_path(db_path).page_size(page_size),
+                StorageOptions::default()
+                    .db_path(db_path)
+                    .page_size(page_size),
             )
             .unwrap();
             (temp_dir, db)
@@ -4542,7 +4531,9 @@ mod tests {
 
             let mvcc = Mvcc::new(
                 verbose,
-                StorageOptions::default().db_path(db_path.clone()).page_size(page_size),
+                StorageOptions::default()
+                    .db_path(db_path.clone())
+                    .page_size(page_size),
             )
             .expect("must create new db");
 
@@ -4574,7 +4565,9 @@ mod tests {
             // 4) Attempt to open again; expect an InternalError complaining about schema version
             match Mvcc::new(
                 verbose,
-                StorageOptions::default().db_path(db_path).page_size(page_size),
+                StorageOptions::default()
+                    .db_path(db_path)
+                    .page_size(page_size),
             ) {
                 Ok(_) => panic!("opening should have failed due to newer on-disk schema"),
                 Err(DcbError::InternalError(msg)) => {
@@ -4602,14 +4595,17 @@ mod tests {
             let options = StorageOptions::default()
                 .db_path(&db_path)
                 .page_cache_max_pages(10);
-            
+
             let mvcc = Mvcc::new(false, options).expect("mvcc new");
             assert!(mvcc.page_cache.is_some());
 
             // Write some data
             let mut writer = mvcc.writer().expect("writer");
             let p1 = writer.alloc_page_id();
-            let page = Page::new(p1, Node::FreeListLeaf(crate::free_lists_tree_nodes::FreeListLeafNode::default()));
+            let page = Page::new(
+                p1,
+                Node::FreeListLeaf(crate::free_lists_tree_nodes::FreeListLeafNode::default()),
+            );
             writer.insert_dirty(page).expect("insert dirty");
             mvcc.commit(&mut writer).expect("commit");
 
@@ -4617,7 +4613,10 @@ mod tests {
             {
                 let cache = mvcc.page_cache.as_ref().unwrap();
                 assert!(cache.get(&p1).is_some());
-                assert!(cache.get(&HEADER_PAGE_ID_0).is_some() || cache.get(&HEADER_PAGE_ID_1).is_some());
+                assert!(
+                    cache.get(&HEADER_PAGE_ID_0).is_some()
+                        || cache.get(&HEADER_PAGE_ID_1).is_some()
+                );
             }
 
             // Read page - should hit cache
@@ -4632,14 +4631,17 @@ mod tests {
             let options = StorageOptions::default()
                 .db_path(&db_path)
                 .page_cache_max_mb(1); // 1 MB
-            
+
             let mvcc = Mvcc::new(false, options).expect("mvcc new");
             assert!(mvcc.page_cache.is_some());
 
             // Write some data
             let mut writer = mvcc.writer().expect("writer");
             let p1 = writer.alloc_page_id();
-            let page = Page::new(p1, Node::FreeListLeaf(crate::free_lists_tree_nodes::FreeListLeafNode::default()));
+            let page = Page::new(
+                p1,
+                Node::FreeListLeaf(crate::free_lists_tree_nodes::FreeListLeafNode::default()),
+            );
             writer.insert_dirty(page).expect("insert dirty");
             mvcc.commit(&mut writer).expect("commit");
 
@@ -4661,26 +4663,32 @@ mod tests {
             let options = StorageOptions::default()
                 .db_path(&db_path)
                 .page_cache_max_pages(2);
-            
+
             let mvcc = Mvcc::new(false, options).expect("mvcc new");
-            
+
             // 1. Write 3 pages. Cache limit is 2.
             // Commit will try to insert all dirty pages + header.
             let mut writer = mvcc.writer().expect("writer");
             let p1 = writer.alloc_page_id();
             let p2 = writer.alloc_page_id();
             let p3 = writer.alloc_page_id();
-            
-            writer.insert_dirty(Page::new(p1, Node::FreeListLeaf(Default::default()))).unwrap();
-            writer.insert_dirty(Page::new(p2, Node::FreeListLeaf(Default::default()))).unwrap();
-            writer.insert_dirty(Page::new(p3, Node::FreeListLeaf(Default::default()))).unwrap();
-            
+
+            writer
+                .insert_dirty(Page::new(p1, Node::FreeListLeaf(Default::default())))
+                .unwrap();
+            writer
+                .insert_dirty(Page::new(p2, Node::FreeListLeaf(Default::default())))
+                .unwrap();
+            writer
+                .insert_dirty(Page::new(p3, Node::FreeListLeaf(Default::default())))
+                .unwrap();
+
             mvcc.commit(&mut writer).expect("commit");
 
             // Some pages should have been evicted or not admitted if we exceed 2.
             // Moka cache might not evict immediately, but let's check entry count.
             let cache = mvcc.page_cache.as_ref().unwrap();
-            // We can't strictly assert count == 2 because eviction is async in moka, 
+            // We can't strictly assert count == 2 because eviction is async in moka,
             // but we can call run_pending_tasks if available or just wait.
             cache.run_pending_tasks();
             assert!(cache.entry_count() <= 2);

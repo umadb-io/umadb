@@ -1,9 +1,9 @@
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use tempfile::tempdir;
 use umadb_client::UmaDbClient;
 use umadb_dcb::{DcbEvent, DcbEventStoreSync};
 use umadb_server::start_server;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
 
 #[test]
 fn test_subscribe_at_head() {
@@ -31,7 +31,9 @@ fn test_subscribe_at_head() {
         tags: vec!["tag1".to_string()],
         uuid: None,
     };
-    client.append(vec![event.clone()], None, None).expect("append 1");
+    client
+        .append(vec![event.clone()], None, None)
+        .expect("append 1");
 
     // 2. Get the current head
     let head = client.head().expect("get head");
@@ -45,7 +47,7 @@ fn test_subscribe_at_head() {
     // 4. Try to get next event in a separate thread because it might block (or should block)
     let finished = Arc::new(AtomicBool::new(false));
     let finished_clone = finished.clone();
-    
+
     let next_event_handle = std::thread::spawn(move || {
         let res = subscription.next();
         finished_clone.store(true, Ordering::SeqCst);
@@ -54,7 +56,7 @@ fn test_subscribe_at_head() {
 
     // Wait a bit to see if it finishes immediately
     std::thread::sleep(std::time::Duration::from_millis(500));
-    
+
     if finished.load(Ordering::SeqCst) {
         let res = next_event_handle.join().unwrap();
         if res.is_none() {
@@ -64,10 +66,12 @@ fn test_subscribe_at_head() {
         }
     } else {
         println!("Subscription is blocking as expected.");
-        
+
         // 5. Append a new event to trigger the subscription
-        client.append(vec![event.clone()], None, None).expect("append 2");
-        
+        client
+            .append(vec![event.clone()], None, None)
+            .expect("append 2");
+
         // 6. Now it should finish
         let res = next_event_handle.join().unwrap();
         assert!(res.is_some());
@@ -105,7 +109,9 @@ fn test_read_subscribe_at_head_plus_one() {
         tags: vec!["tag1".to_string()],
         uuid: None,
     };
-    client.append(vec![event.clone()], None, None).expect("append 1");
+    client
+        .append(vec![event.clone()], None, None)
+        .expect("append 1");
 
     // 2. Get the current head
     let head = client.head().expect("get head").expect("head exists");
@@ -113,12 +119,14 @@ fn test_read_subscribe_at_head_plus_one() {
 
     // 3. Subscribe from head + 1 using read(subscribe=true)
     let start_pos = head + 1;
-    let mut subscription = client.read(None, Some(start_pos), false, None, true).expect("read subscribe");
+    let mut subscription = client
+        .read(None, Some(start_pos), false, None, true)
+        .expect("read subscribe");
 
     // 4. Try to get next event in a separate thread
     let finished = Arc::new(AtomicBool::new(false));
     let finished_clone = finished.clone();
-    
+
     let next_event_handle = std::thread::spawn(move || {
         let res = subscription.next();
         finished_clone.store(true, Ordering::SeqCst);
@@ -127,7 +135,7 @@ fn test_read_subscribe_at_head_plus_one() {
 
     // Wait a bit to see if it finishes immediately
     std::thread::sleep(std::time::Duration::from_millis(500));
-    
+
     if finished.load(Ordering::SeqCst) {
         let res = next_event_handle.join().unwrap();
         if res.is_none() {
@@ -137,10 +145,12 @@ fn test_read_subscribe_at_head_plus_one() {
         }
     } else {
         println!("Subscription is blocking as expected.");
-        
+
         // 5. Append a new event to trigger the subscription
-        client.append(vec![event.clone()], None, None).expect("append 2");
-        
+        client
+            .append(vec![event.clone()], None, None)
+            .expect("append 2");
+
         // 6. Now it should finish
         let res = next_event_handle.join().unwrap();
         assert!(res.is_some());
@@ -178,7 +188,13 @@ fn test_read_limit_head_consistency() {
         tags: vec![],
         uuid: None,
     };
-    client.append(vec![event.clone(), event.clone(), event.clone()], None, None).expect("append 3");
+    client
+        .append(
+            vec![event.clone(), event.clone(), event.clone()],
+            None,
+            None,
+        )
+        .expect("append 3");
 
     let head = client.head().expect("get head").expect("head exists");
     assert_eq!(head, 3);
@@ -188,9 +204,11 @@ fn test_read_limit_head_consistency() {
         .batch_size(2)
         .connect()
         .expect("client 2 connect");
-        
-    let mut response = client2.read(None, Some(1), false, None, false).expect("read unlimited");
-    
+
+    let mut response = client2
+        .read(None, Some(1), false, None, false)
+        .expect("read unlimited");
+
     let batch = response.next_batch().expect("next batch");
     assert_eq!(batch.len(), 2);
     assert_eq!(batch[0].position, 1);

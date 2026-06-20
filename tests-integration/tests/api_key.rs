@@ -1,5 +1,5 @@
 use std::net::{Ipv4Addr, TcpListener};
-use std::path::{PathBuf};
+use std::path::PathBuf;
 use std::time::Duration;
 
 use rcgen::generate_simple_self_signed;
@@ -11,7 +11,7 @@ use tokio::time::sleep;
 use umadb_client::{AsyncUmaDbClient, ClientTlsOptions, UmaDbClient};
 use umadb_core::mvcc::StorageOptions;
 use umadb_dcb::{DcbError, DcbEvent, DcbEventStoreAsync};
-use umadb_server::{start_server_with_options, ServerOptions, ServerTlsOptions};
+use umadb_server::{ServerOptions, ServerTlsOptions, start_server_with_options};
 
 // Helper to pick a free localhost port
 fn get_free_port() -> u16 {
@@ -22,12 +22,12 @@ fn get_free_port() -> u16 {
 }
 
 fn generate_self_signed_cert() -> (Vec<u8>, Vec<u8>) {
-    let certified_key = generate_simple_self_signed(["localhost".to_string()]).expect("generate cert");
+    let certified_key =
+        generate_simple_self_signed(["localhost".to_string()]).expect("generate cert");
     let cert_pem = certified_key.cert.pem();
     let key_pem = certified_key.signing_key.serialize_pem();
     (cert_pem.into_bytes(), key_pem.into_bytes())
 }
-
 
 fn spawn_server_with_tls_and_api_key(
     shutdown_rx: Receiver<()>,
@@ -38,7 +38,7 @@ fn spawn_server_with_tls_and_api_key(
     api_key: String,
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
-        let options = ServerOptions{
+        let options = ServerOptions {
             listen_addr,
             tls: Some(ServerTlsOptions { cert_pem, key_pem }),
             api_key: Some(api_key),
@@ -68,7 +68,6 @@ async fn api_key_success_over_tls() {
         key_pem.clone(),
         api_key.clone(),
     );
-
 
     // Build TLS opts for client (trust the self-signed cert and use SNI localhost)
     let tls = ClientTlsOptions {
@@ -137,7 +136,7 @@ async fn api_key_wrong_fails_over_tls() {
         addr.clone(),
         cert_pem.clone(),
         key_pem.clone(),
-        "expected".to_string()
+        "expected".to_string(),
     );
 
     // Build TLS opts for client

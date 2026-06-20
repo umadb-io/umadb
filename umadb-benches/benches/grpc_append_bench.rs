@@ -78,12 +78,17 @@ pub fn grpc_append_benchmark(c: &mut Criterion) {
         let addr_http = format!("http://{}", addr);
 
         // Start the gRPC server in a background thread
-        let server_handle = start_bench_server(tmp_dir.path().to_str().unwrap().to_string(), addr.clone());
+        let server_handle =
+            start_bench_server(tmp_dir.path().to_str().unwrap().to_string(), addr.clone());
 
         let group_name = format!(
             "grpc_append_{}_per_request{}",
             events_per_request,
-            if server_handle.use_docker { "_with_docker" } else { "" }
+            if server_handle.use_docker {
+                "_with_docker"
+            } else {
+                ""
+            }
         );
         let mut group = c.benchmark_group(&group_name);
         group.sample_size(50);

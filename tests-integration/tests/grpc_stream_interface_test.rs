@@ -1,17 +1,17 @@
+use futures::StreamExt;
 use std::net::TcpListener;
 use tempfile::tempdir;
 use tokio::time::{Duration as TokioDuration, sleep};
 use umadb_client::UmaDbClient;
 use umadb_dcb::{DcbEvent, DcbEventStoreAsync, DcbEventStoreSync};
-use umadb_server::start_server;
-use futures::StreamExt; // For .next()
+use umadb_server::start_server; // For .next()
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn grpc_async_stream_interface_test() {
     // Arrange: start a gRPC server
     let temp_dir = tempfile::tempdir().unwrap();
     let db_path = temp_dir.path().to_path_buf();
-    
+
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = listener.local_addr().unwrap();
     drop(listener);
@@ -55,10 +55,12 @@ async fn grpc_async_stream_interface_test() {
     let mut received = 0usize;
     while received < initial_count {
         // This call exercises AsyncClientSubscribeResponse::poll_next
-        let event = resp.next().await
+        let event = resp
+            .next()
+            .await
             .expect("stream ended unexpectedly")
             .expect("error in stream");
-        
+
         assert_eq!(event.position, 1 + received as u64);
         received += 1;
     }
@@ -80,7 +82,9 @@ async fn grpc_async_stream_interface_test() {
         .expect("append batch events");
 
     for i in 0..batch_count {
-        let event = resp.next().await
+        let event = resp
+            .next()
+            .await
             .expect("stream ended unexpectedly during batch")
             .expect("error in stream during batch");
         assert_eq!(event.position, (initial_count + 1 + i) as u64);
@@ -145,7 +149,7 @@ fn grpc_sync_iterator_interface_test() {
 
     // Subscribe and use as Iterator
     let resp = client.subscribe(None, None).expect("sync subscribe stream");
-    
+
     // SyncClientSubscription implements Iterator
     let mut received = 0usize;
     for event_res in resp.take(initial_count) {

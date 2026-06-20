@@ -697,11 +697,15 @@ mod tests {
         assert_eq!(r0.as_slice()[0], 0);
 
         // Window 1
-        let r1 = pager.read_page_mmap_slice(PageID(ppm as u64)).expect("read p_ppm");
+        let r1 = pager
+            .read_page_mmap_slice(PageID(ppm as u64))
+            .expect("read p_ppm");
         assert_eq!(r1.as_slice()[0], (ppm % 256) as u8);
 
         // Window 2
-        let r2 = pager.read_page_mmap_slice(PageID(ppm as u64 * 2)).expect("read p_2ppm");
+        let r2 = pager
+            .read_page_mmap_slice(PageID(ppm as u64 * 2))
+            .expect("read p_2ppm");
         assert_eq!(r2.as_slice()[0], ((ppm * 2) % 256) as u8);
 
         assert_eq!(pager.debug_mmap_count(), 3);
@@ -723,9 +727,13 @@ mod tests {
         // 2. Write a page in the NEXT window. This should trigger file growth and a new mmap.
         let target_page_id = PageID(ppm as u64);
         let data_target = vec![0xBB; page_size];
-        pager.write_page(target_page_id, &data_target).expect("write target page");
+        pager
+            .write_page(target_page_id, &data_target)
+            .expect("write target page");
 
-        let r_target = pager.read_page_mmap_slice(target_page_id).expect("read target mmap");
+        let r_target = pager
+            .read_page_mmap_slice(target_page_id)
+            .expect("read target mmap");
         assert_eq!(r_target.as_slice(), &data_target[..]);
 
         // Verify we have two mmaps
@@ -753,7 +761,12 @@ mod tests {
             let mmap_res = pager.read_page_mmap_slice(page_id).expect("mmap read");
             let file_res = pager.read_page(page_id).expect("file read");
 
-            assert_eq!(mmap_res.as_slice(), file_res.as_slice(), "Mismatch at window {}", i);
+            assert_eq!(
+                mmap_res.as_slice(),
+                file_res.as_slice(),
+                "Mismatch at window {}",
+                i
+            );
         }
     }
 

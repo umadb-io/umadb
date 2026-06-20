@@ -4,7 +4,7 @@ use std::os::unix::fs::FileExt;
 use std::path::PathBuf;
 use umadb_core::common::{PageID, Position};
 use umadb_core::db::{read_conditional, tag_to_hash};
-use umadb_core::mvcc::{Mvcc, StorageOptions, DEFAULT_PAGE_SIZE};
+use umadb_core::mvcc::{DEFAULT_PAGE_SIZE, Mvcc, StorageOptions};
 use umadb_core::node::Node;
 use umadb_core::page::Page;
 use umadb_core::tags_tree_nodes::{
@@ -113,7 +113,9 @@ fn real_main() -> DcbResult<()> {
     // No writes are performed by this tool.
     let mvcc = Mvcc::new(
         args.verbose,
-        StorageOptions::default().db_path(&db_path).page_size(page_size),
+        StorageOptions::default()
+            .db_path(&db_path)
+            .page_size(page_size),
     )?;
 
     // Progressive report prelude
@@ -310,7 +312,9 @@ fn real_main() -> DcbResult<()> {
 
     // Extended scan: continue reading pages beyond header.next_page_id up to actual file length
     // Stop when a full page of zeros is encountered or when the file ends.
-    let file_len = mvcc.pager.file
+    let file_len = mvcc
+        .pager
+        .file
         .metadata()
         .map_err(|e| DcbError::InternalError(format!("Failed to read file metadata: {}", e)))?
         .len();

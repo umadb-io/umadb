@@ -4,13 +4,12 @@ use pyo3::exceptions::{
 use pyo3::prelude::*;
 use pyo3::types::PyBytes;
 use pyo3::wrap_pyfunction;
-use pyo3_stub_gen::{define_stub_info_gatherer, create_exception, derive::*};
+use pyo3_stub_gen::{create_exception, define_stub_info_gatherer, derive::*};
 use std::sync::{Arc, Mutex};
 use umadb_client;
 use umadb_dcb;
 use umadb_dcb::DcbEventStoreSync;
 use uuid::Uuid;
-
 
 create_exception!(umadb, IntegrityError, PyValueError);
 create_exception!(umadb, TransportError, PyRuntimeError);
@@ -164,7 +163,6 @@ impl TrackingInfo {
     }
 }
 
-
 /// Python wrapper for `umadb_dcb::DcbQueryItem`
 #[gen_stub_pyclass]
 #[derive(Clone)]
@@ -266,7 +264,7 @@ impl ReadResponse {
         slf
     }
 
-    #[gen_stub(override_return_type(type_repr="SequencedEvent"))]
+    #[gen_stub(override_return_type(type_repr = "SequencedEvent"))]
     fn __next__(slf: PyRefMut<Self>, py: Python<'_>) -> Option<PyResult<SequencedEvent>> {
         // Clone the Arc and drop the PyRefMut before releasing the GIL so the closure doesn't capture non-Send data
         let inner = slf.inner.clone();
@@ -339,7 +337,7 @@ impl Subscription {
         slf
     }
 
-    #[gen_stub(override_return_type(type_repr="SequencedEvent"))]
+    #[gen_stub(override_return_type(type_repr = "SequencedEvent"))]
     fn __next__(slf: PyRefMut<Self>, py: Python<'_>) -> Option<PyResult<SequencedEvent>> {
         // Clone the Arc and drop the PyRefMut before releasing the GIL so the closure doesn't capture non-Send data
         let inner = slf.inner.clone();

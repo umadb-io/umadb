@@ -3,7 +3,6 @@ pub mod server_helper;
 pub mod bench_api {
     use std::path::Path;
     use umadb_core::common::{PageID, Position, Tsn};
-    use umadb_core::mvcc::DEFAULT_PAGE_SIZE;
     use umadb_core::events_tree_nodes::{
         EventInternalNode, EventLeafNode, EventOverflowNode, EventRecord, EventValue,
     };
@@ -12,10 +11,13 @@ pub mod bench_api {
         FreeListTsnLeafNode,
     };
     use umadb_core::header_node::HeaderNode;
-    use umadb_core::mvcc::{Mvcc, Writer, StorageOptions};
+    use umadb_core::mvcc::DEFAULT_PAGE_SIZE;
+    use umadb_core::mvcc::{Mvcc, StorageOptions, Writer};
     use umadb_core::node::Node;
     use umadb_core::page::{PAGE_HEADER_SIZE, Page};
-    use umadb_core::tags_tree_nodes::{TagInternalNode, TagLeafNode, TagsInternalNode, TagsLeafNode, TagsLeafValue};
+    use umadb_core::tags_tree_nodes::{
+        TagInternalNode, TagLeafNode, TagsInternalNode, TagsLeafNode, TagsLeafValue,
+    };
     use umadb_core::tracking_tree_nodes::{TrackingInternalNode, TrackingLeafNode};
     use umadb_dcb::DcbResult;
     use uuid::Uuid;
@@ -29,7 +31,9 @@ pub mod bench_api {
         pub fn new(db_path: &Path, page_size: usize) -> DcbResult<Self> {
             let mvcc = Mvcc::new(
                 false,
-                StorageOptions::default().db_path(db_path).page_size(page_size),
+                StorageOptions::default()
+                    .db_path(db_path)
+                    .page_size(page_size),
             )?;
             Ok(BenchDb { mvcc })
         }
@@ -381,7 +385,11 @@ pub mod bench_api {
                         EventValue::Inline(EventRecord {
                             event_type: "user.session.updated".to_string(),
                             data: (100u8..180).collect(),
-                            tags: vec!["user".to_string(), "session".to_string(), "update".to_string()],
+                            tags: vec![
+                                "user".to_string(),
+                                "session".to_string(),
+                                "update".to_string(),
+                            ],
                             uuid: None,
                         }),
                         EventValue::Overflow {
@@ -399,13 +407,21 @@ pub mod bench_api {
                         EventValue::Inline(EventRecord {
                             event_type: "audit.log".to_string(),
                             data: (10u8..70).collect(),
-                            tags: vec!["audit".to_string(), "security".to_string(), "critical".to_string()],
+                            tags: vec![
+                                "audit".to_string(),
+                                "security".to_string(),
+                                "critical".to_string(),
+                            ],
                             uuid: Some(Uuid::nil()),
                         }),
                         EventValue::Overflow {
                             event_type: "ml.feature.vector".to_string(),
                             data_len: 24000,
-                            tags: vec!["ml".to_string(), "feature".to_string(), "vector".to_string()],
+                            tags: vec![
+                                "ml".to_string(),
+                                "feature".to_string(),
+                                "vector".to_string(),
+                            ],
                             root_id: PageID(1501),
                             uuid: None,
                         },
@@ -429,7 +445,12 @@ pub mod bench_api {
                         },
                         TagsLeafValue {
                             root_id: PageID(2001),
-                            positions: vec![Position(3011), Position(3012), Position(3013), Position(3014)],
+                            positions: vec![
+                                Position(3011),
+                                Position(3012),
+                                Position(3013),
+                                Position(3014),
+                            ],
                         },
                         TagsLeafValue {
                             root_id: PageID(2002),
@@ -441,7 +462,12 @@ pub mod bench_api {
                         },
                         TagsLeafValue {
                             root_id: PageID(2004),
-                            positions: vec![Position(3041), Position(3042), Position(3043), Position(3044)],
+                            positions: vec![
+                                Position(3041),
+                                Position(3042),
+                                Position(3043),
+                                Position(3044),
+                            ],
                         },
                     ],
                 }),
@@ -535,9 +561,7 @@ pub mod bench_api {
                     values: (0..96)
                         .map(|i| TagsLeafValue {
                             root_id: PageID(i as u64),
-                            positions: (0..12)
-                                .map(|j| Position((i * 100 + j) as u64))
-                                .collect(),
+                            positions: (0..12).map(|j| Position((i * 100 + j) as u64)).collect(),
                         })
                         .collect(),
                 }),
@@ -578,8 +602,7 @@ pub mod bench_api {
             .map(|page| {
                 let page_id = page.page_id;
                 let mut buf = vec![0u8; page.calc_serialized_size()];
-                page
-                    .serialize_into_with_zero_fill(&mut buf, false)
+                page.serialize_into_with_zero_fill(&mut buf, false)
                     .expect("Failed to serialize comprehensive full page sample");
                 (page_id, buf)
             })
@@ -654,7 +677,9 @@ mod memory_tests {
         black_box(retained_clones);
 
         sys.refresh_processes(ProcessesToUpdate::Some(&[pid]), true);
-        let process_after = sys.process(pid).expect("current process not found after clone");
+        let process_after = sys
+            .process(pid)
+            .expect("current process not found after clone");
         let mem_after = get_process_memory(process_after);
 
         let actual_extra = mem_after.saturating_sub(mem_before) as usize;
@@ -702,10 +727,7 @@ mod memory_tests {
 
     fn parse_per_type_child_output(stdout: &str) -> Option<PerTypeMemoryRow> {
         const PREFIX: &str = "UMA_PER_TYPE_RESULT\t";
-        let line = stdout
-            .lines()
-            .find(|line| line.starts_with(PREFIX))?
-            .trim();
+        let line = stdout.lines().find(|line| line.starts_with(PREFIX))?.trim();
         let mut parts = line.split('\t');
 
         let _prefix = parts.next()?;
@@ -848,7 +870,10 @@ mod memory_tests {
         }
 
         let pages = representative_page_by_type();
-        assert!(!pages.is_empty(), "expected representative pages for all node types");
+        assert!(
+            !pages.is_empty(),
+            "expected representative pages for all node types"
+        );
 
         let mut rows: Vec<PerTypeMemoryRow> = Vec::with_capacity(pages.len());
 
@@ -902,7 +927,10 @@ mod memory_tests {
         } else {
             rows.iter().map(|r| r.ratio).sum::<f64>() / rows.len() as f64
         };
-        let high_count = rows.iter().filter(|r| ratio_status(r.ratio) == "HIGH").count();
+        let high_count = rows
+            .iter()
+            .filter(|r| ratio_status(r.ratio) == "HIGH")
+            .count();
         if let Some(worst) = rows.first() {
             println!(
                 "summary: worst={} ({:.2}x), median={:.2}x, avg={:.2}x, high={}/{}",

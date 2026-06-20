@@ -354,17 +354,15 @@ pub fn tags_tree_insert(
             let new_root_id = {
                 // let mut pos_vec = positions;
                 let mut new_tag_leaf_node = TagLeafNode { positions };
-                let page_bytes = crate::page::PAGE_HEADER_SIZE + new_tag_leaf_node.calc_serialized_size();
-                    // + TagLeafNode {
-                    //     positions: pos_vec.clone(),
-                    // }
-                    // .calc_serialized_size();
+                let page_bytes =
+                    crate::page::PAGE_HEADER_SIZE + new_tag_leaf_node.calc_serialized_size();
+                // + TagLeafNode {
+                //     positions: pos_vec.clone(),
+                // }
+                // .calc_serialized_size();
                 if page_bytes <= mvcc.page_size {
                     let tag_leaf_id = writer.alloc_page_id();
-                    let tag_leaf_page = Page::new(
-                        tag_leaf_id,
-                        Node::TagLeaf(new_tag_leaf_node),
-                    );
+                    let tag_leaf_page = Page::new(tag_leaf_id, Node::TagLeaf(new_tag_leaf_node));
                     writer.insert_dirty(tag_leaf_page)?;
                     tag_leaf_id
                 } else {
@@ -381,8 +379,8 @@ pub fn tags_tree_insert(
                     let last_pos = new_tag_leaf_node.positions.pop().ok_or_else(|| {
                         DcbError::DatabaseCorrupted("No positions to split".to_string())
                     })?;
-                    let left_bytes = crate::page::PAGE_HEADER_SIZE
-                        + new_tag_leaf_node.calc_serialized_size();
+                    let left_bytes =
+                        crate::page::PAGE_HEADER_SIZE + new_tag_leaf_node.calc_serialized_size();
                     if left_bytes > mvcc.page_size {
                         return Err(DcbError::DatabaseCorrupted(
                             "Recursive per-tag split not implemented".to_string(),
@@ -939,7 +937,9 @@ mod tests {
         let db_path = temp_dir.path().join("mvcc-test.db");
         let db = Mvcc::new(
             VERBOSE,
-            StorageOptions::default().db_path(db_path).page_size(page_size),
+            StorageOptions::default()
+                .db_path(db_path)
+                .page_size(page_size),
         )
         .unwrap();
         (temp_dir, db)
@@ -1851,7 +1851,9 @@ mod tests {
         }
 
         fn get_pt_tree_depth(db: &Mvcc, pt_root_id: PageID) -> usize {
-            if pt_root_id == PageID(0) { return 0; }
+            if pt_root_id == PageID(0) {
+                return 0;
+            }
             let mut depth = 1;
             let mut curr_id = pt_root_id;
             loop {
@@ -1900,11 +1902,15 @@ mod tests {
         }
 
         let pt_root_t2 = get_pt_root_id(&db, tag);
-        assert_ne!(pt_root_t1, pt_root_t2, "Per-tag root should have changed due to COW");
+        assert_ne!(
+            pt_root_t1, pt_root_t2,
+            "Per-tag root should have changed due to COW"
+        );
 
         // Verify data integrity
         let reader = db.reader().unwrap();
-        let positions = tags_tree_lookup(&db, reader.tags_tree_root_id, tag, Position(0), false).unwrap();
+        let positions =
+            tags_tree_lookup(&db, reader.tags_tree_root_id, tag, Position(0), false).unwrap();
         assert_eq!(inserted.len(), positions.len());
         inserted.sort();
         let mut sorted_positions = positions.clone();

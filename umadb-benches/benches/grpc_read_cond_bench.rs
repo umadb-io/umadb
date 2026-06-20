@@ -63,7 +63,11 @@ pub fn grpc_read_cond_benchmark(c: &mut Criterion) {
 
     let group_name = format!(
         "grpc_read_cond{}",
-        if server_handle.use_docker { "_with_docker" } else { "" }
+        if server_handle.use_docker {
+            "_with_docker"
+        } else {
+            ""
+        }
     );
 
     let mut group = c.benchmark_group(group_name);

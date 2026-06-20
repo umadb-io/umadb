@@ -16,7 +16,8 @@ fn page_deserialize_benchmark(c: &mut Criterion) {
             b.iter(|| {
                 let mut accum = 0usize;
                 for (page_id, bytes) in &serialized_pages {
-                    let page = black_box(Page::deserialize(*page_id, bytes).expect("deserialize ok"));
+                    let page =
+                        black_box(Page::deserialize(*page_id, bytes).expect("deserialize ok"));
                     accum = accum.wrapping_add(black_box(page.calc_serialized_size()));
                 }
                 black_box(accum)

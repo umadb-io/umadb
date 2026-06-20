@@ -13,7 +13,10 @@ use umadb_core::db::UmaDb;
 use umadb_dcb::{DcbEvent, DcbEventStoreAsync, DcbEventStoreSync};
 
 #[derive(Parser, Debug)]
-#[command(version, about = "Measure UmaDB append throughput vs number of concurrent writers")]
+#[command(
+    version,
+    about = "Measure UmaDB append throughput vs number of concurrent writers"
+)]
 struct Args {
     /// Test duration per writer count in seconds
     #[arg(long, default_value = "60")]
@@ -69,11 +72,7 @@ fn init_db_with_events(num_events: usize) -> (tempfile::TempDir, String) {
     (dir, path)
 }
 
-async fn run_throughput_test(
-    writers: usize,
-    duration_secs: u64,
-    addr_http: &str,
-) -> TestResult {
+async fn run_throughput_test(writers: usize, duration_secs: u64, addr_http: &str) -> TestResult {
     println!(
         "Testing {} writers for {} seconds...",
         writers, duration_secs

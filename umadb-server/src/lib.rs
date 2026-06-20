@@ -1,6 +1,6 @@
 use futures::Stream;
 use std::fs;
-use std::path::{Path};
+use std::path::Path;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::LazyLock;
@@ -8,15 +8,16 @@ use std::thread;
 use std::time::Instant;
 use tokio::sync::{mpsc, oneshot, watch};
 
-
 use tokio_stream::wrappers::ReceiverStream;
 use tonic::transport::{Identity, ServerTlsConfig};
 use tonic::{Request, Response, Status, transport::Server};
 use umadb_core::db::{
-    UmaDb, clone_dcb_error, is_integrity_error,
-    is_request_idempotent, read_conditional, shadow_for_batch_abort,
+    UmaDb, clone_dcb_error, is_integrity_error, is_request_idempotent, read_conditional,
+    shadow_for_batch_abort,
 };
-pub use umadb_core::mvcc::{DEFAULT_DB_FILENAME, DEFAULT_PAGE_SIZE, Mvcc, ReadMethod, StorageOptions};
+pub use umadb_core::mvcc::{
+    DEFAULT_DB_FILENAME, DEFAULT_PAGE_SIZE, Mvcc, ReadMethod, StorageOptions,
+};
 use umadb_dcb::{
     DcbAppendCondition, DcbError, DcbEvent, DcbQuery, DcbResult, DcbSequencedEvent, TrackingInfo,
 };
@@ -49,14 +50,16 @@ pub struct ServerTlsOptions {
 }
 
 impl ServerTlsOptions {
-    pub fn from_path_strings(cert_path: Option<String>, key_path: Option<String>) -> Result<Option<Self>, Box<dyn std::error::Error>> {
+    pub fn from_path_strings(
+        cert_path: Option<String>,
+        key_path: Option<String>,
+    ) -> Result<Option<Self>, Box<dyn std::error::Error>> {
         match (cert_path, key_path) {
             (Some(cert_path), Some(key_path)) => {
                 let cert_pem = read_file(cert_path.clone(), "TLS certificate")?;
                 let key_pem = read_file(key_path.clone(), "TLS key")?;
-                Ok(Some(ServerTlsOptions{cert_pem, key_pem}))
-
-            },
+                Ok(Some(ServerTlsOptions { cert_pem, key_pem }))
+            }
             (None, None) => Ok(None),
             _ => Err("both cert_path and key_path must be provided for TLS".into()).into(),
         }
@@ -64,11 +67,11 @@ impl ServerTlsOptions {
 }
 
 fn read_file(path: String, purpose: &str) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
-    Ok(fs::read(
-        path.clone()
-    ).map_err(|e| -> Box<dyn std::error::Error> {
-        format!("failed to open {purpose} file '{path}': {}", e).into()
-    })?)
+    Ok(
+        fs::read(path.clone()).map_err(|e| -> Box<dyn std::error::Error> {
+            format!("failed to open {purpose} file '{path}': {}", e).into()
+        })?,
+    )
 }
 
 /// A guard that sends a signal through a oneshot channel when dropped.
@@ -206,7 +209,7 @@ pub async fn start_server<P: AsRef<Path>>(
     addr: &str,
     shutdown_rx: oneshot::Receiver<()>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let options = ServerOptions{
+    let options = ServerOptions {
         listen_addr: addr.to_string(),
         tls: None,
         api_key: None,
@@ -235,21 +238,22 @@ pub async fn start_server_with_options(
 
     // Create a shutdown broadcast channel for terminating ongoing subscriptions
     let (srv_shutdown_tx, srv_shutdown_rx) = watch::channel(false);
-    let dcb_server = match DcbServer::new(
-        srv_shutdown_rx,
-        options.api_key.clone(),
-        options.storage,
-    ) {
-            Ok(server) => server,
-            Err(err) => {
-                return Err(Box::new(err));
-            }
-        };
+    let dcb_server = match DcbServer::new(srv_shutdown_rx, options.api_key.clone(), options.storage)
+    {
+        Ok(server) => server,
+        Err(err) => {
+            return Err(Box::new(err));
+        }
+    };
 
-        println!(
-            "UmaDB has {:?} events",
-            dcb_server.request_handler.head().unwrap_or(Some(0)).unwrap_or(0)
-        );
+    println!(
+        "UmaDB has {:?} events",
+        dcb_server
+            .request_handler
+            .head()
+            .unwrap_or(Some(0))
+            .unwrap_or(0)
+    );
     let tls_mode_display_str = if options.tls.is_some() {
         "with TLS"
     } else {
@@ -417,7 +421,13 @@ impl umadb_proto::v1::dcb_server::Dcb for DcbServer {
                 let limit_val = Some(read_limit);
                 let cancel_for_blocking = cancel_signal_for_task.clone();
                 let mut blocking_handle = tokio::task::spawn_blocking(move || {
-                    handler.read(query_val, next_start, backwards, limit_val, Some(cancel_for_blocking))
+                    handler.read(
+                        query_val,
+                        next_start,
+                        backwards,
+                        limit_val,
+                        Some(cancel_for_blocking),
+                    )
                 });
 
                 let res = tokio::select! {
@@ -464,8 +474,8 @@ impl umadb_proto::v1::dcb_server::Dcb for DcbServer {
                                 .collect();
 
                         // Check if we filtered out any events
-                        let reached_captured_head =
-                            captured_db_head.is_some() && sequenced_event_protos.len() < original_len;
+                        let reached_captured_head = captured_db_head.is_some()
+                            && sequenced_event_protos.len() < original_len;
 
                         if sequenced_event_protos.is_empty() {
                             if let Some(head_rx) = head_rx.as_mut() {
@@ -492,7 +502,6 @@ impl umadb_proto::v1::dcb_server::Dcb for DcbServer {
                             // Stop looping, because there's nothing else to read.
                             break;
                         }
-
 
                         // Capture values needed after sequenced_event_protos is moved.
                         let sent_count = sequenced_event_protos.len() as u32;
@@ -524,7 +533,7 @@ impl umadb_proto::v1::dcb_server::Dcb for DcbServer {
 
                         // Stop streaming further if we read less than limit or
                         // reached the captured head boundary (non-subscriber only).
-                        if !subscribe && (read_less_than_read_limit || reached_captured_head)  {
+                        if !subscribe && (read_less_than_read_limit || reached_captured_head) {
                             break;
                         }
 
@@ -607,7 +616,13 @@ impl umadb_proto::v1::dcb_server::Dcb for DcbServer {
                 let batch_size_val = Some(batch_size);
                 let cancel_for_blocking = cancel_signal_for_task.clone();
                 let mut blocking_handle = tokio::task::spawn_blocking(move || {
-                    handler.read(query_val, next_after, false, batch_size_val, Some(cancel_for_blocking))
+                    handler.read(
+                        query_val,
+                        next_after,
+                        false,
+                        batch_size_val,
+                        Some(cancel_for_blocking),
+                    )
                 });
 
                 let res = tokio::select! {
@@ -714,15 +729,18 @@ impl umadb_proto::v1::dcb_server::Dcb for DcbServer {
         });
 
         // Call the event store append method
-        let res = self.request_handler.append(
-            events,
-            condition,
-            req.tracking_info.map(|t| TrackingInfo {
-                source: t.source,
-                position: t.position,
-            }),
-            Some(cancel_signal_for_task.clone()),
-        ).await;
+        let res = self
+            .request_handler
+            .append(
+                events,
+                condition,
+                req.tracking_info.map(|t| TrackingInfo {
+                    source: t.source,
+                    position: t.position,
+                }),
+                Some(cancel_signal_for_task.clone()),
+            )
+            .await;
 
         match res {
             Ok(position) => Ok(Response::new(umadb_proto::v1::AppendResponse { position })),
@@ -782,17 +800,12 @@ struct RequestHandler {
 }
 
 impl RequestHandler {
-    fn new(
-        storage_options: StorageOptions,
-    ) -> DcbResult<Self> {
+    fn new(storage_options: StorageOptions) -> DcbResult<Self> {
         // Create a channel for sending requests to the writer thread
         let (request_tx, mut request_rx) = mpsc::channel::<WriterRequest>(1024);
 
         // Build a shared Mvcc instance (Arc) upfront so reads can proceed concurrently
-        let mvcc = Arc::new(Mvcc::new(
-            false,
-            storage_options,
-        )?);
+        let mvcc = Arc::new(Mvcc::new(false, storage_options)?);
 
         // Initialize the head watch channel with the current head.
         let init_head = {

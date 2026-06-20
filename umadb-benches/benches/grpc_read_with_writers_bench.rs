@@ -125,7 +125,11 @@ pub fn grpc_read_with_writers_benchmark(c: &mut Criterion) {
 
     let group_name = format!(
         "grpc_read_4writers{}",
-        if server_handle.use_docker { "_with_docker" } else { "" }
+        if server_handle.use_docker {
+            "_with_docker"
+        } else {
+            ""
+        }
     );
     let mut group = c.benchmark_group(&group_name);
     group.sample_size(10);

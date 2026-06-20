@@ -7,11 +7,11 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tempfile::tempdir;
+use tokio::sync::Barrier;
 use umadb_benches::server_helper::start_bench_server;
 use umadb_client::{AsyncUmaDbClient, UmaDbClient};
 use umadb_core::db::UmaDb;
 use umadb_dcb::{DcbEvent, DcbEventStoreAsync, DcbEventStoreSync};
-use tokio::sync::Barrier;
 use uuid::Uuid;
 
 #[derive(Parser, Debug)]
@@ -109,7 +109,7 @@ async fn run_sustained_throughput_test(
 
     let mut handles = Vec::new();
 
-    let size = 2;  // Match UmaDB append-continuous benchmark
+    let size = 2; // Match UmaDB append-continuous benchmark
 
     for i in 0..writers {
         let client = clients[i].clone();
@@ -120,7 +120,6 @@ async fn run_sustained_throughput_test(
         let event_type = "test".to_string();
         let payload = vec![0u8; size];
         let handle = tokio::spawn(async move {
-
             // Wait for start signal
             start_barrier.wait().await;
 
@@ -161,9 +160,7 @@ async fn run_sustained_throughput_test(
                         stream_name = format!("stream-{}-", Uuid::new_v4());
                         stream_position = 0;
                     }
-
                 }
-
             }
 
             // Wait for stop signal acknowledgement
@@ -175,16 +172,16 @@ async fn run_sustained_throughput_test(
 
     // Start all workers
     start_barrier.wait().await;
-    
+
     // Warm-up
     tokio::time::sleep(Duration::from_secs(warmup_secs)).await;
 
     // Measurement period start
     let initial_head = clients[0].head().await.expect("get head").unwrap_or(0);
     let start_time = Instant::now();
-    
+
     tokio::time::sleep(Duration::from_secs(duration_secs)).await;
-    
+
     // Measurement period end
     let final_head = clients[0].head().await.expect("get head").unwrap_or(0);
     let elapsed = start_time.elapsed();
@@ -201,7 +198,10 @@ async fn run_sustained_throughput_test(
 
     println!(
         "  {} writers: {} events in {:.2}s = {:.2} events/sec",
-        writers, total_events, elapsed.as_secs_f64(), throughput
+        writers,
+        total_events,
+        elapsed.as_secs_f64(),
+        throughput
     );
 
     TestResult {
@@ -224,7 +224,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("Sustained throughput benchmark");
     println!("Writer counts: {:?}", writer_counts);
-    println!("Warmup: {}s, Duration: {}s, Events per request: {}", args.warmup, args.duration, args.events_per_request);
+    println!(
+        "Warmup: {}s, Duration: {}s, Events per request: {}",
+        args.warmup, args.duration, args.events_per_request
+    );
 
     let mut results = Vec::new();
 
@@ -247,7 +250,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             args.events_per_request,
             many_streams,
             &addr_http,
-        ).await;
+        )
+        .await;
         results.push(result);
 
         server_handle.shutdown();
@@ -256,9 +260,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let output = if args.output.is_empty() {
         if umadb_benches::server_helper::use_docker() {
-            format!("target/grpc_append_sustained_{}_per_request_with_docker.json", args.events_per_request)
+            format!(
+                "target/grpc_append_sustained_{}_per_request_with_docker.json",
+                args.events_per_request
+            )
         } else {
-            format!("target/grpc_append_sustained_{}_per_request.json", args.events_per_request)
+            format!(
+                "target/grpc_append_sustained_{}_per_request.json",
+                args.events_per_request
+            )
         }
     } else {
         args.output.clone()
@@ -273,6 +283,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     fs::write(&output, json)?;
 
     println!("\nResults written to: {}", output);
-    
+
     Ok(())
 }

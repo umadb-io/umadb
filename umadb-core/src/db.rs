@@ -3,7 +3,7 @@ use std::path::Path;
 use crate::common::{PageID, Position};
 use crate::events_tree::{EventIterator, event_tree_append, event_tree_lookup};
 use crate::events_tree_nodes::EventRecord;
-use crate::mvcc::{Mvcc, Writer, StorageOptions};
+use crate::mvcc::{Mvcc, StorageOptions, Writer};
 use crate::node::Node;
 use crate::page::Page;
 use crate::tags_tree::{TagsTreeIterator, tags_tree_insert};
@@ -13,8 +13,8 @@ use itertools::Itertools;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
 use umadb_dcb::{
-    DcbAppendCondition, DcbEvent, DcbEventStoreSync, DcbQuery, DcbReadResponseSync, DcbResult,
-    DcbSequencedEvent, DcbError, TrackingInfo,
+    DcbAppendCondition, DcbError, DcbEvent, DcbEventStoreSync, DcbQuery, DcbReadResponseSync,
+    DcbResult, DcbSequencedEvent, TrackingInfo,
 };
 use uuid::Uuid;
 
@@ -31,21 +31,12 @@ impl UmaDb {
     /// Create a new EventStore at the given directory or file path with default options.
     /// If a directory path is provided, a file named "uma.db" will be used inside it.
     pub fn new<P: AsRef<Path>>(path: P) -> DcbResult<Self> {
-        Self::new_with_options(
-            false,
-            StorageOptions::default().db_path(path),
-        )
+        Self::new_with_options(false, StorageOptions::default().db_path(path))
     }
 
     /// Create a new EventStore with explicit options.
-    pub fn new_with_options(
-        verbose: bool,
-        options: StorageOptions,
-    ) -> DcbResult<Self> {
-        let mvcc = Mvcc::new(
-            verbose,
-            options,
-        )?;
+    pub fn new_with_options(verbose: bool, options: StorageOptions) -> DcbResult<Self> {
+        let mvcc = Mvcc::new(verbose, options)?;
         Ok(Self {
             mvcc: Arc::new(mvcc),
         })
@@ -116,14 +107,8 @@ impl UmaDb {
             if abort_idx.is_some() {
                 break;
             }
-            let res = Self::process_append_request(
-                events,
-                condition,
-                tracking,
-                mvcc,
-                &mut writer,
-                None,
-            );
+            let res =
+                Self::process_append_request(events, condition, tracking, mvcc, &mut writer, None);
             match &res {
                 Ok(_) => results.push(res),
                 Err(e) if is_integrity_error(e) => results.push(Err(clone_dcb_error(e))),
@@ -320,14 +305,8 @@ impl DcbEventStoreSync for UmaDb {
         }
         let mvcc = &self.mvcc;
         let mut writer = mvcc.writer()?;
-        let result = Self::process_append_request(
-            events,
-            condition,
-            tracking_info,
-            mvcc,
-            &mut writer,
-            None,
-        );
+        let result =
+            Self::process_append_request(events, condition, tracking_info, mvcc, &mut writer, None);
         mvcc.commit(&mut writer)?;
         result
     }
@@ -1064,10 +1043,9 @@ mod tests {
     use std::collections::HashMap;
     use tempfile::tempdir;
     use umadb_dcb::{
-        DcbAppendCondition, DcbEvent, DcbEventStoreSync, DcbQuery, DcbQueryItem, DcbError,
+        DcbAppendCondition, DcbError, DcbEvent, DcbEventStoreSync, DcbQuery, DcbQueryItem,
     };
     use uuid::Uuid;
-
 
     #[test]
     #[serial]
@@ -1346,11 +1324,7 @@ mod tests {
     fn setup_db_with_standard_events() -> (tempfile::TempDir, Mvcc, Vec<DcbEvent>) {
         let temp_dir = tempdir().unwrap();
         let db_path = temp_dir.path().join("mvcc-api-test.db");
-        let db = Mvcc::new(
-            VERBOSE,
-            StorageOptions::default().db_path(db_path),
-        )
-        .unwrap();
+        let db = Mvcc::new(VERBOSE, StorageOptions::default().db_path(db_path)).unwrap();
         let input = standard_events();
         let mut writer = db.writer().unwrap();
         let last = unconditional_append(&db, &mut writer, input.clone()).unwrap();
@@ -1652,11 +1626,7 @@ mod tests {
     fn fallback_types_only_after_and_limit() {
         let temp_dir = tempdir().unwrap();
         let db_path = temp_dir.path().join("mvcc-fallback-types-only.db");
-        let mut db = Mvcc::new(
-            VERBOSE,
-            StorageOptions::default().db_path(db_path),
-        )
-        .unwrap();
+        let mut db = Mvcc::new(VERBOSE, StorageOptions::default().db_path(db_path)).unwrap();
 
         // Use a smaller custom set to make counts obvious
         let events = vec![

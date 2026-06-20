@@ -1,6 +1,6 @@
+use criterion::Criterion;
 use criterion::criterion_group;
 use criterion::criterion_main;
-use criterion::Criterion;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tempfile::tempdir;
@@ -77,8 +77,16 @@ pub fn grpc_read_benchmark(c: &mut Criterion) {
 
     let group_name = format!(
         "grpc_read_{}{}",
-        if throttled { "throttled" } else { "unthrottled" },
-        if server_handle.use_docker { "_with_docker" } else { "" }
+        if throttled {
+            "throttled"
+        } else {
+            "unthrottled"
+        },
+        if server_handle.use_docker {
+            "_with_docker"
+        } else {
+            ""
+        }
     );
     let mut group = c.benchmark_group(&group_name);
     group.sample_size(10);

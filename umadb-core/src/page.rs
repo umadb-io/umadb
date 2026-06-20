@@ -92,7 +92,6 @@ impl Page {
             ))),
         }
     }
-
 }
 
 #[inline]
@@ -117,7 +116,11 @@ fn event_value_approx_heap_bytes(value: &EventValue) -> usize {
             string_heap_bytes(&rec.event_type)
                 + vec_heap_bytes(&rec.data)
                 + vec_heap_bytes(&rec.tags)
-                + rec.tags.iter().map(|tag| string_heap_bytes(tag)).sum::<usize>()
+                + rec
+                    .tags
+                    .iter()
+                    .map(|tag| string_heap_bytes(tag))
+                    .sum::<usize>()
         }
         EventValue::Overflow {
             event_type, tags, ..
@@ -260,11 +263,18 @@ mod tests {
     use super::*;
     use crate::common::Position;
     use crate::common::{PageID, Tsn};
-    use crate::events_tree_nodes::{EventInternalNode, EventLeafNode, EventOverflowNode, EventRecord, EventValue};
-    use crate::free_lists_tree_nodes::{FreeListInternalNode, FreeListLeafNode, FreeListLeafValue, FreeListTsnInternalNode, FreeListTsnLeafNode};
+    use crate::events_tree_nodes::{
+        EventInternalNode, EventLeafNode, EventOverflowNode, EventRecord, EventValue,
+    };
+    use crate::free_lists_tree_nodes::{
+        FreeListInternalNode, FreeListLeafNode, FreeListLeafValue, FreeListTsnInternalNode,
+        FreeListTsnLeafNode,
+    };
     use crate::header_node::HeaderNode;
     use crate::node::Node;
-    use crate::tags_tree_nodes::{TagInternalNode, TagLeafNode, TagsInternalNode, TagsLeafNode, TagsLeafValue};
+    use crate::tags_tree_nodes::{
+        TagInternalNode, TagLeafNode, TagsInternalNode, TagsLeafNode, TagsLeafValue,
+    };
     use crate::tracking_tree_nodes::{TrackingInternalNode, TrackingLeafNode};
     use uuid::Uuid;
 
@@ -546,7 +556,11 @@ mod tests {
                         EventValue::Overflow {
                             event_type: "ml.feature.vector".to_string(),
                             data_len: 24000,
-                            tags: vec!["ml".to_string(), "feature".to_string(), "vector".to_string()],
+                            tags: vec![
+                                "ml".to_string(),
+                                "feature".to_string(),
+                                "vector".to_string(),
+                            ],
                             root_id: PageID(1501),
                             uuid: None,
                         },
@@ -570,7 +584,12 @@ mod tests {
                         },
                         TagsLeafValue {
                             root_id: PageID(2001),
-                            positions: vec![Position(3011), Position(3012), Position(3013), Position(3014)],
+                            positions: vec![
+                                Position(3011),
+                                Position(3012),
+                                Position(3013),
+                                Position(3014),
+                            ],
                         },
                         TagsLeafValue {
                             root_id: PageID(2002),
@@ -582,7 +601,12 @@ mod tests {
                         },
                         TagsLeafValue {
                             root_id: PageID(2004),
-                            positions: vec![Position(3041), Position(3042), Position(3043), Position(3044)],
+                            positions: vec![
+                                Position(3041),
+                                Position(3042),
+                                Position(3043),
+                                Position(3044),
+                            ],
                         },
                     ],
                 }),
@@ -630,7 +654,9 @@ mod tests {
 
     #[test]
     fn print_page_serialized_vs_deserialized_sizes_under_4k() {
-        println!("kind,serialized_bytes,approx_deserialized_bytes,ratio_deserialized_to_serialized");
+        println!(
+            "kind,serialized_bytes,approx_deserialized_bytes,ratio_deserialized_to_serialized"
+        );
 
         let mut sample_count = 0usize;
         for page in sample_pages() {
@@ -651,7 +677,9 @@ mod tests {
             sample_count += 1;
         }
 
-        assert!(sample_count > 0, "Expected at least one sample page under 4KiB");
+        assert!(
+            sample_count > 0,
+            "Expected at least one sample page under 4KiB"
+        );
     }
-
 }
