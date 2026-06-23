@@ -510,7 +510,9 @@ impl umadb_proto::v1::dcb_server::Dcb for DcbServer {
 
                         let response = umadb_proto::v1::ReadResponse {
                             events: sequenced_event_protos,
-                            head: if subscribe || limit.is_some() {
+                            head: if subscribe {
+                                None
+                            } else if limit.is_some() {
                                 last_event_position
                             } else {
                                 captured_db_head
