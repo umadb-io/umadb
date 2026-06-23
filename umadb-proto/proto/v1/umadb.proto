@@ -33,7 +33,7 @@ message ReadRequest {
   optional uint64 start = 2;
   optional bool backwards = 3;
   optional uint32 limit = 4;
-  optional bool subscribe = 5;
+  optional bool subscribe = 5 [deprecated=true];
   optional uint32 batch_size = 6;
 }
 
