@@ -92,25 +92,27 @@ where
 }
 
 /// Convert an inline `EventRecord` into an `EventValue::Overflow`, writing the
-/// event data followed by the serialized metadata into a fresh overflow chain.
+/// serialized metadata followed by the event data into a fresh overflow chain.
 ///
-/// The overflow chain holds `data` (first `data_len` bytes) immediately
-/// followed by the serialized metadata (next `metadata_len` bytes).
+/// Metadata is placed first (the first `metadata_len` bytes) so that a future
+/// metadata-only read can stop after the leading page(s) without walking the
+/// potentially large event data (the remaining `data_len` bytes).
 fn record_to_overflow(
     mvcc: &Mvcc,
     writer: &mut Writer,
     rec: EventRecord,
 ) -> DcbResult<EventValue> {
     let data_len = rec.data.len() as u64;
-    let mut combined = rec.data;
-    let metadata_len = if rec.metadata.is_empty() {
-        0
+    let (metadata_len, mut combined) = if rec.metadata.is_empty() {
+        (0, Vec::with_capacity(rec.data.len()))
     } else {
         let metadata_bytes = serialize_metadata(&rec.metadata);
         let len = metadata_bytes.len() as u64;
+        let mut combined = Vec::with_capacity(metadata_bytes.len() + rec.data.len());
         combined.extend_from_slice(&metadata_bytes);
-        len
+        (len, combined)
     };
+    combined.extend_from_slice(&rec.data);
     let root_id = write_overflow_chain(mvcc, writer, &combined)?;
     Ok(EventValue::Overflow {
         event_type: rec.event_type,
@@ -143,14 +145,14 @@ fn materialize_event_value(
                     "Overflow data length mismatch".to_string(),
                 ));
             }
-            // Split the chain back into event data and trailing metadata bytes.
-            let split = *data_len as usize;
-            let data = all_data[..split].to_vec();
+            // The chain holds leading metadata bytes followed by event data.
+            let split = *metadata_len as usize;
             let metadata = if *metadata_len > 0 {
-                deserialize_metadata(&all_data[split..])?
+                deserialize_metadata(&all_data[..split])?
             } else {
                 HashMap::new()
             };
+            let data = all_data[split..].to_vec();
             Ok(EventRecord {
                 event_type: event_type.clone(),
                 data,
