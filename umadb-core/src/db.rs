@@ -236,7 +236,6 @@ impl DcbEventStoreSync for UmaDb {
         start: Option<u64>,
         backwards: bool,
         limit: Option<u32>,
-        _subscribe: bool, // Deprecated - remove in v1.0.
     ) -> DcbResult<Box<dyn DcbReadResponseSync + Send + 'static>> {
         let mvcc = &self.mvcc;
         let reader = mvcc.reader()?;
@@ -1786,7 +1785,7 @@ mod tests {
         assert_eq!(store.head().unwrap(), Some(last));
 
         // Read all
-        let mut resp = store.read(None, None, false, None, false).unwrap();
+        let mut resp = store.read(None, None, false, None).unwrap();
         let (all, head) = resp.collect_with_head().unwrap();
         assert_eq!(head, Some(last));
         assert_eq!(all.len(), 2);
@@ -1794,7 +1793,7 @@ mod tests {
         assert_eq!(all[1].event.event_type, "TypeB");
 
         // Limit semantics: only first event returned and head equals that position
-        let mut resp_lim1 = store.read(None, None, false, Some(1), false).unwrap();
+        let mut resp_lim1 = store.read(None, None, false, Some(1)).unwrap();
         let (only_one, head_lim1) = resp_lim1.collect_with_head().unwrap();
         assert_eq!(only_one.len(), 1);
         assert_eq!(only_one[0].event.event_type, "TypeA");
@@ -1807,7 +1806,7 @@ mod tests {
                 tags: vec!["foo".to_string()],
             }],
         };
-        let mut resp2 = store.read(Some(query), None, false, None, false).unwrap();
+        let mut resp2 = store.read(Some(query), None, false, None).unwrap();
         let out2 = resp2.next_batch().unwrap();
         assert_eq!(out2.len(), 2);
         assert!(out2.iter().all(|e| e.event.tags.iter().any(|t| t == "foo")));
@@ -1815,7 +1814,7 @@ mod tests {
         // From semantics: skip the first event
         let first_pos = all[0].position + 1;
         let mut resp3 = store
-            .read(None, Some(first_pos), false, None, false)
+            .read(None, Some(first_pos), false, None)
             .unwrap();
         let out3 = resp3.next_batch().unwrap();
         assert_eq!(out3.len(), 1);

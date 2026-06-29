@@ -121,7 +121,7 @@ pub fn grpc_read_cond_benchmark(c: &mut Criterion) {
                         let query_clone = query.clone();
                         async move {
                             let mut resp = client
-                                .read(Some(query_clone.clone()), None, false, None, false)
+                                .read(Some(query_clone.clone()), None, false, None)
                                 .await
                                 .expect("start read response");
                             let mut count = 0usize;

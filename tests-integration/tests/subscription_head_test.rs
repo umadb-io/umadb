@@ -84,7 +84,7 @@ fn test_subscribe_at_head() {
 }
 
 #[test]
-fn test_read_subscribe_at_head_plus_one() {
+fn test_read_subscribe_after_head() {
     let temp_dir = tempdir().unwrap();
     let db_path = temp_dir.path().to_path_buf();
     let addr = "127.0.0.1:50106";
@@ -117,10 +117,9 @@ fn test_read_subscribe_at_head_plus_one() {
     let head = client.head().expect("get head").expect("head exists");
     println!("Current head: {}", head);
 
-    // 3. Subscribe from head + 1 using read(subscribe=true)
-    let start_pos = head + 1;
+    // 3. Subscribe after head.
     let mut subscription = client
-        .read(None, Some(start_pos), false, None, true)
+        .subscribe(None, Some(head))
         .expect("read subscribe");
 
     // 4. Try to get next event in a separate thread
@@ -206,7 +205,7 @@ fn test_read_limit_head_consistency() {
         .expect("client 2 connect");
 
     let mut response = client2
-        .read(None, Some(1), false, None, false)
+        .read(None, Some(1), false, None)
         .expect("read unlimited");
 
     let batch = response.next_batch().expect("next batch");

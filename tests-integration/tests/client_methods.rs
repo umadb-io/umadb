@@ -126,7 +126,7 @@ fn client_sync_covers_all_methods() {
 
     // Exercise: iterate over all events, then retrieve head()
     let mut resp = client
-        .read(None, None, false, None, false)
+        .read(None, None, false, None)
         .expect("read all");
     let mut positions = Vec::new();
     while let Some(item) = resp.next() {
@@ -143,7 +143,7 @@ fn client_sync_covers_all_methods() {
 
     // Exercise: collect_with_head via response
     let mut resp2 = client
-        .read(None, None, false, None, false)
+        .read(None, None, false, None)
         .expect("read for collect");
     let (events, head2) = resp2.collect_with_head().unwrap();
     assert_eq!(events.len(), 3);
@@ -151,7 +151,7 @@ fn client_sync_covers_all_methods() {
 
     // Exercise: next_batch with a limit
     let mut resp3 = client
-        .read(None, None, false, None, false)
+        .read(None, None, false, None)
         .expect("read batched");
     let b1 = resp3.next_batch().unwrap();
     assert_eq!(b1.len(), 2);
@@ -230,7 +230,7 @@ async fn client_async_covers_all_methods() {
 
     // Exercise: iterate over stream, then get head()
     let mut resp = client
-        .read(None, None, false, None, false)
+        .read(None, None, false, None)
         .await
         .expect("read all");
     let mut positions = Vec::new();
@@ -244,7 +244,7 @@ async fn client_async_covers_all_methods() {
 
     // Exercise: next_batch with limit
     let mut resp2 = client
-        .read(None, None, false, None, false)
+        .read(None, None, false, None)
         .await
         .expect("read batched");
     let b1 = resp2.next_batch().await.unwrap();

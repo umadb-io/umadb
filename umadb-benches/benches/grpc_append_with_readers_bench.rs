@@ -102,7 +102,7 @@ pub fn grpc_append_with_readers_benchmark(c: &mut Criterion) {
             let handle = readers_rt.spawn(async move {
                 while running.load(Ordering::Relaxed) {
                     let mut resp = match client
-                        .read(None, None, false, Some(TOTAL_EVENTS), false)
+                        .read(None, None, false, Some(TOTAL_EVENTS))
                         .await
                     {
                         Ok(s) => s,

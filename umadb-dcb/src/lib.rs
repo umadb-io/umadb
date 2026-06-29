@@ -25,7 +25,6 @@ pub trait DcbEventStoreSync {
         start: Option<u64>,
         backwards: bool,
         limit: Option<u32>,
-        subscribe: bool, // Deprecated - remove in v1.0.
     ) -> DcbResult<Box<dyn DcbReadResponseSync + Send + 'static>>;
 
     /// Reads events from the store and returns them as a tuple of `(Vec<DcbSequencedEvent>, Option<u64>)`
@@ -36,7 +35,7 @@ pub trait DcbEventStoreSync {
         backwards: bool,
         limit: Option<u32>,
     ) -> DcbResult<(Vec<DcbSequencedEvent>, Option<u64>)> {
-        let mut response = self.read(query, start, backwards, limit, false)?;
+        let mut response = self.read(query, start, backwards, limit)?;
         response.collect_with_head()
     }
 
@@ -96,7 +95,6 @@ pub trait DcbEventStoreAsync: Send + Sync {
         start: Option<u64>,
         backwards: bool,
         limit: Option<u32>,
-        subscribe: bool,
     ) -> DcbResult<Box<dyn DcbReadResponseAsync + Send + 'static>>;
 
     /// Reads events from the store and returns them as a tuple of `(Vec<DcbSequencedEvent>, Option<u64>)`
@@ -107,7 +105,7 @@ pub trait DcbEventStoreAsync: Send + Sync {
         backwards: bool,
         limit: Option<u32>,
     ) -> DcbResult<(Vec<DcbSequencedEvent>, Option<u64>)> {
-        let mut response = self.read(query, after, backwards, limit, false).await?;
+        let mut response = self.read(query, after, backwards, limit).await?;
         response.collect_with_head().await
     }
 

@@ -49,7 +49,7 @@ class Client:
         Returns:
             A connected UmaDB client
         """
-    def read(self, query: typing.Optional[Query] = None, start: typing.Optional[builtins.int] = None, backwards: builtins.bool = False, limit: typing.Optional[builtins.int] = None, subscribe: builtins.bool = False) -> ReadResponse:
+    def read(self, query: typing.Optional[Query] = None, start: typing.Optional[builtins.int] = None, backwards: builtins.bool = False, limit: typing.Optional[builtins.int] = None) -> ReadResponse:
         r"""
         Read events from the event store
         
@@ -58,7 +58,6 @@ class Client:
             start: Optional starting position
             backwards: Whether to read backwards (default: False)
             limit: Optional maximum number of events to read
-            subscribe: Whether to subscribe to new events (default: False)
         
         Returns:
             List of SequencedEvent objects

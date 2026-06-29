@@ -22,7 +22,7 @@ fn test_mvcc_with_explicit_mmap() {
 
     // This will use read_page which will use read_page_mmap_slice
     let response = uma
-        .read(Some(DcbQuery::new()), None, false, None, false)
+        .read(Some(DcbQuery::new()), None, false, None)
         .expect("read");
     let events: Vec<_> = response.collect::<Result<Vec<_>, _>>().expect("collect");
     assert_eq!(events.len(), 1);

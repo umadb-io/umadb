@@ -170,7 +170,6 @@ def read(
     start: int | None = None,
     backwards: bool = False,
     limit: int | None = None,
-    subscribe: bool = False,
 ) -> ReadResponse:
     ...
 ```
@@ -185,7 +184,6 @@ materialized views in CQRS. An optional `Query` can be provided to select by tag
 | `start`     | `int\|None`   | Read events *from* this sequence number. Only events with positions greater than or equal will be returned (or less than or equal if `backwards` is `True`. |
 | `backwards` | `bool`        | If `True` events will be read backwards, either from the given position or from the last recorded event.                                                    |
 | `limit`     | `int\|None`   | Optional cap on the number of events to retrieve.                                                                                                           |
-| `subscribe` | `bool`        | Deprecated! If `True`, keeps the stream open to deliver future events as they arrive.                                                                       |
 
 ### Return Value
 
@@ -201,9 +199,7 @@ client = Client("http://localhost:50051")
 # Filter by type(s) and tag(s)
 q = Query(items=[QueryItem(types=["example"], tags=["tag1", "tag2"])])
 
-resp = client.read(
-    query=q, start=None, backwards=False, limit=None, subscribe=False
-)
+resp = client.read(query=q, start=None, backwards=False, limit=None)
 for item in resp:
     print(f"Got event at position {item.position}: {item.event}")
 

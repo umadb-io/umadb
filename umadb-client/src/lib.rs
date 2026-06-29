@@ -223,11 +223,10 @@ impl DcbEventStoreSync for SyncUmaDbClient {
         start: Option<u64>,
         backwards: bool,
         limit: Option<u32>,
-        subscribe: bool, // Deprecated - remove in v1.0.
     ) -> DcbResult<Box<dyn DcbReadResponseSync + Send + 'static>> {
         let async_read_response = self.handle.block_on(
             self.async_client
-                .read(query, start, backwards, limit, subscribe),
+                .read(query, start, backwards, limit),
         )?;
         Ok(Box::new(SyncClientReadResponse {
             rt: self.handle.clone(),
@@ -475,15 +474,15 @@ impl DcbEventStoreAsync for AsyncUmaDbClient {
         start: Option<u64>,
         backwards: bool,
         limit: Option<u32>,
-        subscribe: bool,
     ) -> DcbResult<Box<dyn DcbReadResponseAsync + Send + 'static>> {
         let query_proto = query.map(|q| q.into());
+        #[allow(deprecated)]
         let req_body = umadb_proto::v1::ReadRequest {
             query: query_proto,
             start,
             backwards: Some(backwards),
             limit,
-            subscribe: Some(subscribe),
+            subscribe: None,
             batch_size: self.batch_size,
         };
         let mut client = self.client.clone();

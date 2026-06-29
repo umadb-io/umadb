@@ -21,7 +21,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Read events for a decision model
     let mut read_response = client
-        .read(Some(boundary.clone()), None, false, None, false)
+        .read(Some(boundary.clone()), None, false, None)
         .await?;
 
     // Build decision model
@@ -98,7 +98,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // Subscribe to all events for a projection
-    let mut subscription = client.read(None, None, false, None, true).await?;
+    let mut subscription = client.subscribe(None, None).await?;
 
     // Build an up-to-date view
     while let Some(result) = subscription.next().await {

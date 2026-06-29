@@ -113,7 +113,7 @@ async fn next_batch_returns_all_then_empty_when_unlimited_and_large_batch_size()
 
     // Read with no limit
     let mut resp = client
-        .read(None, None, false, None, false)
+        .read(None, None, false, None)
         .await
         .expect("read all");
 

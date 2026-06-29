@@ -379,7 +379,6 @@ impl umadb_proto::v1::dcb_server::Dcb for DcbServer {
             .batch_size
             .unwrap_or(READ_RESPONSE_BATCH_SIZE_DEFAULT)
             .clamp(1, READ_RESPONSE_BATCH_SIZE_MAX);
-        let subscribe = read_request.subscribe.unwrap_or(false);
 
         // Create a channel for streaming responses (deeper buffer to reduce backpressure under concurrency)
         let (tx, rx) = mpsc::channel(2048);
@@ -398,8 +397,6 @@ impl umadb_proto::v1::dcb_server::Dcb for DcbServer {
             let mut next_start = start;
             let mut sent_any = false;
             let mut remaining_limit = limit.unwrap_or(u32::MAX);
-            // Create a watch receiver for head updates only for subscriptions.
-            let mut head_rx = subscribe.then(|| request_handler.watch_head());
             let mut captured_db_head: Option<u64> = None;
             let mut have_captured_db_head: bool = false;
             loop {
@@ -449,8 +446,8 @@ impl umadb_proto::v1::dcb_server::Dcb for DcbServer {
 
                 match res {
                     Ok((dcb_sequenced_events, db_head)) => {
-                        // Capture the db head from the first read (only for non-subscriptions).
-                        if !have_captured_db_head && !subscribe {
+                        // Capture the db head from the first read.
+                        if !have_captured_db_head {
                             captured_db_head = db_head;
                             have_captured_db_head = true;
                         }
@@ -478,16 +475,7 @@ impl umadb_proto::v1::dcb_server::Dcb for DcbServer {
                             && sequenced_event_protos.len() < original_len;
 
                         if sequenced_event_protos.is_empty() {
-                            if let Some(head_rx) = head_rx.as_mut() {
-                                // For subscriptions, wait for new events instead of terminating.
-                                tokio::select! {
-                                    _ = head_rx.changed() => {},
-                                    _ = shutdown_watch_rx.changed() => break,
-                                    _ = tx.closed() => break,
-                                }
-                                // Keep looping, it's a subscription.
-                                continue;
-                            } else if !sent_any {
+                            if !sent_any {
                                 // At least send an empty response to communicate head.
                                 let response = umadb_proto::v1::ReadResponse {
                                     events: vec![],
@@ -510,9 +498,7 @@ impl umadb_proto::v1::dcb_server::Dcb for DcbServer {
 
                         let response = umadb_proto::v1::ReadResponse {
                             events: sequenced_event_protos,
-                            head: if subscribe {
-                                None
-                            } else if limit.is_some() {
+                            head: if limit.is_some() {
                                 last_event_position
                             } else {
                                 captured_db_head
@@ -534,8 +520,8 @@ impl umadb_proto::v1::dcb_server::Dcb for DcbServer {
                         });
 
                         // Stop streaming further if we read less than limit or
-                        // reached the captured head boundary (non-subscriber only).
-                        if !subscribe && (read_less_than_read_limit || reached_captured_head) {
+                        // reached the captured head boundary.
+                        if read_less_than_read_limit || reached_captured_head {
                             break;
                         }
 

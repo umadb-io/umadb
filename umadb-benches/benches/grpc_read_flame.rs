@@ -117,7 +117,7 @@ fn main() -> std::io::Result<()> {
                         let client = clients_clone[i].clone();
                         async move {
                             let mut resp = client
-                                .read(None, None, false, Some(TOTAL_EVENTS), false)
+                                .read(None, None, false, Some(TOTAL_EVENTS))
                                 .await
                                 .expect("start read response");
                             let mut count = 0usize;

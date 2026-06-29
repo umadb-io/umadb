@@ -431,11 +431,10 @@ impl Client {
     ///     start: Optional starting position
     ///     backwards: Whether to read backwards (default: False)
     ///     limit: Optional maximum number of events to read
-    ///     subscribe: Whether to subscribe to new events (default: False)
     ///
     /// Returns:
     ///     List of SequencedEvent objects
-    #[pyo3(signature = (query=None, start=None, backwards=false, limit=None, subscribe=false))]
+    #[pyo3(signature = (query=None, start=None, backwards=false, limit=None))]
     fn read(
         &self,
         py: Python<'_>,
@@ -443,12 +442,11 @@ impl Client {
         start: Option<u64>,
         backwards: bool,
         limit: Option<u32>,
-        subscribe: bool,
     ) -> PyResult<ReadResponse> {
         let query_inner = query.map(|q| q.inner);
         let inner = self.inner.clone();
         let response_iter = py
-            .detach(move || inner.read(query_inner, start, backwards, limit, subscribe))
+            .detach(move || inner.read(query_inner, start, backwards, limit))
             .map_err(dcb_error_to_py_err)?;
 
         Ok(ReadResponse {

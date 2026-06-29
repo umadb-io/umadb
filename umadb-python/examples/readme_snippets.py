@@ -12,9 +12,7 @@ def read_example() -> None:
     # Filter by type(s) and tag(s)
     q = Query(items=[QueryItem(types=["example"], tags=["tag1", "tag2"])])
 
-    resp = client.read(
-        query=q, start=None, backwards=False, limit=None, subscribe=False
-    )
+    resp = client.read(query=q, start=None, backwards=False, limit=None)
     for item in resp:
         print(f"Got event at position {item.position}: {item.event}")
 
