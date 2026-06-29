@@ -132,12 +132,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .connect_async()
         .await?;
 
-    let events = vec![DcbEvent {
-        event_type: "UserCreated".to_string(),
-        data: b"user data".to_vec(),
-        tags: vec!["user:123".to_string()],
-        uuid: None,
-    }];
+    let events = vec![
+        DcbEvent::default()
+            .event_type("UserCreated")
+            .data(b"user data")
+            .tags(["user:123"])
+            // Optional metadata stored alongside the event (e.g. provenance).
+            .metadata_entry("source", "umadb-readme"),
+    ];
 
     let position = client.append(events, None).await?;
     println!("Event appended at position: {}", position);
