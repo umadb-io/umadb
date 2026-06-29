@@ -2,7 +2,7 @@ use crate::common::PageID;
 use crate::common::Position;
 use crate::events_tree_nodes::{
     EventInternalNode, EventLeafNode, EventOverflowNode, EventRecord, EventValue,
-    deserialize_metadata, serialize_metadata,
+    deserialize_metadata, serialize_metadata, validate_metadata,
 };
 use crate::mvcc::{Mvcc, Writer};
 use crate::node::Node;
@@ -180,6 +180,10 @@ pub fn event_tree_append(
         println!("Appending event: {position:?} {event:?}");
         println!("Root is {:?}", writer.events_tree_root_id);
     }
+    // Reject metadata that cannot be encoded before writing anything, so an
+    // over-long key/value fails cleanly instead of silently corrupting the
+    // u16 length prefixes used by the serialization format.
+    validate_metadata(&event.metadata)?;
     // Get the current root page id for the event tree
     let mut current_page_id: PageID = writer.events_tree_root_id;
 
@@ -1743,6 +1747,80 @@ mod tests {
         assert_eq!(event, got);
         assert_eq!(data, got.data);
         assert_eq!(metadata, got.metadata);
+    }
+
+    #[test]
+    #[serial]
+    fn test_append_rejects_oversized_metadata_key() {
+        use crate::events_tree_nodes::MAX_METADATA_ENTRY_LEN;
+
+        let (_tmp, db) = construct_db(4096);
+        let mut writer = db.writer().unwrap();
+        let pos = writer.issue_position();
+
+        let mut metadata = HashMap::new();
+        metadata.insert("x".repeat(MAX_METADATA_ENTRY_LEN + 1), "source".to_string());
+        let event = EventRecord {
+            event_type: "TooBigMetadata".into(),
+            data: vec![1, 2, 3],
+            tags: vec!["t".into()],
+            uuid: None,
+            metadata,
+        };
+
+        // Append must fail cleanly with InvalidArgument rather than corrupting
+        // the encoding.
+        match event_tree_append(&db, &mut writer, event, pos) {
+            Err(DcbError::InvalidArgument(_)) => {}
+            other => panic!("Expected InvalidArgument, got {other:?}"),
+        }
+
+        // Nothing should have been persisted: after committing, the position
+        // must not resolve to a stored event.
+        db.commit(&mut writer).unwrap();
+        let reader = db.reader().unwrap();
+        let dirty = HashMap::new();
+        assert!(
+            event_tree_lookup(&db, &dirty, reader.events_tree_root_id, pos).is_err(),
+            "rejected event must not be retrievable"
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn test_append_rejects_oversized_metadata_value() {
+        use crate::events_tree_nodes::MAX_METADATA_ENTRY_LEN;
+
+        let (_tmp, db) = construct_db(4096);
+        let mut writer = db.writer().unwrap();
+        let pos = writer.issue_position();
+
+        let mut metadata = HashMap::new();
+        metadata.insert("source".to_string(), "x".repeat(MAX_METADATA_ENTRY_LEN + 1));
+        let event = EventRecord {
+            event_type: "TooBigMetadata".into(),
+            data: vec![1, 2, 3],
+            tags: vec!["t".into()],
+            uuid: None,
+            metadata,
+        };
+
+        // Append must fail cleanly with InvalidArgument rather than corrupting
+        // the encoding.
+        match event_tree_append(&db, &mut writer, event, pos) {
+            Err(DcbError::InvalidArgument(_)) => {}
+            other => panic!("Expected InvalidArgument, got {other:?}"),
+        }
+
+        // Nothing should have been persisted: after committing, the position
+        // must not resolve to a stored event.
+        db.commit(&mut writer).unwrap();
+        let reader = db.reader().unwrap();
+        let dirty = HashMap::new();
+        assert!(
+            event_tree_lookup(&db, &dirty, reader.events_tree_root_id, pos).is_err(),
+            "rejected event must not be retrievable"
+        );
     }
 
     // #[test]

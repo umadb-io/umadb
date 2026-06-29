@@ -306,7 +306,9 @@ Idempotent support for append operations is activated by setting a UUID on appen
 
 `metadata` is for information *about* the event (provenance, correlation IDs, schema version, etc.)
 rather than the event payload itself. It is stored and returned unchanged, and is not indexed or
-matched by queries. It defaults to an empty dict when omitted.
+matched by queries. It defaults to an empty dict when omitted. Each metadata key and value may be
+up to 65535 bytes long; appending an event with a longer key or value fails with a validation error
+(`ValueError`).
 
 Include in:
 * Append requests when writing new events to the store.

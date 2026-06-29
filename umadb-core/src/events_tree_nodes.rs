@@ -30,6 +30,46 @@ pub enum EventValue {
     },
 }
 
+/// Maximum number of metadata entries in a single event. Limited by the `u16`
+/// entry-count prefix used by the on-page encoding.
+pub const MAX_METADATA_ENTRIES: usize = u16::MAX as usize;
+
+/// Maximum length, in bytes, of a single metadata key or value. Limited by the
+/// `u16` length prefix used by the on-page encoding.
+pub const MAX_METADATA_ENTRY_LEN: usize = u16::MAX as usize;
+
+/// Validate that the metadata map fits within the limits of the on-page
+/// encoding (which uses `u16` length prefixes). Returns
+/// [`DcbError::InvalidArgument`] rather than letting an over-long key/value
+/// silently truncate its length prefix and corrupt the encoding.
+pub fn validate_metadata(metadata: &HashMap<String, String>) -> DcbResult<()> {
+    if metadata.len() > MAX_METADATA_ENTRIES {
+        return Err(DcbError::InvalidArgument(format!(
+            "metadata has {} entries, exceeding the maximum of {}",
+            metadata.len(),
+            MAX_METADATA_ENTRIES
+        )));
+    }
+    for (k, v) in metadata {
+        if k.len() > MAX_METADATA_ENTRY_LEN {
+            return Err(DcbError::InvalidArgument(format!(
+                "metadata key has length {} bytes, exceeding the maximum of {}",
+                k.len(),
+                MAX_METADATA_ENTRY_LEN
+            )));
+        }
+        if v.len() > MAX_METADATA_ENTRY_LEN {
+            return Err(DcbError::InvalidArgument(format!(
+                "metadata value for key '{}' has length {} bytes, exceeding the maximum of {}",
+                k,
+                v.len(),
+                MAX_METADATA_ENTRY_LEN
+            )));
+        }
+    }
+    Ok(())
+}
+
 /// Number of bytes needed to serialize the given metadata map.
 ///
 /// Layout: 2 bytes entry count, then for each entry 2 bytes key length + key
@@ -1191,6 +1231,47 @@ mod tests {
 
         let deserialized = deserialize_metadata(&bytes).unwrap();
         assert_eq!(metadata, deserialized);
+    }
+
+    #[test]
+    fn test_validate_metadata_within_limits_ok() {
+        let mut metadata = HashMap::new();
+        metadata.insert("k".to_string(), "v".to_string());
+        // A key and value exactly at the maximum length are allowed.
+        metadata.insert("a".repeat(MAX_METADATA_ENTRY_LEN), "b".to_string());
+        metadata.insert("c".to_string(), "d".repeat(MAX_METADATA_ENTRY_LEN));
+        assert!(validate_metadata(&metadata).is_ok());
+    }
+
+    #[test]
+    fn test_validate_metadata_rejects_oversized_value() {
+        let mut metadata = HashMap::new();
+        metadata.insert("k".to_string(), "v".repeat(MAX_METADATA_ENTRY_LEN + 1));
+        match validate_metadata(&metadata) {
+            Err(DcbError::InvalidArgument(_)) => {}
+            other => panic!("Expected InvalidArgument, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_validate_metadata_rejects_oversized_key() {
+        let mut metadata = HashMap::new();
+        metadata.insert("k".repeat(MAX_METADATA_ENTRY_LEN + 1), "v".to_string());
+        match validate_metadata(&metadata) {
+            Err(DcbError::InvalidArgument(_)) => {}
+            other => panic!("Expected InvalidArgument, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_metadata_serialize_roundtrip_at_max_entry_len() {
+        // A key/value at exactly the maximum length must survive a round-trip.
+        let mut metadata = HashMap::new();
+        metadata.insert("k".repeat(MAX_METADATA_ENTRY_LEN), "v".to_string());
+        metadata.insert("k2".to_string(), "v".repeat(MAX_METADATA_ENTRY_LEN));
+        let bytes = serialize_metadata(&metadata);
+        assert_eq!(bytes.len(), metadata_serialized_size(&metadata));
+        assert_eq!(metadata, deserialize_metadata(&bytes).unwrap());
     }
 
     #[test]
