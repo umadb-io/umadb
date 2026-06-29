@@ -125,12 +125,13 @@ for r in read_resp:
 last_known = read_resp.head()
 print("Last known position:", last_known)
 
-# Produce a new event with a UUID (for idempotent retries)
+# Produce a new event with a UUID (for idempotent retries) and some metadata
 ev = Event(
     event_type="example",
     tags=["tag1", "tag2"],
     data=b"Hello, world!",
     uuid=str(uuid.uuid4()),
+    metadata={"source": "readme", "correlation_id": str(uuid.uuid4())},
 )
 
 # Append with an optimistic condition: fail if conflicting events exist after last_known
@@ -293,14 +294,19 @@ Returns the last recorded upstream position (`int`), or `None` if the sequence n
 
 An `Event` represents a single event either to be appended or already stored in the event log.
 
-| Field        | Type        | Description                                                   |
-|--------------|-------------|---------------------------------------------------------------|
-| `event_type` | `str`       | The event’s logical type (e.g. `"UserRegistered"`).           |
-| `tags`       | `list<str>` | Tags assigned to the event (used for filtering and indexing). |
-| `data`       | `bytes`     | Binary payload associated with the event.                     |
-| `uuid`       | `str\|None` | Unique event ID.                                              |
+| Field        | Type             | Description                                                   |
+|--------------|------------------|---------------------------------------------------------------|
+| `event_type` | `str`            | The event’s logical type (e.g. `"UserRegistered"`).           |
+| `tags`       | `list<str>`      | Tags assigned to the event (used for filtering and indexing). |
+| `data`       | `bytes`          | Binary payload associated with the event.                     |
+| `uuid`       | `str\|None`      | Unique event ID.                                              |
+| `metadata`   | `dict<str, str>` | Optional string key/value pairs stored alongside the event.   |
 
 Idempotent support for append operations is activated by setting a UUID on appended events.
+
+`metadata` is for information *about* the event (provenance, correlation IDs, schema version, etc.)
+rather than the event payload itself. It is stored and returned unchanged, and is not indexed or
+matched by queries. It defaults to an empty dict when omitted.
 
 Include in:
 * Append requests when writing new events to the store.
@@ -429,12 +435,13 @@ for result in read_response:
 last_known_position = read_response.head()
 print("Last known position is:", last_known_position)
 
-# Create an event with a UUID to enable idempotent append
+# Create an event with a UUID to enable idempotent append, and some metadata
 event = Event(
     event_type="example",
     tags=["tag1", "tag2"],
     data=b"Hello, world!",
     uuid=str(uuid.uuid4()),
+    metadata={"source": "readme", "correlation_id": str(uuid.uuid4())},
 )
 
 # Append event within the consistency boundary

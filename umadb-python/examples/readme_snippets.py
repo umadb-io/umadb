@@ -51,12 +51,13 @@ def append_example() -> None:
     last_known = read_resp.head()
     print("Last known position:", last_known)
 
-    # Produce a new event with a UUID (for idempotent retries)
+    # Produce a new event with a UUID (for idempotent retries) and some metadata
     ev = Event(
         event_type="example",
         tags=["tag1", "tag2"],
         data=b"Hello, world!",
         uuid=str(uuid.uuid4()),
+        metadata={"source": "readme", "correlation_id": str(uuid.uuid4())},
     )
 
     # Append with an optimistic condition: fail if conflicting events exist after last_known
@@ -108,12 +109,13 @@ def complete_example() -> None:
     last_known_position = read_response.head()
     print("Last known position is:", last_known_position)
 
-    # Create an event with a UUID to enable idempotent append
+    # Create an event with a UUID to enable idempotent append, and some metadata
     event = Event(
         event_type="example",
         tags=["tag1", "tag2"],
         data=b"Hello, world!",
         uuid=str(uuid.uuid4()),
+        metadata={"source": "readme", "correlation_id": str(uuid.uuid4())},
     )
 
     # Append event within the consistency boundary

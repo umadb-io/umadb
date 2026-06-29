@@ -4,7 +4,7 @@ Basic usage example for UmaDB Python client.
 
 This example demonstrates:
 1. Connecting to a UmaDB server
-2. Appending events
+2. Appending events (including per-event metadata)
 3. Reading events
 4. Using queries to filter events
 5. Using append conditions
@@ -45,6 +45,9 @@ def main() -> None:
             event_type="UserCreated",
             data=b'{"user_id": "123", "name": "Alice"}',
             tags=["user", "user:123"],
+            # Metadata is stored alongside the event (e.g. provenance,
+            # correlation IDs) and returned unchanged when the event is read.
+            metadata={"source": "basic_usage", "correlation_id": str(uuid.uuid4())},
         ),
         Event(
             event_type="UserUpdated",
@@ -69,6 +72,8 @@ def main() -> None:
         print(
             f"  Position {seq_event.position}: {seq_event.event.event_type} - tags: {seq_event.event.tags}"
         )
+        if seq_event.event.metadata:
+            print(f"    metadata: {seq_event.event.metadata}")
         print(f"  - read response head is now: {all_events.head()}")
     print(f"  Last known position is: {all_events.head()}")
 
