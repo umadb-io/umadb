@@ -1,5 +1,6 @@
 // cargo bench --bench grpc_read_flame --features flamegraphs
 
+use std::collections::HashMap;
 use umadb_client::UmaDbClient;
 
 fn main() -> std::io::Result<()> {
@@ -34,6 +35,7 @@ fn main() -> std::io::Result<()> {
                     data: format!("event-{}", i).into_bytes(),
                     tags: vec!["tag1".to_string()],
                     uuid: None,
+                    metadata: HashMap::new(),
                 };
                 events.push(ev);
             }

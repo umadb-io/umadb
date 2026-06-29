@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use futures::future::join_all;
 use std::hint::black_box;
@@ -42,6 +43,7 @@ fn init_db_with_events(num_events: usize) -> tempfile::TempDir {
                 data: format!("init-{}", i).into_bytes(),
                 tags: vec!["init".to_string()],
                 uuid: None,
+                metadata: HashMap::new(),
             };
             events.push(ev);
         }
@@ -128,6 +130,7 @@ pub fn grpc_append_benchmark(c: &mut Criterion) {
                         tags: vec!["append".to_string()],
                         // tags: vec![format!("append-{i}").to_string()],
                         uuid: None,
+                        metadata: HashMap::new(),
                     })
                     .collect();
 

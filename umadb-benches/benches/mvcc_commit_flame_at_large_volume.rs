@@ -1,5 +1,6 @@
 // cargo bench --bench mvcc_commit_flame --features flamegraphs
 
+use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 use umadb_core::db::unconditional_append;
@@ -65,6 +66,7 @@ fn main() -> std::io::Result<()> {
                     data: "batch-data".to_string().into_bytes(),
                     tags: vec![format!("tag-{}", Uuid::new_v4())],
                     uuid: None,
+                    metadata: HashMap::new(),
                 };
 
                 unconditional_append(&db.mvcc, &mut w, vec![event]).expect("Failed to append");
@@ -90,6 +92,7 @@ fn main() -> std::io::Result<()> {
                     data: "batch-data".to_string().into_bytes(),
                     tags: vec![format!("tag-{}", Uuid::new_v4())],
                     uuid: None,
+                    metadata: HashMap::new(),
                 };
 
                 unconditional_append(&db.mvcc, &mut w, vec![event]).expect("Failed to append");

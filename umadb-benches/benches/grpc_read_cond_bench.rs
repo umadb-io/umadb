@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use futures::future::join_all;
 use std::hint::black_box;
@@ -36,6 +37,7 @@ fn init_db_with_events() -> (tempfile::TempDir, String) {
                 data: format!("event-{}", j).into_bytes(),
                 tags: vec![format!("tag-{}", j).to_string()],
                 uuid: None,
+                metadata: HashMap::new(),
             };
             events.push(ev);
         }
