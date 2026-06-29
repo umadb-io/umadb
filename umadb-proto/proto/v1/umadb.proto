@@ -7,6 +7,7 @@ message Event {
   repeated string tags = 2;
   bytes data = 3;
   string uuid = 4;
+  map<string, string> metadata = 5;
 }
 
 message SequencedEvent {

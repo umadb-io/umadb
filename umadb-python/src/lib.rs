@@ -42,12 +42,13 @@ pub struct Event {
 #[pymethods]
 impl Event {
     #[new]
-    #[pyo3(signature = (event_type, data, tags=None, uuid=None))]
+    #[pyo3(signature = (event_type, data, tags=None, uuid=None, metadata=None))]
     fn new(
         event_type: String,
         data: Vec<u8>,
         tags: Option<Vec<String>>,
         uuid: Option<String>,
+        metadata: Option<HashMap<String, String>>,
     ) -> PyResult<Self> {
         let uuid_parsed = if let Some(uuid_str) = uuid {
             Some(
@@ -64,7 +65,7 @@ impl Event {
                 data,
                 tags: tags.unwrap_or_default(),
                 uuid: uuid_parsed,
-                metadata: HashMap::new(),
+                metadata: metadata.unwrap_or_default(),
             },
         })
     }
@@ -89,13 +90,19 @@ impl Event {
         self.inner.uuid.map(|u| u.to_string())
     }
 
+    #[getter]
+    fn metadata(&self) -> HashMap<String, String> {
+        self.inner.metadata.clone()
+    }
+
     fn __repr__(&self) -> String {
         format!(
-            "Event(event_type='{}', data=<{} bytes>, tags={:?}, uuid={:?})",
+            "Event(event_type='{}', data=<{} bytes>, tags={:?}, uuid={:?}, metadata={:?})",
             self.inner.event_type,
             self.inner.data.len(),
             self.inner.tags,
-            self.inner.uuid.map(|u| u.to_string())
+            self.inner.uuid.map(|u| u.to_string()),
+            self.inner.metadata
         )
     }
 }

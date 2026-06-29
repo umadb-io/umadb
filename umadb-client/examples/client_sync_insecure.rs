@@ -36,12 +36,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let last_known_position = read_response.head().unwrap();
     println!("Last known position is: {:?}", last_known_position);
 
-    // Produce new event
+    // Produce new event, attaching some metadata (e.g. provenance) that is
+    // stored alongside the event and returned when it is read back.
     let event = DcbEvent::default()
         .event_type("example")
         .tags(["tag1", "tag2"])
         .data(b"Hello, world!")
-        .uuid(Uuid::new_v4());
+        .uuid(Uuid::new_v4())
+        .metadata_entry("source", "client_sync_insecure")
+        .metadata_entry("correlation_id", Uuid::new_v4().to_string());
 
     // Append event in consistency boundary
     let append_condition = DcbAppendCondition {

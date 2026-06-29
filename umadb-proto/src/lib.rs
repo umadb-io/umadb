@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use prost::Message;
 use prost::bytes::Bytes;
 use tonic::{Code, Status};
@@ -55,7 +54,7 @@ impl TryFrom<v1::Event> for DcbEvent {
             tags: proto.tags,
             data: proto.data,
             uuid,
-            metadata: HashMap::new(),
+            metadata: proto.metadata,
         })
     }
 }
@@ -67,6 +66,7 @@ impl From<DcbEvent> for v1::Event {
             tags: event.tags,
             data: event.data,
             uuid: event.uuid.map(|u| u.to_string()).unwrap_or_default(),
+            metadata: event.metadata,
         }
     }
 }
@@ -202,5 +202,53 @@ pub fn dcb_error_from_status(status: Status) -> DcbError {
         Code::DataLoss => DcbError::Corruption(status.message().to_string()),
         Code::Internal => DcbError::InternalError(status.message().to_string()),
         _ => DcbError::Io(std::io::Error::other(format!("gRPC error: {}", status))),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    #[test]
+    fn event_metadata_roundtrips_through_proto() {
+        let mut metadata = HashMap::new();
+        metadata.insert("source".to_string(), "web".to_string());
+        metadata.insert("correlation_id".to_string(), "abc-123".to_string());
+
+        let event = DcbEvent {
+            event_type: "Created".to_string(),
+            data: vec![1, 2, 3],
+            tags: vec!["t1".to_string()],
+            uuid: Some(Uuid::new_v4()),
+            metadata: metadata.clone(),
+        };
+
+        // DcbEvent -> proto::Event carries the metadata map.
+        let proto: v1::Event = event.clone().into();
+        assert_eq!(metadata, proto.metadata);
+
+        // proto::Event -> DcbEvent restores it.
+        let round = DcbEvent::try_from(proto).unwrap();
+        assert_eq!(event.event_type, round.event_type);
+        assert_eq!(event.data, round.data);
+        assert_eq!(event.tags, round.tags);
+        assert_eq!(event.uuid, round.uuid);
+        assert_eq!(metadata, round.metadata);
+    }
+
+    #[test]
+    fn empty_metadata_roundtrips_through_proto() {
+        let event = DcbEvent {
+            event_type: "Created".to_string(),
+            data: vec![],
+            tags: vec![],
+            uuid: None,
+            metadata: HashMap::new(),
+        };
+        let proto: v1::Event = event.clone().into();
+        assert!(proto.metadata.is_empty());
+        let round = DcbEvent::try_from(proto).unwrap();
+        assert!(round.metadata.is_empty());
     }
 }

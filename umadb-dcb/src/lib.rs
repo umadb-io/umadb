@@ -319,6 +319,26 @@ impl DcbEvent {
         self.uuid = Some(uuid);
         self
     }
+
+    /// Sets the metadata for this event, replacing any existing entries
+    pub fn metadata<I, K, V>(mut self, metadata: I) -> Self
+    where
+        I: IntoIterator<Item = (K, V)>,
+        K: Into<String>,
+        V: Into<String>,
+    {
+        self.metadata = metadata
+            .into_iter()
+            .map(|(k, v)| (k.into(), v.into()))
+            .collect();
+        self
+    }
+
+    /// Inserts a single metadata entry, keeping any existing entries
+    pub fn metadata_entry<K: Into<String>, V: Into<String>>(mut self, key: K, value: V) -> Self {
+        self.metadata.insert(key.into(), value.into());
+        self
+    }
 }
 
 #[derive(Debug, Clone)]

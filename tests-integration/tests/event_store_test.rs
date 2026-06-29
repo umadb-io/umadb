@@ -26,13 +26,16 @@ pub fn dcb_event_store_test<T: DcbEventStoreSync>(event_store: &T) {
     assert_eq!(0, result.len());
     assert_eq!(None, head);
 
-    // Append one event.
+    // Append one event, carrying non-empty metadata.
+    let mut event1_metadata = HashMap::new();
+    event1_metadata.insert("source".to_string(), "integration-test".to_string());
+    event1_metadata.insert("correlation_id".to_string(), "abc-123".to_string());
     let event1 = DcbEvent {
         event_type: "type1".to_string(),
         data: b"data1".to_vec(),
         tags: vec!["tagX".to_string()],
         uuid: None,
-        metadata: HashMap::new(),
+        metadata: event1_metadata.clone(),
     };
     let position = event_store
         .append(vec![event1.clone()], None, None)
@@ -45,11 +48,13 @@ pub fn dcb_event_store_test<T: DcbEventStoreSync>(event_store: &T) {
     let head_position = event_store.head().unwrap();
     assert_eq!(Some(1), head_position);
 
-    // Read all, expect one event.
+    // Read all, expect one event. Metadata must survive the round-trip
+    // (through the core persistence layer and, for the gRPC client, the wire).
     let (result, head) = event_store.read_with_head(None, None, false, None).unwrap();
     assert_eq!(1, result.len());
     assert_eq!(event1.data, result[0].event.data);
     assert_eq!(event1.uuid, result[0].event.uuid);
+    assert_eq!(event1_metadata, result[0].event.metadata);
     assert_eq!(Some(1), head);
 
     // Read all backwards, expect one event.

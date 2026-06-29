@@ -47,13 +47,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let last_known_position = read_response.head().await?;
     println!("Last known position is: {:?}", last_known_position);
 
-    // Produce new event
+    // Produce new event, attaching some metadata (e.g. provenance) that is
+    // stored alongside the event and returned when it is read back.
+    let mut metadata = HashMap::new();
+    metadata.insert("source".to_string(), "client_async_secure".to_string());
+    metadata.insert("correlation_id".to_string(), Uuid::new_v4().to_string());
     let event = DcbEvent {
         event_type: "example".to_string(),
         tags: vec!["tag1".to_string(), "tag2".to_string()],
         data: b"Hello, world!".to_vec(),
         uuid: Some(Uuid::new_v4()),
-        metadata: HashMap::new(),
+        metadata,
     };
 
     // Append event in consistency boundary
