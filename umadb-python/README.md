@@ -304,6 +304,9 @@ An `Event` represents a single event either to be appended or already stored in 
 
 Idempotent support for append operations is activated by setting a UUID on appended events.
 
+`event_type` and each tag in `tags` may be up to 65535 bytes long. Appending an
+event with a longer type or tag fails with a validation error (`ValueError`).
+
 `metadata` is for information *about* the event (provenance, correlation IDs, schema version, etc.)
 rather than the event payload itself. It is stored and returned unchanged, and is not indexed or
 matched by queries. It defaults to an empty dict when omitted. Each metadata key and value may be

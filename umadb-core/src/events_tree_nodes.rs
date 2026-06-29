@@ -38,6 +38,52 @@ pub const MAX_METADATA_ENTRIES: usize = u16::MAX as usize;
 /// `u16` length prefix used by the on-page encoding.
 pub const MAX_METADATA_ENTRY_LEN: usize = u16::MAX as usize;
 
+/// Maximum length, in bytes, of an event type string. Limited by the `u16`
+/// length prefix used by the on-page encoding.
+pub const MAX_EVENT_TYPE_LEN: usize = u16::MAX as usize;
+
+/// Maximum number of tags in a single event. Limited by the `u16` tag-count
+/// prefix used by the on-page encoding.
+pub const MAX_TAGS: usize = u16::MAX as usize;
+
+/// Maximum length, in bytes, of a single tag string. Limited by the `u16`
+/// length prefix used by the on-page encoding.
+pub const MAX_TAG_LEN: usize = u16::MAX as usize;
+
+/// Validate that the event type fits within the limits of the on-page
+/// encoding.
+pub fn validate_event_type(event_type: &str) -> DcbResult<()> {
+    if event_type.len() > MAX_EVENT_TYPE_LEN {
+        return Err(DcbError::InvalidArgument(format!(
+            "event type has length {} bytes, exceeding the maximum of {}",
+            event_type.len(),
+            MAX_EVENT_TYPE_LEN
+        )));
+    }
+    Ok(())
+}
+
+/// Validate that the tags fit within the limits of the on-page encoding.
+pub fn validate_tags(tags: &[String]) -> DcbResult<()> {
+    if tags.len() > MAX_TAGS {
+        return Err(DcbError::InvalidArgument(format!(
+            "event has {} tags, exceeding the maximum of {}",
+            tags.len(),
+            MAX_TAGS
+        )));
+    }
+    for tag in tags {
+        if tag.len() > MAX_TAG_LEN {
+            return Err(DcbError::InvalidArgument(format!(
+                "tag has length {} bytes, exceeding the maximum of {}",
+                tag.len(),
+                MAX_TAG_LEN
+            )));
+        }
+    }
+    Ok(())
+}
+
 /// Validate that the metadata map fits within the limits of the on-page
 /// encoding (which uses `u16` length prefixes). Returns
 /// [`DcbError::InvalidArgument`] rather than letting an over-long key/value
@@ -1241,6 +1287,42 @@ mod tests {
         metadata.insert("a".repeat(MAX_METADATA_ENTRY_LEN), "b".to_string());
         metadata.insert("c".to_string(), "d".repeat(MAX_METADATA_ENTRY_LEN));
         assert!(validate_metadata(&metadata).is_ok());
+    }
+
+    #[test]
+    fn test_validate_event_type_rejects_oversized() {
+        let et = "a".repeat(MAX_EVENT_TYPE_LEN + 1);
+        match validate_event_type(&et) {
+            Err(DcbError::InvalidArgument(msg)) => {
+                assert!(msg.contains("event type has length"));
+                assert!(msg.contains("exceeding the maximum"));
+            }
+            other => panic!("Expected InvalidArgument, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_validate_tags_rejects_oversized_tag() {
+        let tags = vec!["tag".repeat(MAX_TAG_LEN + 1)];
+        match validate_tags(&tags) {
+            Err(DcbError::InvalidArgument(msg)) => {
+                assert!(msg.contains("tag has length"));
+                assert!(msg.contains("exceeding the maximum"));
+            }
+            other => panic!("Expected InvalidArgument, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_validate_tags_rejects_too_many_tags() {
+        let tags = vec!["tag".to_string(); MAX_TAGS + 1];
+        match validate_tags(&tags) {
+            Err(DcbError::InvalidArgument(msg)) => {
+                assert!(msg.contains("event has"));
+                assert!(msg.contains("tags, exceeding the maximum"));
+            }
+            other => panic!("Expected InvalidArgument, got {other:?}"),
+        }
     }
 
     #[test]

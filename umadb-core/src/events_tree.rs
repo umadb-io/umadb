@@ -2,7 +2,8 @@ use crate::common::PageID;
 use crate::common::Position;
 use crate::events_tree_nodes::{
     EventInternalNode, EventLeafNode, EventOverflowNode, EventRecord, EventValue,
-    deserialize_metadata, serialize_metadata, validate_metadata,
+    deserialize_metadata, serialize_metadata, validate_event_type, validate_metadata,
+    validate_tags,
 };
 use crate::mvcc::{Mvcc, Writer};
 use crate::node::Node;
@@ -183,6 +184,8 @@ pub fn event_tree_append(
     // Reject metadata that cannot be encoded before writing anything, so an
     // over-long key/value fails cleanly instead of silently corrupting the
     // u16 length prefixes used by the serialization format.
+    validate_event_type(&event.event_type)?;
+    validate_tags(&event.tags)?;
     validate_metadata(&event.metadata)?;
     // Get the current root page id for the event tree
     let mut current_page_id: PageID = writer.events_tree_root_id;
@@ -1823,7 +1826,51 @@ mod tests {
         );
     }
 
-    // #[test]
+    #[test]
+    #[serial]
+    fn test_append_rejects_oversized_event_type() {
+        use crate::events_tree_nodes::MAX_EVENT_TYPE_LEN;
+
+        let (_tmp, db) = construct_db(4096);
+        let mut writer = db.writer().unwrap();
+        let pos = writer.issue_position();
+
+        let event = EventRecord {
+            event_type: "x".repeat(MAX_EVENT_TYPE_LEN + 1),
+            data: vec![1, 2, 3],
+            tags: vec!["t".into()],
+            uuid: None,
+            metadata: HashMap::new(),
+        };
+
+        match event_tree_append(&db, &mut writer, event, pos) {
+            Err(DcbError::InvalidArgument(_)) => {}
+            other => panic!("Expected InvalidArgument, got {other:?}"),
+        }
+    }
+
+    #[test]
+    #[serial]
+    fn test_append_rejects_oversized_tag() {
+        use crate::events_tree_nodes::MAX_TAG_LEN;
+
+        let (_tmp, db) = construct_db(4096);
+        let mut writer = db.writer().unwrap();
+        let pos = writer.issue_position();
+
+        let event = EventRecord {
+            event_type: "Type".into(),
+            data: vec![1, 2, 3],
+            tags: vec!["x".repeat(MAX_TAG_LEN + 1)],
+            uuid: None,
+            metadata: HashMap::new(),
+        };
+
+        match event_tree_append(&db, &mut writer, event, pos) {
+            Err(DcbError::InvalidArgument(_)) => {}
+            other => panic!("Expected InvalidArgument, got {other:?}"),
+        }
+    }
     // fn benchmark_append_and_lookup_varied_sizes() {
     //     // Benchmark-like test; prints durations for different sizes. Run with:
     //     // cargo test --lib mvcc_event_tree::tests::benchmark_append_and_lookup_varied_sizes -- --nocapture
