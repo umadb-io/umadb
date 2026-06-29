@@ -30,6 +30,115 @@ pub enum EventValue {
     },
 }
 
+/// Number of bytes needed to serialize the given metadata map.
+///
+/// Layout: 2 bytes entry count, then for each entry 2 bytes key length + key
+/// bytes + 2 bytes value length + value bytes.
+pub fn metadata_serialized_size(metadata: &HashMap<String, String>) -> usize {
+    let mut size = 2; // entry count (u16)
+    for (k, v) in metadata {
+        size += 2 + k.len() + 2 + v.len();
+    }
+    size
+}
+
+/// Serialize metadata into the start of `buf`, returning the number of bytes
+/// written. Entries are written in sorted key order for deterministic output.
+pub fn serialize_metadata_into(metadata: &HashMap<String, String>, buf: &mut [u8]) -> usize {
+    let mut i = 0usize;
+    let n = metadata.len() as u16;
+    buf[i..i + 2].copy_from_slice(&n.to_le_bytes());
+    i += 2;
+    let mut entries: Vec<(&String, &String)> = metadata.iter().collect();
+    entries.sort_by(|a, b| a.0.cmp(b.0));
+    for (k, v) in entries {
+        let kl = k.len() as u16;
+        buf[i..i + 2].copy_from_slice(&kl.to_le_bytes());
+        i += 2;
+        buf[i..i + k.len()].copy_from_slice(k.as_bytes());
+        i += k.len();
+        let vl = v.len() as u16;
+        buf[i..i + 2].copy_from_slice(&vl.to_le_bytes());
+        i += 2;
+        buf[i..i + v.len()].copy_from_slice(v.as_bytes());
+        i += v.len();
+    }
+    i
+}
+
+/// Serialize metadata into a freshly allocated buffer.
+pub fn serialize_metadata(metadata: &HashMap<String, String>) -> Vec<u8> {
+    let mut buf = vec![0u8; metadata_serialized_size(metadata)];
+    serialize_metadata_into(metadata, &mut buf);
+    buf
+}
+
+/// Read a metadata map from `slice` starting at `*offset`, advancing `*offset`
+/// past the bytes consumed.
+fn read_metadata(slice: &[u8], offset: &mut usize) -> DcbResult<HashMap<String, String>> {
+    if *offset + 2 > slice.len() {
+        return Err(DcbError::DeserializationError(
+            "Unexpected end of data while reading metadata entry count".to_string(),
+        ));
+    }
+    let n = LittleEndian::read_u16(&slice[*offset..*offset + 2]) as usize;
+    *offset += 2;
+    let mut map = HashMap::with_capacity(n);
+    for _ in 0..n {
+        if *offset + 2 > slice.len() {
+            return Err(DcbError::DeserializationError(
+                "Unexpected end of data while reading metadata key length".to_string(),
+            ));
+        }
+        let kl = LittleEndian::read_u16(&slice[*offset..*offset + 2]) as usize;
+        *offset += 2;
+        if *offset + kl > slice.len() {
+            return Err(DcbError::DeserializationError(
+                "Unexpected end of data while reading metadata key".to_string(),
+            ));
+        }
+        let key = match std::str::from_utf8(&slice[*offset..*offset + kl]) {
+            Ok(s) => s.to_string(),
+            Err(_) => {
+                return Err(DcbError::DeserializationError(
+                    "Invalid UTF-8 sequence in metadata key".to_string(),
+                ));
+            }
+        };
+        *offset += kl;
+        if *offset + 2 > slice.len() {
+            return Err(DcbError::DeserializationError(
+                "Unexpected end of data while reading metadata value length".to_string(),
+            ));
+        }
+        let vl = LittleEndian::read_u16(&slice[*offset..*offset + 2]) as usize;
+        *offset += 2;
+        if *offset + vl > slice.len() {
+            return Err(DcbError::DeserializationError(
+                "Unexpected end of data while reading metadata value".to_string(),
+            ));
+        }
+        let value = match std::str::from_utf8(&slice[*offset..*offset + vl]) {
+            Ok(s) => s.to_string(),
+            Err(_) => {
+                return Err(DcbError::DeserializationError(
+                    "Invalid UTF-8 sequence in metadata value".to_string(),
+                ));
+            }
+        };
+        *offset += vl;
+        map.insert(key, value);
+    }
+    Ok(map)
+}
+
+/// Deserialize a metadata map from a complete slice (used for the overflow
+/// chain, where metadata bytes follow the event data).
+pub fn deserialize_metadata(slice: &[u8]) -> DcbResult<HashMap<String, String>> {
+    let mut offset = 0usize;
+    read_metadata(slice, &mut offset)
+}
+
 impl PartialEq<EventValue> for EventRecord {
     fn eq(&self, other: &EventValue) -> bool {
         match other {
@@ -96,8 +205,8 @@ impl EventLeafNode {
                     if rec.uuid.is_some() {
                         total_size += 16;
                     }
-                    if rec.metadata.len() > 0 {
-                        // TODO: Something for metadata...
+                    if !rec.metadata.is_empty() {
+                        total_size += metadata_serialized_size(&rec.metadata);
                     }
                 }
                 EventValue::Overflow {
@@ -155,6 +264,9 @@ impl EventLeafNode {
                     if rec.uuid.is_some() {
                         flags |= EventValueFlags::HAS_UUID;
                     }
+                    if !rec.metadata.is_empty() {
+                        flags |= EventValueFlags::HAS_METADATA;
+                    }
                     buf[i] = flags.bits();
                     i += 1;
                     let et_len = rec.event_type.len() as u16;
@@ -182,6 +294,9 @@ impl EventLeafNode {
                     if let Some(uuid) = rec.uuid {
                         buf[i..i + 16].copy_from_slice(uuid.as_bytes());
                         i += 16;
+                    }
+                    if !rec.metadata.is_empty() {
+                        i += serialize_metadata_into(&rec.metadata, &mut buf[i..]);
                     }
                 }
                 EventValue::Overflow {
@@ -385,8 +500,11 @@ impl EventLeafNode {
                     }
                 };
 
-                // TODO: Actually deserialise metadata.
-                let metadata = HashMap::new();
+                let metadata = if has_metadata {
+                    read_metadata(slice, &mut offset)?
+                } else {
+                    HashMap::new()
+                };
 
                 values.push(EventValue::Inline(EventRecord {
                     event_type,
@@ -470,7 +588,7 @@ impl EventLeafNode {
                 };
                 let metadata_len = {
                     if has_metadata {
-                        // Overflow: data_len u64 + tags + root_id
+                        // metadata_len u64 (metadata bytes live at the tail of the overflow chain)
                         if offset + 8 > slice.len() {
                             return Err(DcbError::DeserializationError(
                                 "Unexpected end of data while reading overflow metadata_len".to_string(),
@@ -1058,6 +1176,94 @@ mod tests {
                 assert_eq!(0, *metadata_len);
             }
             _ => panic!("Expected Overflow at index 1"),
+        }
+    }
+
+    #[test]
+    fn test_metadata_serialize_roundtrip() {
+        let mut metadata = HashMap::new();
+        metadata.insert("source".to_string(), "web".to_string());
+        metadata.insert("correlation_id".to_string(), "abc-123".to_string());
+        metadata.insert("empty_value".to_string(), "".to_string());
+
+        let bytes = serialize_metadata(&metadata);
+        assert_eq!(bytes.len(), metadata_serialized_size(&metadata));
+
+        let deserialized = deserialize_metadata(&bytes).unwrap();
+        assert_eq!(metadata, deserialized);
+    }
+
+    #[test]
+    fn test_empty_metadata_serialize_roundtrip() {
+        let metadata: HashMap<String, String> = HashMap::new();
+        let bytes = serialize_metadata(&metadata);
+        // Just the 2-byte entry count of zero.
+        assert_eq!(bytes.len(), 2);
+        assert_eq!(metadata, deserialize_metadata(&bytes).unwrap());
+    }
+
+    #[test]
+    fn test_event_leaf_serialize_inline_with_metadata() {
+        let mut md1 = HashMap::new();
+        md1.insert("source".to_string(), "ingest".to_string());
+        md1.insert("schema".to_string(), "v2".to_string());
+
+        let mut md3 = HashMap::new();
+        md3.insert("trace".to_string(), "deadbeef".to_string());
+
+        let uuid2 = Uuid::new_v4();
+        let leaf_node = EventLeafNode {
+            keys: vec![Position(10), Position(20), Position(30)],
+            values: vec![
+                // Inline with metadata, no uuid
+                EventValue::Inline(EventRecord {
+                    event_type: "with_md".to_string(),
+                    data: vec![1, 2, 3, 4],
+                    tags: vec!["tag1".to_string()],
+                    uuid: None,
+                    metadata: md1.clone(),
+                }),
+                // Inline with both uuid and metadata
+                EventValue::Inline(EventRecord {
+                    event_type: "uuid_and_md".to_string(),
+                    data: vec![5, 6],
+                    tags: vec!["tag2".to_string(), "tag3".to_string()],
+                    uuid: Some(uuid2),
+                    metadata: md3.clone(),
+                }),
+                // Inline with empty metadata to confirm the flag stays unset
+                EventValue::Inline(EventRecord {
+                    event_type: "no_md".to_string(),
+                    data: vec![7],
+                    tags: vec![],
+                    uuid: None,
+                    metadata: HashMap::new(),
+                }),
+            ],
+        };
+
+        let mut serialized = vec![0u8; leaf_node.calc_serialized_size()];
+        let written = leaf_node.serialize_into(&mut serialized);
+        assert_eq!(written, serialized.len());
+
+        let deserialized =
+            EventLeafNode::from_slice(&serialized).expect("Failed to deserialize EventLeafNode");
+        assert_eq!(leaf_node, deserialized);
+
+        match &deserialized.values[0] {
+            EventValue::Inline(rec) => assert_eq!(md1, rec.metadata),
+            _ => panic!("Expected Inline at index 0"),
+        }
+        match &deserialized.values[1] {
+            EventValue::Inline(rec) => {
+                assert_eq!(Some(uuid2), rec.uuid);
+                assert_eq!(md3, rec.metadata);
+            }
+            _ => panic!("Expected Inline at index 1"),
+        }
+        match &deserialized.values[2] {
+            EventValue::Inline(rec) => assert!(rec.metadata.is_empty()),
+            _ => panic!("Expected Inline at index 2"),
         }
     }
 

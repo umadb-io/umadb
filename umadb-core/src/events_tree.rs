@@ -2,6 +2,7 @@ use crate::common::PageID;
 use crate::common::Position;
 use crate::events_tree_nodes::{
     EventInternalNode, EventLeafNode, EventOverflowNode, EventRecord, EventValue,
+    deserialize_metadata, serialize_metadata,
 };
 use crate::mvcc::{Mvcc, Writer};
 use crate::node::Node;
@@ -90,6 +91,37 @@ where
     }
 }
 
+/// Convert an inline `EventRecord` into an `EventValue::Overflow`, writing the
+/// event data followed by the serialized metadata into a fresh overflow chain.
+///
+/// The overflow chain holds `data` (first `data_len` bytes) immediately
+/// followed by the serialized metadata (next `metadata_len` bytes).
+fn record_to_overflow(
+    mvcc: &Mvcc,
+    writer: &mut Writer,
+    rec: EventRecord,
+) -> DcbResult<EventValue> {
+    let data_len = rec.data.len() as u64;
+    let mut combined = rec.data;
+    let metadata_len = if rec.metadata.is_empty() {
+        0
+    } else {
+        let metadata_bytes = serialize_metadata(&rec.metadata);
+        let len = metadata_bytes.len() as u64;
+        combined.extend_from_slice(&metadata_bytes);
+        len
+    };
+    let root_id = write_overflow_chain(mvcc, writer, &combined)?;
+    Ok(EventValue::Overflow {
+        event_type: rec.event_type,
+        data_len,
+        tags: rec.tags,
+        root_id,
+        uuid: rec.uuid,
+        metadata_len,
+    })
+}
+
 fn materialize_event_value(
     mvcc: &Mvcc,
     dirty: &HashMap<PageID, Page>,
@@ -111,13 +143,20 @@ fn materialize_event_value(
                     "Overflow data length mismatch".to_string(),
                 ));
             }
-            // TODO: Actually split off data from metadata and deserialise metadata.
+            // Split the chain back into event data and trailing metadata bytes.
+            let split = *data_len as usize;
+            let data = all_data[..split].to_vec();
+            let metadata = if *metadata_len > 0 {
+                deserialize_metadata(&all_data[split..])?
+            } else {
+                HashMap::new()
+            };
             Ok(EventRecord {
                 event_type: event_type.clone(),
-                data: all_data,
+                data,
                 tags: tags.clone(),
                 uuid: *uuid,
-                metadata: HashMap::new(),
+                metadata,
             })
         }
     }
@@ -170,15 +209,7 @@ pub fn event_tree_append(
 
     // Decide inline vs overflow based on data length before mut-borrowing the page
     let pending_value = if event.data.len() > u16::MAX as usize {
-        let root_id = write_overflow_chain(mvcc, writer, &event.data)?;
-        EventValue::Overflow {
-            event_type: event.event_type.clone(),
-            data_len: event.data.len() as u64,
-            tags: event.tags.clone(),
-            root_id,
-            uuid: event.uuid,
-            metadata_len: 0,
-        }
+        record_to_overflow(mvcc, writer, event)?
     } else {
         EventValue::Inline(event)
     };
@@ -247,15 +278,7 @@ pub fn event_tree_append(
         if serialized_size > mvcc.page_size
             && let EventValue::Inline(rec) = last_value
         {
-            let root_id = write_overflow_chain(mvcc, writer, &rec.data)?;
-            last_value = EventValue::Overflow {
-                event_type: rec.event_type,
-                data_len: rec.data.len() as u64,
-                tags: rec.tags,
-                root_id,
-                uuid: rec.uuid,
-                metadata_len: 0,
-            };
+            last_value = record_to_overflow(mvcc, writer, rec)?;
             new_leaf_node = EventLeafNode {
                 keys: vec![last_key],
                 values: vec![last_value.clone()],
@@ -1584,6 +1607,140 @@ mod tests {
             Node::EventLeaf(leaf) => check_leaf(&leaf),
             _ => panic!("Unexpected root node type"),
         }
+    }
+
+    #[test]
+    #[serial]
+    fn test_inline_event_metadata_roundtrip() {
+        let (_tmp, db) = construct_db(4096);
+        let mut writer = db.writer().unwrap();
+        let pos = writer.issue_position();
+
+        let mut metadata = HashMap::new();
+        metadata.insert("source".to_string(), "web".to_string());
+        metadata.insert("correlation_id".to_string(), "abc-123".to_string());
+
+        let event = EventRecord {
+            event_type: "SmallWithMetadata".into(),
+            data: vec![1, 2, 3, 4],
+            tags: vec!["t".into()],
+            uuid: None,
+            metadata: metadata.clone(),
+        };
+        event_tree_append(&db, &mut writer, event.clone(), pos).unwrap();
+        db.commit(&mut writer).unwrap();
+
+        // Read back through the materialization path and confirm metadata survives.
+        let reader = db.reader().unwrap();
+        let dirty = HashMap::new();
+        let got = event_tree_lookup(&db, &dirty, reader.events_tree_root_id, pos).unwrap();
+        assert_eq!(event, got);
+        assert_eq!(metadata, got.metadata);
+
+        // Confirm the value was stored inline (not in an overflow chain).
+        let header_page = db.get_latest_header_page().unwrap();
+        let header = header_page.as_header_node().unwrap();
+        let root = db.read_page(header.events_tree_root_id).unwrap();
+        match &root.node {
+            Node::EventLeaf(leaf) => match &leaf.values[0] {
+                EventValue::Inline(rec) => assert_eq!(metadata, rec.metadata),
+                _ => panic!("Expected Inline value"),
+            },
+            _ => panic!("Expected EventLeaf root for a single small event"),
+        }
+    }
+
+    #[test]
+    #[serial]
+    fn test_overflow_event_metadata_roundtrip() {
+        let (_tmp, db) = construct_db(512);
+        let mut writer = db.writer().unwrap();
+        let pos = writer.issue_position();
+
+        let mut metadata = HashMap::new();
+        metadata.insert("source".to_string(), "bulk-import".to_string());
+        metadata.insert("schema".to_string(), "v3".to_string());
+
+        // Data large enough to spill into overflow pages.
+        let data = vec![0xAB; 512 * 4];
+        let event = EventRecord {
+            event_type: "BigWithMetadata".into(),
+            data: data.clone(),
+            tags: vec!["t".into()],
+            uuid: Some(uuid::Uuid::new_v4()),
+            metadata: metadata.clone(),
+        };
+        event_tree_append(&db, &mut writer, event.clone(), pos).unwrap();
+        db.commit(&mut writer).unwrap();
+
+        // Read back through the materialization path and confirm both data and
+        // metadata survive the split/overflow chain.
+        let reader = db.reader().unwrap();
+        let dirty = HashMap::new();
+        let got = event_tree_lookup(&db, &dirty, reader.events_tree_root_id, pos).unwrap();
+        assert_eq!(event, got);
+        assert_eq!(data, got.data);
+        assert_eq!(metadata, got.metadata);
+
+        // Confirm the value really was stored as an overflow value with a
+        // non-zero metadata length.
+        let header_page = db.get_latest_header_page().unwrap();
+        let header = header_page.as_header_node().unwrap();
+        let root = db.read_page(header.events_tree_root_id).unwrap();
+        let check_leaf = |leaf: &EventLeafNode| match &leaf.values[0] {
+            EventValue::Overflow {
+                data_len,
+                metadata_len,
+                ..
+            } => {
+                assert_eq!(*data_len as usize, data.len());
+                assert!(*metadata_len > 0, "expected non-zero metadata_len");
+            }
+            _ => panic!("Expected Overflow value for large event"),
+        };
+        match &root.node {
+            Node::EventInternal(internal) => {
+                let leaf_id = *internal.child_ids.last().unwrap();
+                let leaf_page = db.read_page(leaf_id).unwrap();
+                match &leaf_page.node {
+                    Node::EventLeaf(leaf) => check_leaf(leaf),
+                    _ => panic!("Expected EventLeaf child"),
+                }
+            }
+            Node::EventLeaf(leaf) => check_leaf(leaf),
+            _ => panic!("Unexpected root node type"),
+        }
+    }
+
+    #[test]
+    #[serial]
+    fn test_direct_overflow_event_metadata_roundtrip() {
+        // Data larger than u16::MAX takes the direct inline->overflow path in
+        // event_tree_append (rather than the leaf-split conversion path).
+        let (_tmp, db) = construct_db(4096);
+        let mut writer = db.writer().unwrap();
+        let pos = writer.issue_position();
+
+        let mut metadata = HashMap::new();
+        metadata.insert("origin".to_string(), "direct-overflow".to_string());
+
+        let data = vec![0xCD; (u16::MAX as usize) + 1024];
+        let event = EventRecord {
+            event_type: "HugeWithMetadata".into(),
+            data: data.clone(),
+            tags: vec!["t".into()],
+            uuid: None,
+            metadata: metadata.clone(),
+        };
+        event_tree_append(&db, &mut writer, event.clone(), pos).unwrap();
+        db.commit(&mut writer).unwrap();
+
+        let reader = db.reader().unwrap();
+        let dirty = HashMap::new();
+        let got = event_tree_lookup(&db, &dirty, reader.events_tree_root_id, pos).unwrap();
+        assert_eq!(event, got);
+        assert_eq!(data, got.data);
+        assert_eq!(metadata, got.metadata);
     }
 
     // #[test]
