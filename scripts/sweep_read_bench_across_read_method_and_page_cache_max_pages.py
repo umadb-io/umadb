@@ -28,8 +28,8 @@ for method in READ_METHODS:
         env["UMADB_READ_METHOD"] = method
         env["UMADB_PAGE_CACHE_MAX_PAGES"] = cache_size
         # Limit threads in the benchmark to speed things up
-        env["MAX_THREADS"] = "256"
-        
+        env["MAX_THREADS"] = THREADS[-1]
+
         # Run the benchmark
         # Filter for specific thread counts if possible, or just run and parse
         try:
