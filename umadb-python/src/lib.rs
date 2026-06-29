@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use pyo3::exceptions::{
     PyException, PyKeyboardInterrupt, PyPermissionError, PyRuntimeError, PyValueError,
 };
@@ -6,6 +5,7 @@ use pyo3::prelude::*;
 use pyo3::types::PyBytes;
 use pyo3::wrap_pyfunction;
 use pyo3_stub_gen::{create_exception, define_stub_info_gatherer, derive::*};
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use umadb_client;
 use umadb_dcb;

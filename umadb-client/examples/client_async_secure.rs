@@ -1,5 +1,5 @@
-use std::collections::HashMap;
 use futures::StreamExt;
+use std::collections::HashMap;
 use umadb_client::UmaDbClient;
 use umadb_dcb::{
     DcbAppendCondition, DcbError, DcbEvent, DcbEventStoreAsync, DcbQuery, DcbQueryItem,
@@ -26,9 +26,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     // Read events for a decision model
-    let mut read_response = client
-        .read(Some(cb.clone()), None, false, None)
-        .await?;
+    let mut read_response = client.read(Some(cb.clone()), None, false, None).await?;
 
     // Build decision model
     while let Some(result) = read_response.next().await {

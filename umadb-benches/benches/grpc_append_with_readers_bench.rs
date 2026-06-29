@@ -1,6 +1,6 @@
-use std::collections::HashMap;
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use futures::future::join_all;
+use std::collections::HashMap;
 use std::hint::black_box;
 use std::net::TcpListener;
 use std::sync::{
@@ -103,10 +103,7 @@ pub fn grpc_append_with_readers_benchmark(c: &mut Criterion) {
             let running = readers_running.clone();
             let handle = readers_rt.spawn(async move {
                 while running.load(Ordering::Relaxed) {
-                    let mut resp = match client
-                        .read(None, None, false, Some(TOTAL_EVENTS))
-                        .await
-                    {
+                    let mut resp = match client.read(None, None, false, Some(TOTAL_EVENTS)).await {
                         Ok(s) => s,
                         Err(_) => break,
                     };

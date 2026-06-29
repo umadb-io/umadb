@@ -3,10 +3,10 @@
 //! This module provides the core interfaces and data structures for working with
 //! an event store that supports dynamic consistency boundaries.
 
-use std::collections::HashMap;
 use async_trait::async_trait;
 use futures_core::Stream;
 use futures_util::StreamExt;
+use std::collections::HashMap;
 use std::iter::Iterator;
 use thiserror::Error;
 use uuid::Uuid;

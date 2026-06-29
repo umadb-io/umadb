@@ -1,5 +1,5 @@
-use std::collections::HashMap;
 use futures::StreamExt;
+use std::collections::HashMap;
 use std::net::TcpListener;
 use tempfile::tempdir;
 use tokio::time::{Duration as TokioDuration, sleep};

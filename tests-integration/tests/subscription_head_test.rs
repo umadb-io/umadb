@@ -121,9 +121,7 @@ fn test_read_subscribe_after_head() {
     println!("Current head: {}", head);
 
     // 3. Subscribe after head.
-    let mut subscription = client
-        .subscribe(None, Some(head))
-        .expect("read subscribe");
+    let mut subscription = client.subscribe(None, Some(head)).expect("read subscribe");
 
     // 4. Try to get next event in a separate thread
     let finished = Arc::new(AtomicBool::new(false));

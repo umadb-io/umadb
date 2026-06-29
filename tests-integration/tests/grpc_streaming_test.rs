@@ -264,10 +264,7 @@ async fn grpc_async_stream_catch_up_and_continue() {
         .await
         .expect("append initial events");
 
-    let mut resp = client
-        .subscribe(None, None)
-        .await
-        .expect("read_stream");
+    let mut resp = client.subscribe(None, None).await.expect("read_stream");
 
     let mut received = 0usize;
     while received < initial_count {

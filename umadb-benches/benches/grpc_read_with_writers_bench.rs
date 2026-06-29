@@ -1,6 +1,6 @@
-use std::collections::HashMap;
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use futures::future::join_all;
+use std::collections::HashMap;
 use std::hint::black_box;
 use std::net::TcpListener;
 use std::sync::{

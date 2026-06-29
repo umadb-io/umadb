@@ -125,9 +125,7 @@ fn client_sync_covers_all_methods() {
     assert!(p1 < p2 && p2 < p3);
 
     // Exercise: iterate over all events, then retrieve head()
-    let mut resp = client
-        .read(None, None, false, None)
-        .expect("read all");
+    let mut resp = client.read(None, None, false, None).expect("read all");
     let mut positions = Vec::new();
     while let Some(item) = resp.next() {
         let ev = item.expect("stream item");
@@ -150,9 +148,7 @@ fn client_sync_covers_all_methods() {
     assert_eq!(head2, Some(p3));
 
     // Exercise: next_batch with a limit
-    let mut resp3 = client
-        .read(None, None, false, None)
-        .expect("read batched");
+    let mut resp3 = client.read(None, None, false, None).expect("read batched");
     let b1 = resp3.next_batch().unwrap();
     assert_eq!(b1.len(), 2);
     let b2 = resp3.next_batch().unwrap();

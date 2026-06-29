@@ -1,5 +1,5 @@
-use std::collections::HashMap;
 use prost::Message;
+use std::collections::HashMap;
 use std::net::TcpListener;
 use tempfile::tempdir;
 use tokio::runtime::Builder as RtBuilder;

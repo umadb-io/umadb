@@ -1823,9 +1823,7 @@ mod tests {
 
         // From semantics: skip the first event
         let first_pos = all[0].position + 1;
-        let mut resp3 = store
-            .read(None, Some(first_pos), false, None)
-            .unwrap();
+        let mut resp3 = store.read(None, Some(first_pos), false, None).unwrap();
         let out3 = resp3.next_batch().unwrap();
         assert_eq!(out3.len(), 1);
         assert_eq!(out3[0].event.event_type, "TypeB");

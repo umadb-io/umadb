@@ -224,10 +224,9 @@ impl DcbEventStoreSync for SyncUmaDbClient {
         backwards: bool,
         limit: Option<u32>,
     ) -> DcbResult<Box<dyn DcbReadResponseSync + Send + 'static>> {
-        let async_read_response = self.handle.block_on(
-            self.async_client
-                .read(query, start, backwards, limit),
-        )?;
+        let async_read_response = self
+            .handle
+            .block_on(self.async_client.read(query, start, backwards, limit))?;
         Ok(Box::new(SyncClientReadResponse {
             rt: self.handle.clone(),
             async_resp: async_read_response,

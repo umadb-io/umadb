@@ -98,11 +98,7 @@ where
 /// Metadata is placed first (the first `metadata_len` bytes) so that a future
 /// metadata-only read can stop after the leading page(s) without walking the
 /// potentially large event data (the remaining `data_len` bytes).
-fn record_to_overflow(
-    mvcc: &Mvcc,
-    writer: &mut Writer,
-    rec: EventRecord,
-) -> DcbResult<EventValue> {
+fn record_to_overflow(mvcc: &Mvcc, writer: &mut Writer, rec: EventRecord) -> DcbResult<EventValue> {
     let data_len = rec.data.len() as u64;
     let (metadata_len, mut combined) = if rec.metadata.is_empty() {
         (0, Vec::with_capacity(rec.data.len()))

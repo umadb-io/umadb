@@ -1,5 +1,5 @@
-use std::collections::HashMap;
 use serial_test::serial;
+use std::collections::HashMap;
 use tempfile::tempdir;
 use umadb_core::db::UmaDb;
 use umadb_dcb::{DcbAppendCondition, DcbEvent, DcbEventStoreSync, TrackingInfo};

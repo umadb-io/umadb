@@ -1,8 +1,8 @@
-use std::collections::HashMap;
 use crate::common::PageID;
 use crate::common::Position;
 use bitflags::bitflags;
 use byteorder::{ByteOrder, LittleEndian};
+use std::collections::HashMap;
 use umadb_dcb::DcbError;
 use umadb_dcb::DcbResult;
 use uuid::Uuid;
@@ -677,7 +677,8 @@ impl EventLeafNode {
                         // metadata_len u64 (metadata bytes live at the tail of the overflow chain)
                         if offset + 8 > slice.len() {
                             return Err(DcbError::DeserializationError(
-                                "Unexpected end of data while reading overflow metadata_len".to_string(),
+                                "Unexpected end of data while reading overflow metadata_len"
+                                    .to_string(),
                             ));
                         }
                         let metadata_len = LittleEndian::read_u64(&slice[offset..offset + 8]);

@@ -260,7 +260,6 @@ pub fn calc_crc(data: &[u8]) -> u32 {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
     use super::*;
     use crate::common::Position;
     use crate::common::{PageID, Tsn};
@@ -277,6 +276,7 @@ mod tests {
         TagInternalNode, TagLeafNode, TagsInternalNode, TagsLeafNode, TagsLeafValue,
     };
     use crate::tracking_tree_nodes::{TrackingInternalNode, TrackingLeafNode};
+    use std::collections::HashMap;
     use uuid::Uuid;
 
     #[test]
