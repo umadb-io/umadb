@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use prost::Message;
 use std::net::TcpListener;
 use tempfile::tempdir;
@@ -78,18 +79,21 @@ fn test_path_rewrite_umadbservice_to_dcb() {
             data: b"test data 1".to_vec(),
             tags: vec!["tag1".to_string()],
             uuid: None,
+            metadata: HashMap::new(),
         },
         DcbEvent {
             event_type: "TestEvent".to_string(),
             data: b"test data 2".to_vec(),
             tags: vec!["tag2".to_string()],
             uuid: None,
+            metadata: HashMap::new(),
         },
         DcbEvent {
             event_type: "TestEvent".to_string(),
             data: b"test data 3".to_vec(),
             tags: vec!["tag3".to_string()],
             uuid: None,
+            metadata: HashMap::new(),
         },
     ];
     let append_position = client

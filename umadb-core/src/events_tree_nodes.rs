@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use crate::common::PageID;
 use crate::common::Position;
 use bitflags::bitflags;
@@ -12,6 +13,7 @@ pub struct EventRecord {
     pub data: Vec<u8>,
     pub tags: Vec<String>,
     pub uuid: Option<Uuid>,
+    pub metadata: HashMap<String, String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -24,6 +26,7 @@ pub enum EventValue {
         tags: Vec<String>,
         root_id: PageID,
         uuid: Option<Uuid>,
+        metadata_len: u64,
     },
 }
 
@@ -56,6 +59,7 @@ bitflags! {
     pub struct EventValueFlags: u8 {
         const OVERFLOW      = 0b0000_0001; // event payload in overflow node
         const HAS_UUID      = 0b0000_0010; // event includes UUID field
+        const HAS_METADATA  = 0b0000_0100; // event includes metadata field
     }
 }
 
@@ -92,6 +96,9 @@ impl EventLeafNode {
                     if rec.uuid.is_some() {
                         total_size += 16;
                     }
+                    if rec.metadata.len() > 0 {
+                        // TODO: Something for metadata...
+                    }
                 }
                 EventValue::Overflow {
                     event_type,
@@ -99,6 +106,7 @@ impl EventLeafNode {
                     tags,
                     root_id: _,
                     uuid,
+                    metadata_len,
                 } => {
                     // 2 bytes for event_type length + bytes for the string
                     total_size += 2 + event_type.len();
@@ -114,6 +122,10 @@ impl EventLeafNode {
                     total_size += 8;
                     if uuid.is_some() {
                         total_size += 16;
+                    }
+                    if *metadata_len > 0 {
+                        // 8 bytes for metadata_len (u64)
+                        total_size += 8;
                     }
                 }
             }
@@ -178,10 +190,14 @@ impl EventLeafNode {
                     tags,
                     root_id,
                     uuid,
+                    metadata_len,
                 } => {
                     flags |= EventValueFlags::OVERFLOW;
                     if uuid.is_some() {
                         flags |= EventValueFlags::HAS_UUID;
+                    }
+                    if *metadata_len > 0 {
+                        flags |= EventValueFlags::HAS_METADATA;
                     }
                     buf[i] = flags.bits();
                     i += 1;
@@ -209,6 +225,10 @@ impl EventLeafNode {
                     if uuid.is_some() {
                         buf[i..i + 16].copy_from_slice(uuid.unwrap().as_bytes());
                         i += 16;
+                    }
+                    if *metadata_len > 0 {
+                        buf[i..i + 8].copy_from_slice(&metadata_len.to_le_bytes());
+                        i += 8;
                     }
                 }
             }
@@ -288,6 +308,7 @@ impl EventLeafNode {
 
             let overflow = flags.contains(EventValueFlags::OVERFLOW);
             let has_uuid = flags.contains(EventValueFlags::HAS_UUID);
+            let has_metadata = flags.contains(EventValueFlags::HAS_METADATA);
 
             if !overflow {
                 // Inline: data_len u16 + data bytes
@@ -364,11 +385,15 @@ impl EventLeafNode {
                     }
                 };
 
+                // TODO: Actually deserialise metadata.
+                let metadata = HashMap::new();
+
                 values.push(EventValue::Inline(EventRecord {
                     event_type,
                     data,
                     tags,
                     uuid,
+                    metadata,
                 }));
             } else {
                 // Overflow: data_len u64 + tags + root_id
@@ -443,6 +468,21 @@ impl EventLeafNode {
                         None
                     }
                 };
+                let metadata_len = {
+                    if has_metadata {
+                        // Overflow: data_len u64 + tags + root_id
+                        if offset + 8 > slice.len() {
+                            return Err(DcbError::DeserializationError(
+                                "Unexpected end of data while reading overflow metadata_len".to_string(),
+                            ));
+                        }
+                        let metadata_len = LittleEndian::read_u64(&slice[offset..offset + 8]);
+                        offset += 8;
+                        metadata_len
+                    } else {
+                        0
+                    }
+                };
 
                 values.push(EventValue::Overflow {
                     event_type,
@@ -450,6 +490,7 @@ impl EventLeafNode {
                     tags,
                     root_id,
                     uuid,
+                    metadata_len,
                 });
             }
         }
@@ -674,6 +715,7 @@ mod tests {
                     data: vec![1, 0, 0, 0], // 100 as little-endian bytes
                     tags: vec!["tag1".to_string(), "tag2".to_string(), "tag3".to_string()],
                     uuid: None,
+                    metadata: HashMap::new(),
                 }),
                 EventValue::Inline(EventRecord {
                     event_type: "event_type_2".to_string(),
@@ -685,12 +727,14 @@ mod tests {
                         "tag7".to_string(),
                     ],
                     uuid: None,
+                    metadata: HashMap::new(),
                 }),
                 EventValue::Inline(EventRecord {
                     event_type: "event_type_3".to_string(),
                     data: vec![3, 0, 0, 0], // 300 as little-endian bytes
                     tags: vec!["tag8".to_string(), "tag9".to_string()],
                     uuid: None,
+                    metadata: HashMap::new(),
                 }),
             ],
         };
@@ -777,6 +821,7 @@ mod tests {
                     data: vec![1, 0, 0, 0], // 100 as little-endian bytes
                     tags: vec!["tag1".to_string(), "tag2".to_string(), "tag3".to_string()],
                     uuid: Some(uuid1),
+                    metadata: HashMap::new(),
                 }),
                 EventValue::Inline(EventRecord {
                     event_type: "event_type_2".to_string(),
@@ -788,12 +833,14 @@ mod tests {
                         "tag7".to_string(),
                     ],
                     uuid: Some(uuid2),
+                    metadata: HashMap::new(),
                 }),
                 EventValue::Inline(EventRecord {
                     event_type: "event_type_3".to_string(),
                     data: vec![3, 0, 0, 0], // 300 as little-endian bytes
                     tags: vec!["tag8".to_string(), "tag9".to_string()],
                     uuid: Some(uuid3),
+                    metadata: HashMap::new(),
                 }),
             ],
         };
@@ -876,6 +923,7 @@ mod tests {
                 tags: vec!["a".to_string(), "b".to_string()],
                 root_id: PageID(123),
                 uuid: None,
+                metadata_len: 0,
             }],
         };
         // Serialize
@@ -898,12 +946,14 @@ mod tests {
                 tags,
                 root_id,
                 uuid,
+                metadata_len,
             } => {
                 assert_eq!("over_evt", event_type);
                 assert_eq!(1234567, *data_len);
                 assert_eq!(vec!["a".to_string(), "b".to_string()], *tags);
                 assert_eq!(PageID(123), *root_id);
                 assert_eq!(None, *uuid);
+                assert_eq!(0, *metadata_len);
             }
             _ => panic!("Expected Overflow variant"),
         }
@@ -920,6 +970,7 @@ mod tests {
                 tags: vec!["a".to_string(), "b".to_string()],
                 root_id: PageID(123),
                 uuid: Some(uuid1),
+                metadata_len: 0,
             }],
         };
         // Serialize
@@ -942,6 +993,7 @@ mod tests {
                 tags,
                 root_id,
                 uuid,
+                metadata_len: 0,
             } => {
                 assert_eq!("over_evt", event_type);
                 assert_eq!(1234567, *data_len);
@@ -960,6 +1012,7 @@ mod tests {
             data: vec![1, 2, 3],
             tags: vec!["x".to_string()],
             uuid: None,
+            metadata: HashMap::new(),
         });
         let overflow = EventValue::Overflow {
             event_type: "overflow_evt".to_string(),
@@ -967,6 +1020,7 @@ mod tests {
             tags: vec!["y".to_string(), "z".to_string()],
             root_id: PageID(999),
             uuid: None,
+            metadata_len: 0,
         };
         let leaf_node = EventLeafNode {
             keys: vec![Position(10), Position(20)],
@@ -994,12 +1048,14 @@ mod tests {
                 tags,
                 root_id,
                 uuid,
+                metadata_len,
             } => {
                 assert_eq!("overflow_evt", event_type);
                 assert_eq!(9999, *data_len);
                 assert_eq!(vec!["y".to_string(), "z".to_string()], *tags);
                 assert_eq!(PageID(999), *root_id);
-                assert_eq!(None, *uuid)
+                assert_eq!(None, *uuid);
+                assert_eq!(0, *metadata_len);
             }
             _ => panic!("Expected Overflow at index 1"),
         }

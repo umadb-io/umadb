@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use prost::Message;
 use prost::bytes::Bytes;
 use tonic::{Code, Status};
@@ -54,6 +55,7 @@ impl TryFrom<v1::Event> for DcbEvent {
             tags: proto.tags,
             data: proto.data,
             uuid,
+            metadata: HashMap::new(),
         })
     }
 }

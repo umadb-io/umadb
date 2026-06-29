@@ -512,6 +512,7 @@ fn real_main() -> DcbResult<()> {
                             data: ev.event.data.clone(),
                             tags: ev.event.tags.clone(),
                             uuid: ev.event.uuid,
+                            metadata: ev.event.metadata.clone(),
                         },
                     );
                     last_event_pos = ev.position;

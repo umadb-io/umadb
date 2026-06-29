@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::net::{Ipv4Addr, TcpListener};
 use std::path::PathBuf;
 use std::time::Duration;
@@ -108,6 +109,7 @@ async fn api_key_success_over_tls() {
             data: format!("data-{}", i).into_bytes(),
             tags: vec!["t".to_string()],
             uuid: None,
+            metadata: HashMap::new(),
         })
         .collect();
     let last_pos = client.append(events, None, None).await.expect("append");

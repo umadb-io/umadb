@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use futures::StreamExt;
 use umadb_client::UmaDbClient;
 use umadb_dcb::{
@@ -52,6 +53,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         tags: vec!["tag1".to_string(), "tag2".to_string()],
         data: b"Hello, world!".to_vec(),
         uuid: Some(Uuid::new_v4()),
+        metadata: HashMap::new(),
     };
 
     // Append event in consistency boundary
@@ -73,6 +75,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         tags: vec!["tag1".to_string(), "tag2".to_string()],
         data: b"Hello, world!".to_vec(),
         uuid: Some(Uuid::new_v4()), // different UUID
+        metadata: HashMap::new(),
     };
     let conflicting_result = client
         .append(

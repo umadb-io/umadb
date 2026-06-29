@@ -103,18 +103,21 @@ fn materialize_event_value(
             tags,
             root_id,
             uuid,
+            metadata_len,
         } => {
-            let data = read_overflow_chain(mvcc, dirty, *root_id)?;
-            if (data.len() as u64) != *data_len {
+            let all_data = read_overflow_chain(mvcc, dirty, *root_id)?;
+            if (all_data.len() as u64) != *data_len + *metadata_len {
                 return Err(DcbError::DatabaseCorrupted(
                     "Overflow data length mismatch".to_string(),
                 ));
             }
+            // TODO: Actually split off data from metadata and deserialise metadata.
             Ok(EventRecord {
                 event_type: event_type.clone(),
-                data,
+                data: all_data,
                 tags: tags.clone(),
                 uuid: *uuid,
+                metadata: HashMap::new(),
             })
         }
     }
@@ -174,6 +177,7 @@ pub fn event_tree_append(
             tags: event.tags.clone(),
             root_id,
             uuid: event.uuid,
+            metadata_len: 0,
         }
     } else {
         EventValue::Inline(event)
@@ -250,6 +254,7 @@ pub fn event_tree_append(
                 tags: rec.tags,
                 root_id,
                 uuid: rec.uuid,
+                metadata_len: 0,
             };
             new_leaf_node = EventLeafNode {
                 keys: vec![last_key],
@@ -739,6 +744,7 @@ mod tests {
             data: vec![1, 2, 3, 4],
             tags: vec!["users".to_string(), "creation".to_string()],
             uuid: None,
+            metadata: HashMap::new(),
         };
 
         // Call append_event
@@ -799,6 +805,7 @@ mod tests {
                 data: (0..8).map(|_| random::<u8>()).collect(),
                 tags: vec!["users".to_string(), "creation".to_string()],
                 uuid: None,
+                metadata: HashMap::new(),
             };
             appended.push((position, record.clone()));
 
@@ -871,6 +878,7 @@ mod tests {
                 data: (0..8).map(|_| random::<u8>()).collect(),
                 tags: vec!["users".to_string(), "creation".to_string()],
                 uuid: None,
+                metadata: HashMap::new(),
             };
             appended.push((position, record.clone()));
 
@@ -948,6 +956,7 @@ mod tests {
                 data: (0..8).map(|_| random::<u8>()).collect(),
                 tags: vec!["users".to_string(), "creation".to_string()],
                 uuid: None,
+                metadata: HashMap::new(),
             };
             appended.push((position, record.clone()));
 
@@ -1036,6 +1045,7 @@ mod tests {
                 data: (0..8).map(|_| random::<u8>()).collect(),
                 tags: vec!["users".to_string(), "creation".to_string()],
                 uuid: None,
+                metadata: HashMap::new(),
             };
             appended.push((position, record.clone()));
 
@@ -1130,6 +1140,7 @@ mod tests {
                 data: (0..8).map(|_| random::<u8>()).collect(),
                 tags: vec!["users".to_string(), "creation".to_string()],
                 uuid: None,
+                metadata: HashMap::new(),
             };
             appended.push((position, record.clone()));
 
@@ -1256,6 +1267,7 @@ mod tests {
                 data: (0..8).map(|_| random::<u8>()).collect(),
                 tags: vec!["users".to_string(), "creation".to_string()],
                 uuid: None,
+                metadata: HashMap::new(),
             };
             appended.push((position, record.clone()));
 
@@ -1375,6 +1387,7 @@ mod tests {
                 data: (0..8).map(|_| random::<u8>()).collect(),
                 tags: vec!["users".to_string(), "creation".to_string()],
                 uuid: None,
+                metadata: HashMap::new(),
             };
             appended.push((position, record.clone()));
 
@@ -1486,6 +1499,7 @@ mod tests {
             data: data.clone(),
             tags: vec![],
             uuid: None,
+            metadata: HashMap::new(),
         };
         event_tree_append(&db, &mut writer, event.clone(), pos).unwrap();
         db.commit(&mut writer).unwrap();
@@ -1537,6 +1551,7 @@ mod tests {
             data: data.clone(),
             tags: vec![],
             uuid: None,
+            metadata: HashMap::new(),
         };
         event_tree_append(&db, &mut writer, event.clone(), pos).unwrap();
         db.commit(&mut writer).unwrap();
@@ -1640,6 +1655,7 @@ mod tests {
                 data: vec![1, 2, 3, 4],
                 tags: vec!["test".to_string()],
                 uuid: None,
+                metadata: HashMap::new(),
             };
             appended.push((position, record.clone()));
             event_tree_append(&db, &mut writer, record, position).unwrap();

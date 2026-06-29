@@ -3,6 +3,7 @@
 //! This module provides the core interfaces and data structures for working with
 //! an event store that supports dynamic consistency boundaries.
 
+use std::collections::HashMap;
 use async_trait::async_trait;
 use futures_core::Stream;
 use futures_util::StreamExt;
@@ -269,6 +270,8 @@ pub struct DcbEvent {
     pub data: Vec<u8>,
     /// Unique event ID
     pub uuid: Option<Uuid>,
+    /// Metadata for the event
+    pub metadata: HashMap<String, String>,
 }
 
 impl Default for DcbEvent {
@@ -285,6 +288,7 @@ impl DcbEvent {
             data: Vec::new(),
             tags: Vec::new(),
             uuid: None,
+            metadata: HashMap::new(),
         }
     }
 
@@ -574,6 +578,7 @@ mod tests {
             data: vec![1, 2, 3],
             tags: vec!["tag1".to_string(), "tag2".to_string()],
             uuid: None,
+            metadata: HashMap::new(),
         };
 
         let event2 = DcbEvent {
@@ -581,6 +586,7 @@ mod tests {
             data: vec![4, 5, 6],
             tags: vec!["tag2".to_string(), "tag3".to_string()],
             uuid: None,
+            metadata: HashMap::new(),
         };
 
         let seq_event1 = DcbSequencedEvent {

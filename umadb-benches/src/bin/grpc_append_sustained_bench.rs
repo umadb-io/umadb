@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use clap::Parser;
 use futures::future::join_all;
 use serde::Serialize;
@@ -70,6 +71,7 @@ fn init_db_with_events(num_events: usize) -> (tempfile::TempDir, String) {
                 data: format!("init-{}", i).into_bytes(),
                 tags: vec!["init".to_string()],
                 uuid: None,
+                metadata: HashMap::new(),
             };
             events.push(ev);
         }
@@ -141,6 +143,7 @@ async fn run_sustained_throughput_test(
                         data: payload.clone(),
                         tags: vec![stream_name.clone()],
                         uuid: None,
+                        metadata: HashMap::new(),
                     })
                     .collect();
 

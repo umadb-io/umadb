@@ -260,6 +260,7 @@ pub fn calc_crc(data: &[u8]) -> u32 {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
     use super::*;
     use crate::common::Position;
     use crate::common::{PageID, Tsn};
@@ -366,6 +367,7 @@ mod tests {
                             data: vec![1, 2, 3, 4, 5, 6],
                             tags: vec!["user".to_string(), "create".to_string()],
                             uuid: None,
+                            metadata: HashMap::new(),
                         }),
                         EventValue::Overflow {
                             event_type: "blob.uploaded".to_string(),
@@ -373,6 +375,7 @@ mod tests {
                             tags: vec!["blob".to_string(), "upload".to_string()],
                             root_id: PageID(500),
                             uuid: Some(Uuid::nil()),
+                            metadata_len: 0,
                         },
                     ],
                 }),
@@ -520,6 +523,7 @@ mod tests {
                                 "prod".to_string(),
                             ],
                             uuid: Some(Uuid::nil()),
+                            metadata: HashMap::new(),
                         }),
                         EventValue::Inline(EventRecord {
                             event_type: "user.session.updated".to_string(),
@@ -530,6 +534,7 @@ mod tests {
                                 "update".to_string(),
                             ],
                             uuid: None,
+                            metadata: HashMap::new(),
                         }),
                         EventValue::Overflow {
                             event_type: "blob.chunk.indexed".to_string(),
@@ -542,6 +547,7 @@ mod tests {
                             ],
                             root_id: PageID(1500),
                             uuid: Some(Uuid::nil()),
+                            metadata_len: 0,
                         },
                         EventValue::Inline(EventRecord {
                             event_type: "audit.log".to_string(),
@@ -552,6 +558,7 @@ mod tests {
                                 "critical".to_string(),
                             ],
                             uuid: Some(Uuid::nil()),
+                            metadata: HashMap::new(),
                         }),
                         EventValue::Overflow {
                             event_type: "ml.feature.vector".to_string(),
@@ -563,6 +570,7 @@ mod tests {
                             ],
                             root_id: PageID(1501),
                             uuid: None,
+                            metadata_len: 0,
                         },
                     ],
                 }),

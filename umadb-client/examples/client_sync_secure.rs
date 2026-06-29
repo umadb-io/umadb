@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use umadb_client::UmaDbClient;
 use umadb_dcb::{
     DcbAppendCondition, DcbError, DcbEvent, DcbEventStoreSync, DcbQuery, DcbQueryItem, TrackingInfo,
@@ -46,6 +47,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         tags: vec!["tag1".to_string(), "tag2".to_string()],
         data: b"Hello, world!".to_vec(),
         uuid: Some(Uuid::new_v4()),
+        metadata: HashMap::new(),
     };
 
     // Append event in consistency boundary
@@ -65,6 +67,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         tags: vec!["tag1".to_string(), "tag2".to_string()],
         data: b"Hello, world!".to_vec(),
         uuid: Some(Uuid::new_v4()), // different UUID
+        metadata: HashMap::new(),
     };
     let conflicting_result = client.append(
         vec![conflicting_event],

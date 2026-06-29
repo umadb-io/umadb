@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::net::TcpListener;
 use tempfile::tempdir;
 use tokio::time::{Duration as TokioDuration, sleep};
@@ -38,6 +39,7 @@ async fn grpc_async_subscribe_catch_up_and_continue() {
             data: format!("init-{i}").into_bytes(),
             tags: vec!["grpc-async-sub".to_string()],
             uuid: None,
+            metadata: HashMap::new(),
         })
         .collect();
     let _ = client
@@ -74,6 +76,7 @@ async fn grpc_async_subscribe_catch_up_and_continue() {
             data: format!("new-{i}").into_bytes(),
             tags: vec!["grpc-async-sub".to_string()],
             uuid: None,
+            metadata: HashMap::new(),
         })
         .collect();
     let _ = client
@@ -128,6 +131,7 @@ async fn grpc_async_subscribe_with_after_position() {
             data: format!("init-{i}").into_bytes(),
             tags: vec!["grpc-async-sub-start".to_string()],
             uuid: None,
+            metadata: HashMap::new(),
         })
         .collect();
     let _ = client
@@ -169,6 +173,7 @@ async fn grpc_async_subscribe_with_after_position() {
             data: format!("new-{i}").into_bytes(),
             tags: vec!["grpc-async-sub-start".to_string()],
             uuid: None,
+            metadata: HashMap::new(),
         })
         .collect();
     let _ = client
@@ -256,6 +261,7 @@ fn grpc_sync_subscribe_catch_up_and_continue() {
             data: format!("init-{i}").into_bytes(),
             tags: vec!["grpc-sync-sub".to_string()],
             uuid: None,
+            metadata: HashMap::new(),
         })
         .collect();
     let _ = client.append(initial_events, None, None).unwrap();
@@ -280,6 +286,7 @@ fn grpc_sync_subscribe_catch_up_and_continue() {
             data: format!("new-{i}").into_bytes(),
             tags: vec!["grpc-sync-sub".to_string()],
             uuid: None,
+            metadata: HashMap::new(),
         })
         .collect();
     let _ = client.append(new_events, None, None).unwrap();

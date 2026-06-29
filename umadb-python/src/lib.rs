@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use pyo3::exceptions::{
     PyException, PyKeyboardInterrupt, PyPermissionError, PyRuntimeError, PyValueError,
 };
@@ -63,6 +64,7 @@ impl Event {
                 data,
                 tags: tags.unwrap_or_default(),
                 uuid: uuid_parsed,
+                metadata: HashMap::new(),
             },
         })
     }

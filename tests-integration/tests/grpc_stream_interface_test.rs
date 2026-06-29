@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use futures::StreamExt;
 use std::net::TcpListener;
 use tempfile::tempdir;
@@ -39,6 +40,7 @@ async fn grpc_async_stream_interface_test() {
             data: format!("init-{i}").into_bytes(),
             tags: vec!["grpc-async-stream".to_string()],
             uuid: None,
+            metadata: HashMap::new(),
         })
         .collect();
     let _ = client
@@ -74,6 +76,7 @@ async fn grpc_async_stream_interface_test() {
             data: format!("batch-{i}").into_bytes(),
             tags: vec!["grpc-async-stream-batch".to_string()],
             uuid: None,
+            metadata: HashMap::new(),
         })
         .collect();
     let _ = client
@@ -143,6 +146,7 @@ fn grpc_sync_iterator_interface_test() {
             data: format!("init-{i}").into_bytes(),
             tags: vec!["grpc-sync-iter".to_string()],
             uuid: None,
+            metadata: HashMap::new(),
         })
         .collect();
     let _ = client.append(initial_events, None, None).unwrap();

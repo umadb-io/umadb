@@ -1,6 +1,7 @@
 // Public bench helpers to exercise internal APIs without exposing them in the public surface
 pub mod server_helper;
 pub mod bench_api {
+    use std::collections::HashMap;
     use std::path::Path;
     use umadb_core::common::{PageID, Position, Tsn};
     use umadb_core::events_tree_nodes::{
@@ -73,6 +74,7 @@ pub mod bench_api {
                         tags: tags.clone(),
                         root_id,
                         uuid: None,
+                        metadata_len: 0,
                     });
                 }
 
@@ -111,6 +113,7 @@ pub mod bench_api {
                     data: data.clone(),
                     tags: tags.clone(),
                     uuid: None,
+                    metadata: HashMap::new(),
                 }));
             }
             let keys_vec: Vec<Position> = (0..keys).map(|i| Position(i as u64)).collect();
@@ -160,6 +163,7 @@ pub mod bench_api {
                     tags: tags.clone(),
                     root_id: PageID(1 + i as u64),
                     uuid: None,
+                    metadata_len: 0,
                 });
             }
             let keys_vec: Vec<Position> = (0..keys).map(|i| Position(i as u64)).collect();
@@ -227,6 +231,7 @@ pub mod bench_api {
                             data: vec![1, 2, 3, 4, 5, 6],
                             tags: vec!["user".to_string(), "create".to_string()],
                             uuid: None,
+                            metadata: HashMap::new(),
                         }),
                         EventValue::Overflow {
                             event_type: "blob.uploaded".to_string(),
@@ -234,6 +239,7 @@ pub mod bench_api {
                             tags: vec!["blob".to_string(), "upload".to_string()],
                             root_id: PageID(500),
                             uuid: Some(Uuid::nil()),
+                            metadata_len: 0,
                         },
                     ],
                 }),
@@ -381,6 +387,7 @@ pub mod bench_api {
                                 "prod".to_string(),
                             ],
                             uuid: Some(Uuid::nil()),
+                            metadata: HashMap::new(),
                         }),
                         EventValue::Inline(EventRecord {
                             event_type: "user.session.updated".to_string(),
@@ -391,6 +398,7 @@ pub mod bench_api {
                                 "update".to_string(),
                             ],
                             uuid: None,
+                            metadata: HashMap::new(),
                         }),
                         EventValue::Overflow {
                             event_type: "blob.chunk.indexed".to_string(),
@@ -403,6 +411,7 @@ pub mod bench_api {
                             ],
                             root_id: PageID(1500),
                             uuid: Some(Uuid::nil()),
+                            metadata_len: 0,
                         },
                         EventValue::Inline(EventRecord {
                             event_type: "audit.log".to_string(),
@@ -413,6 +422,7 @@ pub mod bench_api {
                                 "critical".to_string(),
                             ],
                             uuid: Some(Uuid::nil()),
+                            metadata: HashMap::new(),
                         }),
                         EventValue::Overflow {
                             event_type: "ml.feature.vector".to_string(),
@@ -424,6 +434,7 @@ pub mod bench_api {
                             ],
                             root_id: PageID(1501),
                             uuid: None,
+                            metadata_len: 0,
                         },
                     ],
                 }),
@@ -537,6 +548,7 @@ pub mod bench_api {
                                     "gamma".to_string(),
                                 ],
                                 uuid: None,
+                                metadata: HashMap::new(),
                             })
                         })
                         .collect(),

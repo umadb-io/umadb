@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use clap::Parser;
 use futures::future::join_all;
 use serde::Serialize;
@@ -61,6 +62,7 @@ fn init_db_with_events(num_events: usize) -> (tempfile::TempDir, String) {
                 data: format!("init-{}", i).into_bytes(),
                 tags: vec!["init".to_string()],
                 uuid: None,
+                metadata: HashMap::new(),
             };
             events.push(ev);
         }
@@ -104,6 +106,7 @@ async fn run_throughput_test(writers: usize, duration_secs: u64, addr_http: &str
                         data: format!("data-{}", count).into_bytes(),
                         tags: vec!["append".to_string()],
                         uuid: None,
+                        metadata: HashMap::new(),
                     };
                     match client.append(vec![event], None, None).await {
                         Ok(_) => count += 1,

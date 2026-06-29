@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use umadb_client::UmaDbClient;
 use umadb_dcb::{DcbEvent, DcbEventStoreAsync};
 use umadb_server::start_server;
@@ -29,6 +30,7 @@ async fn grpc_async_streams_large_reads_total_count() {
             data: format!("data-{i}").into_bytes(),
             tags: vec!["grpc-test".to_string()],
             uuid: None,
+            metadata: HashMap::new(),
         })
         .collect();
     let last_pos = client
@@ -84,6 +86,7 @@ async fn grpc_async_does_not_stream_past_starting_head() {
             data: format!("data-{i}").into_bytes(),
             tags: vec!["grpc-boundary".to_string()],
             uuid: None,
+            metadata: HashMap::new(),
         })
         .collect();
     let _ = client
@@ -104,6 +107,7 @@ async fn grpc_async_does_not_stream_past_starting_head() {
             data: format!("new-{i}").into_bytes(),
             tags: vec!["grpc-boundary".to_string()],
             uuid: None,
+            metadata: HashMap::new(),
         })
         .collect();
     let _ = client
@@ -154,6 +158,7 @@ async fn grpc_async_subscription_catch_up_and_continue() {
             data: format!("init-{i}").into_bytes(),
             tags: vec!["grpc-sub".to_string()],
             uuid: None,
+            metadata: HashMap::new(),
         })
         .collect();
     let _ = client
@@ -194,6 +199,7 @@ async fn grpc_async_subscription_catch_up_and_continue() {
             data: format!("new-{i}").into_bytes(),
             tags: vec!["grpc-sub".to_string()],
             uuid: None,
+            metadata: HashMap::new(),
         })
         .collect();
     let _ = client
@@ -250,6 +256,7 @@ async fn grpc_async_stream_catch_up_and_continue() {
             data: format!("init-{i}").into_bytes(),
             tags: vec!["grpc-async".to_string()],
             uuid: None,
+            metadata: HashMap::new(),
         })
         .collect();
     let _ = client
@@ -285,6 +292,7 @@ async fn grpc_async_stream_catch_up_and_continue() {
             data: format!("new-{i}").into_bytes(),
             tags: vec!["grpc-async".to_string()],
             uuid: None,
+            metadata: HashMap::new(),
         })
         .collect();
     let _ = client
