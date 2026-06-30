@@ -12,8 +12,8 @@ use tokio_stream::wrappers::ReceiverStream;
 use tonic::transport::{Identity, ServerTlsConfig};
 use tonic::{Request, Response, Status, transport::Server};
 use umadb_core::db::{
-    UmaDb, clone_dcb_error, is_integrity_error, is_request_idempotent, read_conditional,
-    shadow_for_batch_abort,
+    UmaDb, clone_dcb_error, is_integrity_error, is_invalid_argument_error, is_request_idempotent,
+    read_conditional, shadow_for_batch_abort,
 };
 pub use umadb_core::mvcc::{
     DEFAULT_DB_FILENAME, DEFAULT_PAGE_SIZE, Mvcc, ReadMethod, StorageOptions,
@@ -863,6 +863,9 @@ impl RequestHandler {
                                 Err(e) if is_integrity_error(e) => {
                                     results.push(Err(clone_dcb_error(e)))
                                 }
+                                Err(e) if is_invalid_argument_error(e) => {
+                                    results.push(Err(clone_dcb_error(e)))
+                                }
                                 Err(e) => {
                                     abort_idx = Some(0);
                                     abort_err = Some(clone_dcb_error(e));
@@ -903,6 +906,9 @@ impl RequestHandler {
                                         match &res_next {
                                             Ok(_) => results.push(res_next),
                                             Err(e) if is_integrity_error(e) => {
+                                                results.push(Err(clone_dcb_error(e)))
+                                            }
+                                            Err(e) if is_invalid_argument_error(e) => {
                                                 results.push(Err(clone_dcb_error(e)))
                                             }
                                             Err(e) => {

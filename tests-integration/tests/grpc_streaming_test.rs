@@ -1,27 +1,49 @@
 use std::collections::HashMap;
-use umadb_client::UmaDbClient;
-use umadb_dcb::{DcbEvent, DcbEventStoreAsync};
+use std::net::TcpListener;
+use umadb_client::{AsyncUmaDbClient, UmaDbClient};
+use umadb_core::mvcc::DEFAULT_PAGE_SIZE;
+use umadb_dcb::{DcbError, DcbEvent, DcbEventStoreAsync};
 use umadb_server::start_server;
+
+fn allocate_grpc_addr() -> (String, String) {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind ephemeral port");
+    let addr = listener.local_addr().expect("resolve local addr");
+    drop(listener);
+    (format!("{addr}"), format!("http://{addr}"))
+}
+
+async fn connect_async_with_retry(addr_http: String) -> AsyncUmaDbClient {
+    use tokio::time::{Duration as TokioDuration, sleep};
+
+    let mut attempts = 0usize;
+    loop {
+        match UmaDbClient::new(addr_http.clone()).connect_async().await {
+            Ok(client) => break client,
+            Err(_) => {
+                attempts += 1;
+                if attempts >= 50 {
+                    panic!("failed to connect to grpc server after retries");
+                }
+                sleep(TokioDuration::from_millis(50)).await;
+            }
+        }
+    }
+}
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn grpc_async_streams_large_reads_total_count() {
     // Arrange: start a gRPC server backed by a temporary directory
     let temp_dir = tempfile::tempdir().unwrap();
     let db_path = temp_dir.path().to_path_buf();
-    let addr = "127.0.0.1:50071";
-    let addr_http = format!("http://{}", addr);
+    let (addr, addr_http) = allocate_grpc_addr();
 
     let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
     let server_task = tokio::spawn(async move {
         let _ = start_server(db_path, &addr, shutdown_rx).await;
     });
-    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
 
     // Connect client
-    let client = UmaDbClient::new(addr_http.clone())
-        .connect_async()
-        .await
-        .expect("client connect");
+    let client = connect_async_with_retry(addr_http).await;
 
     // Append 1000 events
     let events: Vec<DcbEvent> = (0..1000)
@@ -65,19 +87,14 @@ async fn grpc_async_does_not_stream_past_starting_head() {
     // Arrange
     let temp_dir = tempfile::tempdir().unwrap();
     let db_path = temp_dir.path().to_path_buf();
-    let addr = "127.0.0.1:50072";
-    let addr_http = format!("http://{}", addr);
+    let (addr, addr_http) = allocate_grpc_addr();
 
     let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
     let server_task = tokio::spawn(async move {
         let _ = start_server(db_path, &addr, shutdown_rx).await;
     });
-    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
 
-    let client = UmaDbClient::new(addr_http.clone())
-        .connect_async()
-        .await
-        .expect("client connect");
+    let client = connect_async_with_retry(addr_http).await;
 
     // Append initial 300 events
     let initial_events: Vec<DcbEvent> = (0..300)
@@ -136,19 +153,14 @@ async fn grpc_async_subscription_catch_up_and_continue() {
     // Arrange
     let temp_dir = tempfile::tempdir().unwrap();
     let db_path = temp_dir.path().to_path_buf();
-    let addr = "127.0.0.1:50073";
-    let addr_http = format!("http://{}", addr);
+    let (addr, addr_http) = allocate_grpc_addr();
 
     let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
     let server_task = tokio::spawn(async move {
         let _ = start_server(db_path, &addr, shutdown_rx).await;
     });
-    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
 
-    let client = UmaDbClient::new(addr_http.clone())
-        .connect_async()
-        .await
-        .expect("client connect");
+    let client = connect_async_with_retry(addr_http).await;
 
     // Append initial events
     let initial_count = 40usize;
@@ -228,25 +240,16 @@ async fn grpc_async_subscription_catch_up_and_continue() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn grpc_async_stream_catch_up_and_continue() {
-    // This is the existing async test retained from the previous setup to validate catch-up streaming
-    use tokio::time::{Duration as TokioDuration, sleep};
-
     let temp_dir = tempfile::tempdir().unwrap();
     let db_path = temp_dir.path().to_path_buf();
-    let addr = "127.0.0.1:50075"; // async API test port
-    let addr_http = format!("http://{}", addr);
+    let (addr, addr_http) = allocate_grpc_addr();
 
     let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
     let server_task = tokio::spawn(async move {
         let _ = start_server(db_path, &addr, shutdown_rx).await;
     });
 
-    sleep(TokioDuration::from_millis(200)).await;
-
-    let client = UmaDbClient::new(addr_http.clone())
-        .connect_async()
-        .await
-        .expect("client connect");
+    let client = connect_async_with_retry(addr_http).await;
 
     // Append initial events via async API
     let initial_count = 15usize;
@@ -311,6 +314,49 @@ async fn grpc_async_stream_catch_up_and_continue() {
             }
         }
     }
+
+    let _ = shutdown_tx.send(());
+    let _ = server_task.await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn grpc_append_event_with_tag_larger_than_page_size_rejects_and_leaves_no_events() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let db_path = temp_dir.path().to_path_buf();
+    let (addr, addr_http) = allocate_grpc_addr();
+
+    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+    let server_task = tokio::spawn(async move {
+        let _ = start_server(db_path, &addr, shutdown_rx).await;
+    });
+
+    let client = connect_async_with_retry(addr_http).await;
+
+    let large_tag = "t".repeat(DEFAULT_PAGE_SIZE + 1);
+    assert!(large_tag.len() > DEFAULT_PAGE_SIZE);
+
+    let event = DcbEvent {
+        event_type: "Type".to_string(),
+        data: vec![1, 2, 3],
+        tags: vec![large_tag],
+        uuid: None,
+        metadata: HashMap::new(),
+    };
+
+    match client.append(vec![event], None, None).await {
+        Err(DcbError::InvalidArgument(_)) => {}
+        other => panic!("Expected InvalidArgument, got {other:?}"),
+    }
+
+    let (events, head) = client
+        .read_with_head(None, None, false, None)
+        .await
+        .expect("read all events after rejected append");
+    assert!(
+        events.is_empty(),
+        "rejected oversized-tag append should not leave any events"
+    );
+    assert_eq!(None, head);
 
     let _ = shutdown_tx.send(());
     let _ = server_task.await;

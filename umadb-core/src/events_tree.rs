@@ -289,14 +289,17 @@ pub fn event_tree_append(
                 values: vec![last_value.clone()],
             };
             new_leaf_page = Page::new(new_leaf_page_id, Node::EventLeaf(new_leaf_node.clone()));
-            // serialized_size = new_leaf_page.calc_serialized_size();
+
+            // Final check that the serialized size is okay.
+            // TODO: Maybe instead check all pages before writing to the buffer?
+            let serialized_size = new_leaf_page.calc_serialized_size();
+            if serialized_size > mvcc.page_size {
+                return Err(DcbError::DatabaseCorrupted(format!(
+                    "Event too large even after overflow conversion (size: {serialized_size}, max: {})",
+                    mvcc.page_size
+                )));
+            }
         }
-        // if serialized_size > mvcc.page_size {
-        //     return Err(DCBError::DatabaseCorrupted(format!(
-        //         "Event too large even after overflow conversion (size: {serialized_size}, max: {})",
-        //         mvcc.page_size
-        //     )));
-        // }
         if verbose {
             println!(
                 "Created new leaf {:?}: {:?}",
@@ -1981,6 +1984,46 @@ mod tests {
         assert_eq!(scanned.len(), expected.len());
         for i in 0..expected.len() {
             assert_eq!(scanned[i].0, expected[i].0);
+        }
+    }
+
+    #[test]
+    #[serial]
+    fn test_append_event_with_tag_larger_than_page_size() {
+        // This test was created when I realized that even though
+        // page data and metadata overflows, it may be that the
+        // tags or the type is so large that it can't possibly
+        // fit in one page... the tree should detect this.
+        use crate::events_tree_nodes::MAX_TAG_LEN;
+
+        // Small page size to make it easy to exceed
+        let page_size = 512;
+        let (_tmp, db) = construct_db(page_size);
+        let mut writer = db.writer().unwrap();
+        let pos = writer.issue_position();
+
+        // Tag larger than page size but less than MAX_TAG_LEN
+        // Let's make it 600 bytes.
+        let large_tag = "t".repeat(600);
+        assert!(large_tag.len() > page_size);
+        assert!(large_tag.len() < MAX_TAG_LEN);
+
+        let event = EventRecord {
+            event_type: "Type".into(),
+            data: vec![1, 2, 3],
+            tags: vec![large_tag],
+            uuid: None,
+            metadata: HashMap::new(),
+        };
+
+        match event_tree_append(&db, &mut writer, event, pos) {
+            Err(DcbError::DatabaseCorrupted(message)) => {
+                assert!(
+                    message.contains("Event too large even after overflow conversion"),
+                    "unexpected DatabaseCorrupted message: {message}"
+                );
+            }
+            other => panic!("Expected DatabaseCorrupted, got {other:?}"),
         }
     }
 }

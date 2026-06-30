@@ -19,7 +19,7 @@ pub struct EventRecord {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum EventValue {
     Inline(EventRecord),
-    // For large data stored across overflow pages
+    // For large record (data + metadata) stored across overflow pages
     Overflow {
         event_type: String,
         data_len: u64,

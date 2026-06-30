@@ -4695,3 +4695,109 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+mod high_level_mvcc_tests {
+    use super::*;
+    use crate::db::UmaDb;
+    use serial_test::serial;
+    use std::sync::Arc;
+    use tempfile::tempdir;
+    use umadb_dcb::{DcbError, DcbEvent, DcbEventStoreSync};
+
+    #[test]
+    #[serial]
+    fn test_append_event_with_tag_larger_than_page_size_via_mvcc() {
+        // This test was created when I realized that even though
+        // page data and metadata overflows, it may be that the
+        // tags or the type is so large that it can't possibly
+        // fit in one page... the append operation should detect
+        // this before making any changes.
+        let temp_dir = tempdir().unwrap();
+        let db_path = temp_dir.path().join("mvcc-high-level-tag.db");
+        let page_size = 512;
+
+        let options = StorageOptions::default()
+            .db_path(&db_path)
+            .page_size(page_size);
+
+        let mvcc = Mvcc::new(true, options).expect("mvcc new");
+        let uma = UmaDb::from_arc(Arc::new(mvcc));
+
+        let header_before = uma.mvcc.get_latest_header_page().expect("header before");
+        let header_before = header_before.as_header_node().expect("header before node");
+        let free_root_before = uma
+            .mvcc
+            .read_page(header_before.free_lists_tree_root_id)
+            .expect("free root before");
+        let events_root_before = uma
+            .mvcc
+            .read_page(header_before.events_tree_root_id)
+            .expect("events root before");
+        let tags_root_before = uma
+            .mvcc
+            .read_page(header_before.tags_tree_root_id)
+            .expect("tags root before");
+
+        let tsn_before = header_before.tsn;
+        let next_page_id_before = header_before.next_page_id;
+        let next_position_before = header_before.next_position;
+        let free_lists_tree_root_id_before = header_before.free_lists_tree_root_id;
+        let events_tree_root_id_before = header_before.events_tree_root_id;
+        let tags_tree_root_id_before = header_before.tags_tree_root_id;
+        let tracking_root_page_id_before = header_before.tracking_root_page_id;
+
+        let free_root_node_before = free_root_before.node.clone();
+        let events_root_node_before = events_root_before.node.clone();
+        let tags_root_node_before = tags_root_before.node.clone();
+
+        let large_tag = "t".repeat(600);
+        let event = DcbEvent::new()
+            .event_type("Type")
+            .data(vec![1, 2, 3])
+            .tags(vec![large_tag]);
+
+        println!(
+            "Attempting to append event with tag of size 600 using UmaDb/Mvcc (page size 512)"
+        );
+        let result = uma.append(vec![event], None, None);
+        match result {
+            Err(DcbError::InvalidArgument(_)) => {}
+            other => panic!("Expected InvalidArgument, got {other:?}"),
+        }
+
+        let header_after = uma.mvcc.get_latest_header_page().expect("header after");
+        let header_after = header_after.as_header_node().expect("header after node");
+
+        assert_eq!(tsn_before, header_after.tsn);
+        assert_eq!(next_page_id_before, header_after.next_page_id);
+        assert_eq!(next_position_before, header_after.next_position);
+        assert_eq!(
+            free_lists_tree_root_id_before,
+            header_after.free_lists_tree_root_id
+        );
+        assert_eq!(events_tree_root_id_before, header_after.events_tree_root_id);
+        assert_eq!(tags_tree_root_id_before, header_after.tags_tree_root_id);
+        assert_eq!(
+            tracking_root_page_id_before,
+            header_after.tracking_root_page_id
+        );
+
+        let free_root_after = uma
+            .mvcc
+            .read_page(header_after.free_lists_tree_root_id)
+            .expect("free root after");
+        let events_root_after = uma
+            .mvcc
+            .read_page(header_after.events_tree_root_id)
+            .expect("events root after");
+        let tags_root_after = uma
+            .mvcc
+            .read_page(header_after.tags_tree_root_id)
+            .expect("tags root after");
+
+        assert_eq!(free_root_node_before, free_root_after.node);
+        assert_eq!(events_root_node_before, events_root_after.node);
+        assert_eq!(tags_root_node_before, tags_root_after.node);
+    }
+}
