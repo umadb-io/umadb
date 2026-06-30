@@ -828,19 +828,23 @@ impl EventInternalNode {
     }
 
     pub fn serialize_into(&self, buf: &mut [u8]) -> DcbResult<usize> {
-        let mut i = 0usize;
+        let mut cursor = Cursor::new(buf);
+
+        // Keys length
         let klen = self.keys.len() as u16;
-        buf[i..i + 2].copy_from_slice(&klen.to_le_bytes());
-        i += 2;
+        cursor.write_all(&klen.to_le_bytes())?;
+
+        // Keys
         for key in &self.keys {
-            buf[i..i + 8].copy_from_slice(&key.0.to_le_bytes());
-            i += 8;
+            cursor.write_all(&key.0.to_le_bytes())?;
         }
+
+        // Child IDs (Length is intentionally not written)
         for child_id in &self.child_ids {
-            buf[i..i + 8].copy_from_slice(&child_id.0.to_le_bytes());
-            i += 8;
+            cursor.write_all(&child_id.0.to_le_bytes())?;
         }
-        Ok(i)
+
+        Ok(cursor.position() as usize)
     }
 
     pub fn from_slice(slice: &[u8]) -> DcbResult<Self> {
