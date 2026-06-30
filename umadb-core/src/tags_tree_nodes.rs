@@ -316,17 +316,19 @@ impl TagLeafNode {
         2 + (self.positions.len() * 8)
     }
 
-    /// No-allocation serialization into the provided buffer. Returns bytes written.
     pub fn serialize_into(&self, buf: &mut [u8]) -> DcbResult<usize> {
-        let mut i = 0usize;
+        let mut cursor = Cursor::new(buf);
+
+        // Positions length
         let plen = self.positions.len() as u16;
-        buf[i..i + 2].copy_from_slice(&plen.to_le_bytes());
-        i += 2;
+        cursor.write_all(&plen.to_le_bytes())?;
+
+        // Positions
         for pos in &self.positions {
-            buf[i..i + 8].copy_from_slice(&pos.0.to_le_bytes());
-            i += 8;
+            cursor.write_all(&pos.0.to_le_bytes())?;
         }
-        Ok(i)
+
+        Ok(cursor.position() as usize)
     }
 
     pub fn from_slice(slice: &[u8]) -> DcbResult<Self> {
