@@ -113,7 +113,7 @@ fn data_and_metadata_to_overflow_chain(
 
     if metadata_len > 0 {
         // 2. Overwrite the first part with metadata
-        serialize_metadata_into(metadata, &mut combined[..metadata_len]);
+        serialize_metadata_into(metadata, &mut combined[..metadata_len])?;
     }
 
     // 3. Overwrite the second part with record data (Fast memcpy)

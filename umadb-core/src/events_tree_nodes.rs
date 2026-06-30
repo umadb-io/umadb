@@ -188,36 +188,36 @@ pub fn metadata_serialized_size(metadata: &[(String, String)]) -> usize {
 }
 
 /// Serialize metadata pairs into the start of `buf`, returning the number of bytes written.
-pub fn serialize_metadata_into(metadata: &[(String, String)], buf: &mut [u8]) -> usize {
+pub fn serialize_metadata_into(metadata: &[(String, String)], buf: &mut [u8]) -> DcbResult<usize> {
     // 1. Wrap the pre-allocated slice in a Cursor.
     // This tracks the index automatically without allocating heap memory.
     let mut cursor = Cursor::new(buf);
 
     // 2. Write the total count of elements (2 bytes)
     let n = metadata.len() as u16;
-    let _ = cursor.write_all(&n.to_le_bytes());
+    cursor.write_all(&n.to_le_bytes())?;
 
     // 3. Loop directly through the slice references.
     // Zero heap allocations happen here.
     for (k, v) in metadata {
         let kl = k.len() as u16;
-        let _ = cursor.write_all(&kl.to_le_bytes());
-        let _ = cursor.write_all(k.as_bytes());
+        cursor.write_all(&kl.to_le_bytes())?;
+        cursor.write_all(k.as_bytes())?;
 
         let vl = v.len() as u16;
-        let _ = cursor.write_all(&vl.to_le_bytes());
-        let _ = cursor.write_all(v.as_bytes());
+        cursor.write_all(&vl.to_le_bytes())?;
+        cursor.write_all(v.as_bytes())?;
     }
 
     // 4. Get the exact final index position from the cursor
-    cursor.position() as usize
+    Ok(cursor.position() as usize)
 }
 
 // TODO: Move this because it's only used in tests.
 /// Serialize metadata into a freshly allocated buffer.
 pub fn serialize_metadata(metadata: &[(String, String)]) -> Vec<u8> {
     let mut buf = vec![0u8; metadata_serialized_size(metadata)];
-    serialize_metadata_into(metadata, &mut buf);
+    serialize_metadata_into(metadata, &mut buf).unwrap();
     buf
 }
 
@@ -393,17 +393,17 @@ impl EventLeafNode {
 
     /// No-allocation serialization into the provided buffer. Returns number of bytes written.
     pub fn serialize_into(&self, buf: &mut [u8]) -> DcbResult<usize> {
-        let mut i = 0usize;
+        let mut cursor = Cursor::new(buf);
+
         // keys_len
         let klen = self.keys.len() as u16;
-        buf[i..i + 2].copy_from_slice(&klen.to_le_bytes());
-        i += 2;
+        cursor.write_all(&klen.to_le_bytes())?;
+
         // keys
         for key in &self.keys {
-            let b = key.0.to_le_bytes();
-            buf[i..i + 8].copy_from_slice(&b);
-            i += 8;
+            cursor.write_all(&key.0.to_le_bytes())?;
         }
+
         // values
         for value in &self.values {
             let mut flags = EventValueFlags::empty();
@@ -415,36 +415,38 @@ impl EventLeafNode {
                     if !rec.metadata.is_empty() {
                         flags |= EventValueFlags::HAS_METADATA;
                     }
-                    buf[i] = flags.bits();
-                    i += 1;
+                    cursor.write_all(&[flags.bits()])?;
+
                     let et_len = rec.event_type.len() as u16;
-                    buf[i..i + 2].copy_from_slice(&et_len.to_le_bytes());
-                    i += 2;
-                    let s = rec.event_type.as_bytes();
-                    buf[i..i + s.len()].copy_from_slice(s);
-                    i += s.len();
+                    cursor.write_all(&et_len.to_le_bytes())?;
+                    cursor.write_all(rec.event_type.as_bytes())?;
+
                     let dlen = rec.data.len() as u16;
-                    buf[i..i + 2].copy_from_slice(&dlen.to_le_bytes());
-                    i += 2;
-                    buf[i..i + rec.data.len()].copy_from_slice(&rec.data);
-                    i += rec.data.len();
+                    cursor.write_all(&dlen.to_le_bytes())?;
+                    cursor.write_all(&rec.data)?;
+
                     let tlen = rec.tags.len() as u16;
-                    buf[i..i + 2].copy_from_slice(&tlen.to_le_bytes());
-                    i += 2;
+                    cursor.write_all(&tlen.to_le_bytes())?;
+
                     for tag in &rec.tags {
                         let tl = tag.len() as u16;
-                        buf[i..i + 2].copy_from_slice(&tl.to_le_bytes());
-                        i += 2;
-                        let tb = tag.as_bytes();
-                        buf[i..i + tb.len()].copy_from_slice(tb);
-                        i += tb.len();
+                        cursor.write_all(&tl.to_le_bytes())?;
+                        cursor.write_all(tag.as_bytes())?;
                     }
+
                     if let Some(uuid) = rec.uuid {
-                        buf[i..i + 16].copy_from_slice(uuid.as_bytes());
-                        i += 16;
+                        cursor.write_all(uuid.as_bytes())?;
                     }
+
                     if !rec.metadata.is_empty() {
-                        i += serialize_metadata_into(&rec.metadata, &mut buf[i..]);
+                        let pos = cursor.position() as usize;
+                        let remaining_buf = &mut cursor.get_mut()[pos..];
+
+                        // Propagate any error from the nested serialization
+                        let written = serialize_metadata_into(&rec.metadata, remaining_buf)?;
+
+                        // Advance the parent cursor past the written metadata
+                        cursor.set_position((pos + written) as u64);
                     }
                 }
                 EventValue::Overflow {
@@ -462,41 +464,37 @@ impl EventLeafNode {
                     if *metadata_len > 0 {
                         flags |= EventValueFlags::HAS_METADATA;
                     }
-                    buf[i] = flags.bits();
-                    i += 1;
+                    cursor.write_all(&[flags.bits()])?;
+
                     let et_len = event_type.len() as u16;
-                    buf[i..i + 2].copy_from_slice(&et_len.to_le_bytes());
-                    i += 2;
-                    let s = event_type.as_bytes();
-                    buf[i..i + s.len()].copy_from_slice(s);
-                    i += s.len();
-                    buf[i..i + 8].copy_from_slice(&data_len.to_le_bytes());
-                    i += 8;
+                    cursor.write_all(&et_len.to_le_bytes())?;
+                    cursor.write_all(event_type.as_bytes())?;
+
+                    cursor.write_all(&data_len.to_le_bytes())?;
+
                     let tlen = tags.len() as u16;
-                    buf[i..i + 2].copy_from_slice(&tlen.to_le_bytes());
-                    i += 2;
+                    cursor.write_all(&tlen.to_le_bytes())?;
+
                     for tag in tags {
                         let tl = tag.len() as u16;
-                        buf[i..i + 2].copy_from_slice(&tl.to_le_bytes());
-                        i += 2;
-                        let tb = tag.as_bytes();
-                        buf[i..i + tb.len()].copy_from_slice(tb);
-                        i += tb.len();
+                        cursor.write_all(&tl.to_le_bytes())?;
+                        cursor.write_all(tag.as_bytes())?;
                     }
-                    buf[i..i + 8].copy_from_slice(&root_id.0.to_le_bytes());
-                    i += 8;
-                    if uuid.is_some() {
-                        buf[i..i + 16].copy_from_slice(uuid.unwrap().as_bytes());
-                        i += 16;
+
+                    cursor.write_all(&root_id.0.to_le_bytes())?;
+
+                    if let Some(uuid_val) = uuid {
+                        cursor.write_all(uuid_val.as_bytes())?;
                     }
+
                     if *metadata_len > 0 {
-                        buf[i..i + 8].copy_from_slice(&metadata_len.to_le_bytes());
-                        i += 8;
+                        cursor.write_all(&metadata_len.to_le_bytes())?;
                     }
                 }
             }
         }
-        Ok(i)
+
+        Ok(cursor.position() as usize)
     }
 
     pub fn from_slice(slice: &[u8]) -> DcbResult<Self> {
