@@ -355,15 +355,18 @@ impl FreeListTsnLeafNode {
     }
 
     pub fn serialize_into(&self, buf: &mut [u8]) -> DcbResult<usize> {
-        let mut i = 0usize;
+        let mut cursor = Cursor::new(buf);
+
+        // Page IDs length
         let plen = self.page_ids.len() as u16;
-        buf[i..i + 2].copy_from_slice(&plen.to_le_bytes());
-        i += 2;
+        cursor.write_all(&plen.to_le_bytes())?;
+
+        // Page IDs
         for page_id in &self.page_ids {
-            buf[i..i + 8].copy_from_slice(&page_id.0.to_le_bytes());
-            i += 8;
+            cursor.write_all(&page_id.0.to_le_bytes())?;
         }
-        Ok(i)
+
+        Ok(cursor.position() as usize)
     }
 
     pub fn from_slice(slice: &[u8]) -> DcbResult<Self> {
