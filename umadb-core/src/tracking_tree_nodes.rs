@@ -1,3 +1,4 @@
+use std::io::{Cursor, Write};
 use crate::common::{PageID, Position};
 use byteorder::{ByteOrder, LittleEndian};
 use umadb_dcb::{DcbError, DcbResult};
@@ -32,30 +33,39 @@ impl TrackingLeafNode {
         size
     }
 
+
     pub fn serialize_into(&self, buf: &mut [u8]) -> DcbResult<usize> {
-        let needed = self.calc_serialized_size();
-        assert!(buf.len() >= needed, "buffer too small for TrackingLeafNode");
-        buf[0] = 1; // version >=1 means keys are sorted
-        LittleEndian::write_u16(&mut buf[1..3], self.keys.len() as u16);
-        let mut off = 3;
-        // Keys are expected to be maintained in sorted order by the node
+        let mut cursor = Cursor::new(buf);
+
+        // Version (1 = keys are sorted)
+        cursor.write_all(&[1])?;
+
+        // Keys length
+        let klen = self.keys.len() as u16;
+        cursor.write_all(&klen.to_le_bytes())?;
+
+        // Keys (expected to be maintained in sorted order by the node)
         for k in &self.keys {
             let kb = k.as_bytes();
-            assert!(
-                kb.len() <= u8::MAX as usize,
-                "tracking key too long to serialize (len>{})",
-                u8::MAX
-            );
-            buf[off] = kb.len() as u8;
-            off += 1;
-            buf[off..off + kb.len()].copy_from_slice(kb);
-            off += kb.len();
+
+            // Safely check length without panicking, converting to io::Error if it fails
+            let kb_len = u8::try_from(kb.len()).map_err(|_| {
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "tracking key too long to serialize (len > 255)"
+                )
+            })?;
+
+            cursor.write_all(&[kb_len])?;
+            cursor.write_all(kb)?;
         }
+
+        // Values
         for v in &self.values {
-            LittleEndian::write_u64(&mut buf[off..off + 8], v.0);
-            off += 8;
+            cursor.write_all(&v.0.to_le_bytes())?;
         }
-        Ok(needed)
+
+        Ok(cursor.position() as usize)
     }
 
     pub fn from_slice(slice: &[u8]) -> DcbResult<Self> {
