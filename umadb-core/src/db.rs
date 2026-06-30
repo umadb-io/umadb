@@ -220,15 +220,13 @@ impl UmaDb {
         }
 
         // If tracking is provided for this item, enforce monotonicity and update tracking leaf under same writer
-        if let Some(tracking_info) = tracking_info
-            && let Err(e) = tracking_upsert(
+        if let Some(tracking_info) = tracking_info {
+            tracking_upsert(
                 mvcc,
                 writer,
                 &tracking_info.source,
                 Position(tracking_info.position),
-            )
-        {
-            return Err(e);
+            )?;
         }
 
         // Append unconditionally
