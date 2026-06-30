@@ -789,10 +789,15 @@ impl EventOverflowNode {
     }
 
     pub fn serialize_into(&self, buf: &mut [u8]) -> DcbResult<usize> {
-        let size = self.calc_serialized_size();
-        buf[0..8].copy_from_slice(&self.next.0.to_le_bytes());
-        buf[8..size].copy_from_slice(&self.data);
-        Ok(size)
+        let mut cursor = Cursor::new(buf);
+
+        // Write the next pointer (8 bytes)
+        cursor.write_all(&self.next.0.to_le_bytes())?;
+
+        // Write the data blob
+        cursor.write_all(&self.data)?;
+
+        Ok(cursor.position() as usize)
     }
 
     pub fn from_slice(slice: &[u8]) -> DcbResult<Self> {
