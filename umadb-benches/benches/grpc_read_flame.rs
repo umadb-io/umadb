@@ -1,6 +1,5 @@
 // cargo bench --bench grpc_read_flame --features flamegraphs
 
-use std::collections::HashMap;
 use umadb_client::UmaDbClient;
 
 fn main() -> std::io::Result<()> {

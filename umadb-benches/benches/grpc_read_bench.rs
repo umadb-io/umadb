@@ -1,7 +1,6 @@
 use criterion::Criterion;
 use criterion::criterion_group;
 use criterion::criterion_main;
-use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tempfile::tempdir;
