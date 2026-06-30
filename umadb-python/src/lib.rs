@@ -65,7 +65,7 @@ impl Event {
                 data,
                 tags: tags.unwrap_or_default(),
                 uuid: uuid_parsed,
-                metadata: metadata.unwrap_or_default(),
+                metadata: metadata.unwrap_or_default().into_iter().collect(),
             },
         })
     }
@@ -92,7 +92,7 @@ impl Event {
 
     #[getter]
     fn metadata(&self) -> HashMap<String, String> {
-        self.inner.metadata.clone()
+        self.inner.metadata.iter().cloned().collect()
     }
 
     fn __repr__(&self) -> String {

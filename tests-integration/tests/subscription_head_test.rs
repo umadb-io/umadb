@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use tempfile::tempdir;
@@ -31,7 +30,7 @@ fn test_subscribe_at_head() {
         data: b"hello".to_vec(),
         tags: vec!["tag1".to_string()],
         uuid: None,
-        metadata: HashMap::new(),
+        metadata: Vec::new(),
     };
     client
         .append(vec![event.clone()], None, None)
@@ -110,7 +109,7 @@ fn test_read_subscribe_after_head() {
         data: b"hello".to_vec(),
         tags: vec!["tag1".to_string()],
         uuid: None,
-        metadata: HashMap::new(),
+        metadata: Vec::new(),
     };
     client
         .append(vec![event.clone()], None, None)
@@ -187,7 +186,7 @@ fn test_read_limit_head_consistency() {
         data: b"hello".to_vec(),
         tags: vec![],
         uuid: None,
-        metadata: HashMap::new(),
+        metadata: Vec::new(),
     };
     client
         .append(

@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::env;
 use std::hint::black_box;
 use std::time::Instant;
@@ -78,7 +77,7 @@ fn profile_event_store_append() {
                 data: payload.clone(),
                 tags,
                 uuid: None,
-                metadata: HashMap::new(),
+                metadata: Vec::new(),
             };
             events.push(event);
         }

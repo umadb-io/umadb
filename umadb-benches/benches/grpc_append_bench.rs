@@ -43,7 +43,7 @@ fn init_db_with_events(num_events: usize) -> tempfile::TempDir {
                 data: format!("init-{}", i).into_bytes(),
                 tags: vec!["init".to_string()],
                 uuid: None,
-                metadata: HashMap::new(),
+                metadata: Vec::new(),
             };
             events.push(ev);
         }
@@ -130,7 +130,7 @@ pub fn grpc_append_benchmark(c: &mut Criterion) {
                         tags: vec!["append".to_string()],
                         // tags: vec![format!("append-{i}").to_string()],
                         uuid: None,
-                        metadata: HashMap::new(),
+                        metadata: Vec::new(),
                     })
                     .collect();
 

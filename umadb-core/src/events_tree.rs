@@ -100,7 +100,7 @@ fn data_and_metadata_to_overflow_chain(
     mvcc: &Mvcc,
     writer: &mut Writer,
     record_data: &Vec<u8>,
-    metadata: &HashMap<String, String>,
+    metadata: &Vec<(String, String)>,
 ) -> DcbResult<(PageID, usize)> {
     let metadata_len = if metadata.is_empty() {
         0
@@ -150,7 +150,7 @@ fn materialize_event_value(
             let metadata = if *metadata_len > 0 {
                 deserialize_metadata(&all_data[..split])?
             } else {
-                HashMap::new()
+                Vec::new()
             };
             let data = all_data[split..].to_vec();
             Ok(EventRecord {
@@ -207,12 +207,9 @@ pub fn event_tree_append_event_value(
                 println!("{:?} is internal node", current_page_ref.page_id);
             }
             stack.push(current_page_id);
-            current_page_id = *internal_node
-                .child_ids
-                .last()
-                .ok_or_else(|| DcbError::DatabaseCorrupted(
-                    "Internal node has no children".to_string()
-                ))?;
+            current_page_id = *internal_node.child_ids.last().ok_or_else(|| {
+                DcbError::DatabaseCorrupted("Internal node has no children".to_string())
+            })?;
         } else {
             return Err(DcbError::DatabaseCorrupted(
                 "Expected EventInternal node".to_string(),
@@ -813,7 +810,7 @@ mod tests {
             data: vec![1, 2, 3, 4],
             tags: vec!["users".to_string(), "creation".to_string()],
             uuid: None,
-            metadata: HashMap::new(),
+            metadata: Vec::new(),
         };
 
         // Call append_event
@@ -874,7 +871,7 @@ mod tests {
                 data: (0..8).map(|_| random::<u8>()).collect(),
                 tags: vec!["users".to_string(), "creation".to_string()],
                 uuid: None,
-                metadata: HashMap::new(),
+                metadata: Vec::new(),
             };
             appended.push((position, record.clone()));
 
@@ -947,7 +944,7 @@ mod tests {
                 data: (0..8).map(|_| random::<u8>()).collect(),
                 tags: vec!["users".to_string(), "creation".to_string()],
                 uuid: None,
-                metadata: HashMap::new(),
+                metadata: Vec::new(),
             };
             appended.push((position, record.clone()));
 
@@ -1025,7 +1022,7 @@ mod tests {
                 data: (0..8).map(|_| random::<u8>()).collect(),
                 tags: vec!["users".to_string(), "creation".to_string()],
                 uuid: None,
-                metadata: HashMap::new(),
+                metadata: Vec::new(),
             };
             appended.push((position, record.clone()));
 
@@ -1114,7 +1111,7 @@ mod tests {
                 data: (0..8).map(|_| random::<u8>()).collect(),
                 tags: vec!["users".to_string(), "creation".to_string()],
                 uuid: None,
-                metadata: HashMap::new(),
+                metadata: Vec::new(),
             };
             appended.push((position, record.clone()));
 
@@ -1209,7 +1206,7 @@ mod tests {
                 data: (0..8).map(|_| random::<u8>()).collect(),
                 tags: vec!["users".to_string(), "creation".to_string()],
                 uuid: None,
-                metadata: HashMap::new(),
+                metadata: Vec::new(),
             };
             appended.push((position, record.clone()));
 
@@ -1336,7 +1333,7 @@ mod tests {
                 data: (0..8).map(|_| random::<u8>()).collect(),
                 tags: vec!["users".to_string(), "creation".to_string()],
                 uuid: None,
-                metadata: HashMap::new(),
+                metadata: Vec::new(),
             };
             appended.push((position, record.clone()));
 
@@ -1456,7 +1453,7 @@ mod tests {
                 data: (0..8).map(|_| random::<u8>()).collect(),
                 tags: vec!["users".to_string(), "creation".to_string()],
                 uuid: None,
-                metadata: HashMap::new(),
+                metadata: Vec::new(),
             };
             appended.push((position, record.clone()));
 
@@ -1568,7 +1565,7 @@ mod tests {
             data: data.clone(),
             tags: vec![],
             uuid: None,
-            metadata: HashMap::new(),
+            metadata: Vec::new(),
         };
         event_tree_append(&db, &mut writer, event.clone(), pos).unwrap();
         db.commit(&mut writer).unwrap();
@@ -1620,7 +1617,7 @@ mod tests {
             data: data.clone(),
             tags: vec![],
             uuid: None,
-            metadata: HashMap::new(),
+            metadata: Vec::new(),
         };
         event_tree_append(&db, &mut writer, event.clone(), pos).unwrap();
         db.commit(&mut writer).unwrap();
@@ -1662,9 +1659,9 @@ mod tests {
         let mut writer = db.writer().unwrap();
         let pos = writer.issue_position();
 
-        let mut metadata = HashMap::new();
-        metadata.insert("source".to_string(), "web".to_string());
-        metadata.insert("correlation_id".to_string(), "abc-123".to_string());
+        let mut metadata = Vec::new();
+        metadata.push(("source".to_string(), "web".to_string()));
+        metadata.push(("correlation_id".to_string(), "abc-123".to_string()));
 
         let event = EventRecord {
             event_type: "SmallWithMetadata".into(),
@@ -1703,9 +1700,9 @@ mod tests {
         let mut writer = db.writer().unwrap();
         let pos = writer.issue_position();
 
-        let mut metadata = HashMap::new();
-        metadata.insert("source".to_string(), "bulk-import".to_string());
-        metadata.insert("schema".to_string(), "v3".to_string());
+        let mut metadata = Vec::new();
+        metadata.push(("source".to_string(), "bulk-import".to_string()));
+        metadata.push(("schema".to_string(), "v3".to_string()));
 
         // Data large enough to spill into overflow pages.
         let data = vec![0xAB; 512 * 4];
@@ -1767,8 +1764,8 @@ mod tests {
         let mut writer = db.writer().unwrap();
         let pos = writer.issue_position();
 
-        let mut metadata = HashMap::new();
-        metadata.insert("origin".to_string(), "direct-overflow".to_string());
+        let mut metadata = Vec::new();
+        metadata.push(("origin".to_string(), "direct-overflow".to_string()));
 
         let data = vec![0xCD; (u16::MAX as usize) + 1024];
         let event = EventRecord {
@@ -1798,8 +1795,8 @@ mod tests {
         let mut writer = db.writer().unwrap();
         let pos = writer.issue_position();
 
-        let mut metadata = HashMap::new();
-        metadata.insert("x".repeat(MAX_METADATA_ENTRY_LEN + 1), "source".to_string());
+        let mut metadata = Vec::new();
+        metadata.push(("x".repeat(MAX_METADATA_ENTRY_LEN + 1), "source".to_string()));
         let event = EventRecord {
             event_type: "TooBigMetadata".into(),
             data: vec![1, 2, 3],
@@ -1835,8 +1832,8 @@ mod tests {
         let mut writer = db.writer().unwrap();
         let pos = writer.issue_position();
 
-        let mut metadata = HashMap::new();
-        metadata.insert("source".to_string(), "x".repeat(MAX_METADATA_ENTRY_LEN + 1));
+        let mut metadata = Vec::new();
+        metadata.push(("source".to_string(), "x".repeat(MAX_METADATA_ENTRY_LEN + 1)));
         let event = EventRecord {
             event_type: "TooBigMetadata".into(),
             data: vec![1, 2, 3],
@@ -1877,7 +1874,7 @@ mod tests {
             data: vec![1, 2, 3],
             tags: vec!["t".into()],
             uuid: None,
-            metadata: HashMap::new(),
+            metadata: Vec::new(),
         };
 
         match event_tree_append(&db, &mut writer, event, pos) {
@@ -1900,7 +1897,7 @@ mod tests {
             data: vec![1, 2, 3],
             tags: vec!["x".repeat(MAX_TAG_LEN + 1)],
             uuid: None,
-            metadata: HashMap::new(),
+            metadata: Vec::new(),
         };
 
         match event_tree_append(&db, &mut writer, event, pos) {
@@ -1976,7 +1973,7 @@ mod tests {
                 data: vec![1, 2, 3, 4],
                 tags: vec!["test".to_string()],
                 uuid: None,
-                metadata: HashMap::new(),
+                metadata: Vec::new(),
             };
             appended.push((position, record.clone()));
             event_tree_append(&db, &mut writer, record, position).unwrap();
@@ -2051,7 +2048,7 @@ mod tests {
             data: vec![1, 2, 3],
             tags: vec![large_tag],
             uuid: None,
-            metadata: HashMap::new(),
+            metadata: Vec::new(),
         };
 
         match event_tree_append(&db, &mut writer, event, pos) {

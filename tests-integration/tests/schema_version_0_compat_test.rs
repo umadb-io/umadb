@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::fs::File;
 use std::io::{BufReader, BufWriter, Write};
 use std::path::PathBuf;
@@ -99,7 +98,7 @@ fn schema_version_0_roundtrip_read_write_and_tags() -> Result<(), Box<dyn std::e
                 data: format!("payload-{}", i + 1).into_bytes(),
                 tags: vec![nt.to_string()],
                 uuid: None,
-                metadata: HashMap::new(),
+                metadata: Vec::new(),
             };
             let _pos = db.append(vec![ev], None, None)?;
         }

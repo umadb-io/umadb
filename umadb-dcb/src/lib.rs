@@ -6,7 +6,6 @@
 use async_trait::async_trait;
 use futures_core::Stream;
 use futures_util::StreamExt;
-use std::collections::HashMap;
 use std::iter::Iterator;
 use thiserror::Error;
 use uuid::Uuid;
@@ -271,7 +270,7 @@ pub struct DcbEvent {
     /// Unique event ID
     pub uuid: Option<Uuid>,
     /// Metadata for the event
-    pub metadata: HashMap<String, String>,
+    pub metadata: Vec<(String, String)>,
 }
 
 impl Default for DcbEvent {
@@ -288,7 +287,7 @@ impl DcbEvent {
             data: Vec::new(),
             tags: Vec::new(),
             uuid: None,
-            metadata: HashMap::new(),
+            metadata: Vec::new(),
         }
     }
 
@@ -336,7 +335,19 @@ impl DcbEvent {
 
     /// Inserts a single metadata entry, keeping any existing entries
     pub fn metadata_entry<K: Into<String>, V: Into<String>>(mut self, key: K, value: V) -> Self {
-        self.metadata.insert(key.into(), value.into());
+        let key = key.into();
+        let value = value.into();
+
+        if let Some((_, existing_value)) = self
+            .metadata
+            .iter_mut()
+            .find(|(existing_key, _)| *existing_key == key)
+        {
+            *existing_value = value;
+        } else {
+            self.metadata.push((key, value));
+        }
+
         self
     }
 }
@@ -598,7 +609,7 @@ mod tests {
             data: vec![1, 2, 3],
             tags: vec!["tag1".to_string(), "tag2".to_string()],
             uuid: None,
-            metadata: HashMap::new(),
+            metadata: Vec::new(),
         };
 
         let event2 = DcbEvent {
@@ -606,7 +617,7 @@ mod tests {
             data: vec![4, 5, 6],
             tags: vec!["tag2".to_string(), "tag3".to_string()],
             uuid: None,
-            metadata: HashMap::new(),
+            metadata: Vec::new(),
         };
 
         let seq_event1 = DcbSequencedEvent {

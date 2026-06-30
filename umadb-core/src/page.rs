@@ -276,7 +276,6 @@ mod tests {
         TagInternalNode, TagLeafNode, TagsInternalNode, TagsLeafNode, TagsLeafValue,
     };
     use crate::tracking_tree_nodes::{TrackingInternalNode, TrackingLeafNode};
-    use std::collections::HashMap;
     use uuid::Uuid;
 
     #[test]
@@ -367,7 +366,7 @@ mod tests {
                             data: vec![1, 2, 3, 4, 5, 6],
                             tags: vec!["user".to_string(), "create".to_string()],
                             uuid: None,
-                            metadata: HashMap::new(),
+                            metadata: Vec::new(),
                         }),
                         EventValue::Overflow {
                             event_type: "blob.uploaded".to_string(),
@@ -523,7 +522,7 @@ mod tests {
                                 "prod".to_string(),
                             ],
                             uuid: Some(Uuid::nil()),
-                            metadata: HashMap::new(),
+                            metadata: Vec::new(),
                         }),
                         EventValue::Inline(EventRecord {
                             event_type: "user.session.updated".to_string(),
@@ -534,7 +533,7 @@ mod tests {
                                 "update".to_string(),
                             ],
                             uuid: None,
-                            metadata: HashMap::new(),
+                            metadata: Vec::new(),
                         }),
                         EventValue::Overflow {
                             event_type: "blob.chunk.indexed".to_string(),
@@ -558,7 +557,7 @@ mod tests {
                                 "critical".to_string(),
                             ],
                             uuid: Some(Uuid::nil()),
-                            metadata: HashMap::new(),
+                            metadata: Vec::new(),
                         }),
                         EventValue::Overflow {
                             event_type: "ml.feature.vector".to_string(),

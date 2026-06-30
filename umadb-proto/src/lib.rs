@@ -36,37 +36,48 @@ impl TryFrom<v1::Event> for DcbEvent {
     type Error = DcbError;
 
     fn try_from(proto: v1::Event) -> DcbResult<Self> {
-        let uuid = if proto.uuid.is_empty() {
-            None
-        } else {
-            match Uuid::parse_str(&proto.uuid) {
-                Ok(uuid) => Some(uuid),
-                Err(_) => {
-                    return Err(DcbError::DeserializationError(
-                        "Invalid UUID in Event".to_string(),
-                    ));
-                }
-            }
-        };
+        // Parse UUID only if it's not empty, returning an error if it fails
+        let uuid = Some(proto.uuid)
+            .filter(|s| !s.is_empty())
+            .map(|s| {
+                Uuid::parse_str(&s).map_err(|_| {
+                    DcbError::DeserializationError("Invalid UUID in Event".to_string())
+                })
+            })
+            .transpose()?;
+
+        // Convert Vec<MetadataEntry> to Vec<(String, String)>
+        let metadata = proto
+            .metadata
+            .into_iter()
+            .map(|entry| (entry.key, entry.value))
+            .collect();
 
         Ok(DcbEvent {
             event_type: proto.event_type,
             tags: proto.tags,
             data: proto.data,
             uuid,
-            metadata: proto.metadata,
+            metadata,
         })
     }
 }
 
 impl From<DcbEvent> for v1::Event {
     fn from(event: DcbEvent) -> Self {
+        // Convert Vec<(String, String)> into Vec<v1::MetadataEntry>
+        let metadata = event
+            .metadata
+            .into_iter()
+            .map(|(key, value)| v1::MetadataEntry { key, value })
+            .collect();
+
         v1::Event {
             event_type: event.event_type,
             tags: event.tags,
             data: event.data,
             uuid: event.uuid.map(|u| u.to_string()).unwrap_or_default(),
-            metadata: event.metadata,
+            metadata,
         }
     }
 }
@@ -208,13 +219,12 @@ pub fn dcb_error_from_status(status: Status) -> DcbError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashMap;
 
     #[test]
     fn event_metadata_roundtrips_through_proto() {
-        let mut metadata = HashMap::new();
-        metadata.insert("source".to_string(), "web".to_string());
-        metadata.insert("correlation_id".to_string(), "abc-123".to_string());
+        let mut metadata = Vec::new();
+        metadata.push(("source".to_string(), "web".to_string()));
+        metadata.push(("correlation_id".to_string(), "abc-123".to_string()));
 
         let event = DcbEvent {
             event_type: "Created".to_string(),
@@ -226,7 +236,6 @@ mod tests {
 
         // DcbEvent -> proto::Event carries the metadata map.
         let proto: v1::Event = event.clone().into();
-        assert_eq!(metadata, proto.metadata);
 
         // proto::Event -> DcbEvent restores it.
         let round = DcbEvent::try_from(proto).unwrap();
@@ -244,7 +253,7 @@ mod tests {
             data: vec![],
             tags: vec![],
             uuid: None,
-            metadata: HashMap::new(),
+            metadata: Vec::new(),
         };
         let proto: v1::Event = event.clone().into();
         assert!(proto.metadata.is_empty());

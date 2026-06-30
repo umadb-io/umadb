@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::net::TcpListener;
 use umadb_client::{AsyncUmaDbClient, UmaDbClient};
 use umadb_core::mvcc::DEFAULT_PAGE_SIZE;
@@ -52,7 +51,7 @@ async fn grpc_async_streams_large_reads_total_count() {
             data: format!("data-{i}").into_bytes(),
             tags: vec!["grpc-test".to_string()],
             uuid: None,
-            metadata: HashMap::new(),
+            metadata: Vec::new(),
         })
         .collect();
     let last_pos = client
@@ -103,7 +102,7 @@ async fn grpc_async_does_not_stream_past_starting_head() {
             data: format!("data-{i}").into_bytes(),
             tags: vec!["grpc-boundary".to_string()],
             uuid: None,
-            metadata: HashMap::new(),
+            metadata: Vec::new(),
         })
         .collect();
     let _ = client
@@ -124,7 +123,7 @@ async fn grpc_async_does_not_stream_past_starting_head() {
             data: format!("new-{i}").into_bytes(),
             tags: vec!["grpc-boundary".to_string()],
             uuid: None,
-            metadata: HashMap::new(),
+            metadata: Vec::new(),
         })
         .collect();
     let _ = client
@@ -170,7 +169,7 @@ async fn grpc_async_subscription_catch_up_and_continue() {
             data: format!("init-{i}").into_bytes(),
             tags: vec!["grpc-sub".to_string()],
             uuid: None,
-            metadata: HashMap::new(),
+            metadata: Vec::new(),
         })
         .collect();
     let _ = client
@@ -211,7 +210,7 @@ async fn grpc_async_subscription_catch_up_and_continue() {
             data: format!("new-{i}").into_bytes(),
             tags: vec!["grpc-sub".to_string()],
             uuid: None,
-            metadata: HashMap::new(),
+            metadata: Vec::new(),
         })
         .collect();
     let _ = client
@@ -259,7 +258,7 @@ async fn grpc_async_stream_catch_up_and_continue() {
             data: format!("init-{i}").into_bytes(),
             tags: vec!["grpc-async".to_string()],
             uuid: None,
-            metadata: HashMap::new(),
+            metadata: Vec::new(),
         })
         .collect();
     let _ = client
@@ -292,7 +291,7 @@ async fn grpc_async_stream_catch_up_and_continue() {
             data: format!("new-{i}").into_bytes(),
             tags: vec!["grpc-async".to_string()],
             uuid: None,
-            metadata: HashMap::new(),
+            metadata: Vec::new(),
         })
         .collect();
     let _ = client
@@ -340,7 +339,7 @@ async fn grpc_append_event_with_tag_larger_than_page_size_rejects_and_leaves_no_
         data: vec![1, 2, 3],
         tags: vec![large_tag],
         uuid: None,
-        metadata: HashMap::new(),
+        metadata: Vec::new(),
     };
 
     match client.append(vec![event], None, None).await {

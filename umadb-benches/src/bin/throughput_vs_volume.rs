@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::fs::{File, OpenOptions};
 use std::io::Write;
 use std::sync::Arc;
@@ -87,7 +86,7 @@ async fn do_some_work(
                 data: "batch-data".to_string().into_bytes(),
                 tags: vec![tag.clone()],
                 uuid: None,
-                metadata: HashMap::new(),
+                metadata: Vec::new(),
             })
             .collect();
 
@@ -108,7 +107,7 @@ async fn do_some_work(
             data: "batch-data".to_string().into_bytes(),
             tags: vec![tag.clone()],
             uuid: None,
-            metadata: HashMap::new(),
+            metadata: Vec::new(),
         };
 
         client

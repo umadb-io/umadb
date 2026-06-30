@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::net::{Ipv4Addr, TcpListener};
 use std::time::Duration;
 
@@ -103,7 +102,7 @@ async fn secure_grpc_end_to_end_append_and_read() {
             data: format!("tls-data-{}", i).into_bytes(),
             tags: vec!["secure".to_string()],
             uuid: None,
-            metadata: HashMap::new(),
+            metadata: Vec::new(),
         })
         .collect();
     let last_pos = client.append(events, None, None).await.expect("append");

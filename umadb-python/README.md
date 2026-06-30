@@ -294,13 +294,13 @@ Returns the last recorded upstream position (`int`), or `None` if the sequence n
 
 An `Event` represents a single event either to be appended or already stored in the event log.
 
-| Field        | Type             | Description                                                   |
-|--------------|------------------|---------------------------------------------------------------|
-| `event_type` | `str`            | The event’s logical type (e.g. `"UserRegistered"`).           |
-| `tags`       | `list<str>`      | Tags assigned to the event (used for filtering and indexing). |
-| `data`       | `bytes`          | Binary payload associated with the event.                     |
-| `uuid`       | `str\|None`      | Unique event ID.                                              |
-| `metadata`   | `dict<str, str>` | Optional string key/value pairs stored alongside the event.   |
+| Field        | Type              | Description                                                   |
+|--------------|-------------------|---------------------------------------------------------------|
+| `event_type` | `str`             | The event’s logical type (e.g. `"UserRegistered"`).           |
+| `tags`       | `list<str>`       | Tags assigned to the event (used for filtering and indexing). |
+| `data`       | `bytes`           | Binary payload associated with the event.                     |
+| `uuid`       | `str\|None`       | Unique event ID.                                              |
+| `metadata`   | `dict[str, str]`  | Optional string key/value pairs stored alongside the event.   |
 
 Idempotent support for append operations is activated by setting a UUID on appended events.
 
@@ -310,8 +310,7 @@ event with a longer type or tag fails with a validation error (`ValueError`).
 `metadata` is for information *about* the event (provenance, correlation IDs, schema version, etc.)
 rather than the event payload itself. It is stored and returned unchanged, and is not indexed or
 matched by queries. It defaults to an empty dict when omitted. Each metadata key and value may be
-up to 65535 bytes long; appending an event with a longer key or value fails with a validation error
-(`ValueError`).
+up to 65535 bytes long; appending an event with a longer key or value fails with a validation error.
 
 Include in:
 * Append requests when writing new events to the store.

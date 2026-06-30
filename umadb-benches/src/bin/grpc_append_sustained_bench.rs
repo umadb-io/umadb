@@ -1,7 +1,6 @@
 use clap::Parser;
 use futures::future::join_all;
 use serde::Serialize;
-use std::collections::HashMap;
 use std::fs;
 use std::net::TcpListener;
 use std::path::Path;
@@ -71,7 +70,7 @@ fn init_db_with_events(num_events: usize) -> (tempfile::TempDir, String) {
                 data: format!("init-{}", i).into_bytes(),
                 tags: vec!["init".to_string()],
                 uuid: None,
-                metadata: HashMap::new(),
+                metadata: Vec::new(),
             };
             events.push(ev);
         }
@@ -143,7 +142,7 @@ async fn run_sustained_throughput_test(
                         data: payload.clone(),
                         tags: vec![stream_name.clone()],
                         uuid: None,
-                        metadata: HashMap::new(),
+                        metadata: Vec::new(),
                     })
                     .collect();
 

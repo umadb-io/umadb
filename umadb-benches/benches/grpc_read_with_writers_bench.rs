@@ -40,7 +40,7 @@ fn init_db_with_events(num_events: usize) -> (tempfile::TempDir, String) {
                 data: format!("event-{}", i).into_bytes(),
                 tags: vec!["tag1".to_string()],
                 uuid: None,
-                metadata: HashMap::new(),
+                metadata: Vec::new(),
             };
             events.push(ev);
         }
@@ -96,7 +96,7 @@ pub fn grpc_read_with_writers_benchmark(c: &mut Criterion) {
             data: format!("w-{}", i).into_bytes(),
             tags: vec!["w".to_string()],
             uuid: None,
-            metadata: HashMap::new(),
+            metadata: Vec::new(),
         })
         .collect();
     let writer_batch = Arc::new(writer_batch);

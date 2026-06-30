@@ -37,7 +37,7 @@ fn init_db_with_events() -> (tempfile::TempDir, String) {
                 data: format!("event-{}", j).into_bytes(),
                 tags: vec![format!("tag-{}", j).to_string()],
                 uuid: None,
-                metadata: HashMap::new(),
+                metadata: Vec::new(),
             };
             events.push(ev);
         }

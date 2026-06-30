@@ -1,5 +1,4 @@
 use serial_test::serial;
-use std::collections::HashMap;
 use tempfile::tempdir;
 use umadb_core::db::UmaDb;
 use umadb_dcb::{DcbAppendCondition, DcbEvent, DcbEventStoreSync, TrackingInfo};
@@ -17,7 +16,7 @@ fn append_batch_with_per_item_tracking_enforces_monotonicity() {
         data: b"x".to_vec(),
         tags: vec!["t".into()],
         uuid: None,
-        metadata: HashMap::new(),
+        metadata: Vec::new(),
     };
 
     // Batch with three items on same source "S":

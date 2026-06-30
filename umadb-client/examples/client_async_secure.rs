@@ -1,5 +1,4 @@
 use futures::StreamExt;
-use std::collections::HashMap;
 use umadb_client::UmaDbClient;
 use umadb_dcb::{
     DcbAppendCondition, DcbError, DcbEvent, DcbEventStoreAsync, DcbQuery, DcbQueryItem,
@@ -47,9 +46,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Produce new event, attaching some metadata (e.g. provenance) that is
     // stored alongside the event and returned when it is read back.
-    let mut metadata = HashMap::new();
-    metadata.insert("source".to_string(), "client_async_secure".to_string());
-    metadata.insert("correlation_id".to_string(), Uuid::new_v4().to_string());
+    let mut metadata = Vec::new();
+    metadata.push(("source".to_string(), "client_async_secure".to_string()));
+    metadata.push(("correlation_id".to_string(), Uuid::new_v4().to_string()));
     let event = DcbEvent {
         event_type: "example".to_string(),
         tags: vec!["tag1".to_string(), "tag2".to_string()],
@@ -77,7 +76,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         tags: vec!["tag1".to_string(), "tag2".to_string()],
         data: b"Hello, world!".to_vec(),
         uuid: Some(Uuid::new_v4()), // different UUID
-        metadata: HashMap::new(),
+        metadata: Vec::new(),
     };
     let conflicting_result = client
         .append(

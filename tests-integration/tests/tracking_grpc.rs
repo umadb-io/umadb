@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use umadb_client::UmaDbClient;
 use umadb_dcb::{DcbError, DcbEvent, DcbEventStoreAsync, TrackingInfo};
 use umadb_server::start_server;
@@ -31,7 +30,7 @@ async fn grpc_append_with_tracking_enforces_monotonicity() {
         data: b"d".to_vec(),
         tags: vec!["t".to_string()],
         uuid: None,
-        metadata: HashMap::new(),
+        metadata: Vec::new(),
     };
 
     assert_eq!(None, client.get_tracking_info("srcA").await.unwrap());

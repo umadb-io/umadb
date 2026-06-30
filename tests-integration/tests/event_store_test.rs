@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::net::TcpListener;
 use tempfile::tempdir;
 use tokio::runtime::Builder as RtBuilder;
@@ -27,9 +26,9 @@ pub fn dcb_event_store_test<T: DcbEventStoreSync>(event_store: &T) {
     assert_eq!(None, head);
 
     // Append one event, carrying non-empty metadata.
-    let mut event1_metadata = HashMap::new();
-    event1_metadata.insert("source".to_string(), "integration-test".to_string());
-    event1_metadata.insert("correlation_id".to_string(), "abc-123".to_string());
+    let mut event1_metadata = Vec::new();
+    event1_metadata.push(("source".to_string(), "integration-test".to_string()));
+    event1_metadata.push(("correlation_id".to_string(), "abc-123".to_string()));
     let event1 = DcbEvent {
         event_type: "type1".to_string(),
         data: b"data1".to_vec(),
@@ -269,14 +268,14 @@ pub fn dcb_event_store_test<T: DcbEventStoreSync>(event_store: &T) {
         data: b"data2".to_vec(),
         tags: vec!["tagA".to_string(), "tagB".to_string()],
         uuid: None,
-        metadata: HashMap::new(),
+        metadata: Vec::new(),
     };
     let event3 = DcbEvent {
         event_type: "type3".to_string(),
         data: b"data3".to_vec(),
         tags: vec!["tagA".to_string(), "tagC".to_string()],
         uuid: None,
-        metadata: HashMap::new(),
+        metadata: Vec::new(),
     };
     let position = event_store
         .append(vec![event2.clone(), event3.clone()], None, None)
@@ -687,7 +686,7 @@ pub fn dcb_event_store_test<T: DcbEventStoreSync>(event_store: &T) {
         data: b"data4".to_vec(),
         tags: vec![],
         uuid: None,
-        metadata: HashMap::new(),
+        metadata: Vec::new(),
     };
 
     // Fail because condition matches all.
@@ -911,7 +910,7 @@ pub fn dcb_event_store_test<T: DcbEventStoreSync>(event_store: &T) {
         data: format!(r#"{{"name": "Student1", "max_courses": 10}}"#).into_bytes(),
         tags: vec![student_id.clone()],
         uuid: None,
-        metadata: HashMap::new(),
+        metadata: Vec::new(),
     };
 
     let course_id = format!("course1-{}", Uuid::new_v4());
@@ -920,7 +919,7 @@ pub fn dcb_event_store_test<T: DcbEventStoreSync>(event_store: &T) {
         data: format!(r#"{{"name": "Course1", "places": 10}}"#).into_bytes(),
         tags: vec![course_id.clone()],
         uuid: None,
-        metadata: HashMap::new(),
+        metadata: Vec::new(),
     };
 
     let student_joined_course = DcbEvent {
@@ -932,7 +931,7 @@ pub fn dcb_event_store_test<T: DcbEventStoreSync>(event_store: &T) {
         .into_bytes(),
         tags: vec![course_id.clone(), student_id.clone()],
         uuid: None,
-        metadata: HashMap::new(),
+        metadata: Vec::new(),
     };
 
     let _position = event_store
@@ -1373,7 +1372,7 @@ pub fn dcb_event_store_test<T: DcbEventStoreSync>(event_store: &T) {
         data: b"data5".to_vec(),
         tags: vec!["tag5".to_string()],
         uuid: Some(Uuid::new_v4()),
-        metadata: HashMap::new(),
+        metadata: Vec::new(),
     };
 
     let commit_position5 = event_store
@@ -1520,14 +1519,14 @@ fn test_tag_hash_collision() {
         data: b"student-data".to_vec(),
         tags: vec![student_tag.clone()],
         uuid: None,
-        metadata: HashMap::new(),
+        metadata: Vec::new(),
     };
     let ev_course = DcbEvent {
         event_type: "CourseEvent".to_string(),
         data: b"course-data".to_vec(),
         tags: vec![course_tag.clone()],
         uuid: None,
-        metadata: HashMap::new(),
+        metadata: Vec::new(),
     };
 
     let _ = store.append(vec![ev_student.clone()], None, None).unwrap();

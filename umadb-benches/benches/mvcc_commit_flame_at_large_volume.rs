@@ -66,7 +66,7 @@ fn main() -> std::io::Result<()> {
                     data: "batch-data".to_string().into_bytes(),
                     tags: vec![format!("tag-{}", Uuid::new_v4())],
                     uuid: None,
-                    metadata: HashMap::new(),
+                    metadata: Vec::new(),
                 };
 
                 unconditional_append(&db.mvcc, &mut w, vec![event]).expect("Failed to append");
@@ -92,7 +92,7 @@ fn main() -> std::io::Result<()> {
                     data: "batch-data".to_string().into_bytes(),
                     tags: vec![format!("tag-{}", Uuid::new_v4())],
                     uuid: None,
-                    metadata: HashMap::new(),
+                    metadata: Vec::new(),
                 };
 
                 unconditional_append(&db.mvcc, &mut w, vec![event]).expect("Failed to append");

@@ -3,7 +3,6 @@ use crate::common::Position;
 use crate::page::PAGE_HEADER_SIZE;
 use bitflags::bitflags;
 use byteorder::{ByteOrder, LittleEndian};
-use std::collections::HashMap;
 use std::io::{Cursor, Write};
 use umadb_dcb::DcbError;
 use umadb_dcb::DcbResult;
@@ -15,7 +14,7 @@ pub struct EventRecord {
     pub data: Vec<u8>,
     pub tags: Vec<String>,
     pub uuid: Option<Uuid>,
-    pub metadata: HashMap<String, String>,
+    pub metadata: Vec<(String, String)>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -148,7 +147,7 @@ pub fn validate_tags(tags: &[String]) -> DcbResult<()> {
 /// encoding (which uses `u16` length prefixes). Returns
 /// [`DcbError::InvalidArgument`] rather than letting an over-long key/value
 /// silently truncate its length prefix and corrupt the encoding.
-pub fn validate_metadata(metadata: &HashMap<String, String>) -> DcbResult<()> {
+pub fn validate_metadata(metadata: &[(String, String)]) -> DcbResult<()> {
     if metadata.len() > MAX_METADATA_ENTRIES {
         return Err(DcbError::InvalidArgument(format!(
             "metadata has {} entries, exceeding the maximum of {}",
@@ -180,7 +179,7 @@ pub fn validate_metadata(metadata: &HashMap<String, String>) -> DcbResult<()> {
 ///
 /// Layout: 2 bytes entry count, then for each entry 2 bytes key length + key
 /// bytes + 2 bytes value length + value bytes.
-pub fn metadata_serialized_size(metadata: &HashMap<String, String>) -> usize {
+pub fn metadata_serialized_size(metadata: &[(String, String)]) -> usize {
     let mut size = 2; // entry count (u16)
     for (k, v) in metadata {
         size += 2 + k.len() + 2 + v.len();
@@ -188,9 +187,8 @@ pub fn metadata_serialized_size(metadata: &HashMap<String, String>) -> usize {
     size
 }
 
-/// Serialize metadata into the start of `buf`, returning the number of bytes
-/// written. Entries are written in sorted key order for deterministic output.
-pub fn serialize_metadata_into(metadata: &HashMap<String, String>, buf: &mut [u8]) -> usize {
+/// Serialize metadata pairs into the start of `buf`, returning the number of bytes written.
+pub fn serialize_metadata_into(metadata: &[(String, String)], buf: &mut [u8]) -> usize {
     // 1. Wrap the pre-allocated slice in a Cursor.
     // This tracks the index automatically without allocating heap memory.
     let mut cursor = Cursor::new(buf);
@@ -199,8 +197,8 @@ pub fn serialize_metadata_into(metadata: &HashMap<String, String>, buf: &mut [u8
     let n = metadata.len() as u16;
     let _ = cursor.write_all(&n.to_le_bytes());
 
-    // 3. Loop directly through the HashMap iterator.
-    // Zero allocations happen here because we no longer collect into a Vec or sort.
+    // 3. Loop directly through the slice references.
+    // Zero heap allocations happen here.
     for (k, v) in metadata {
         let kl = k.len() as u16;
         let _ = cursor.write_all(&kl.to_le_bytes());
@@ -217,7 +215,7 @@ pub fn serialize_metadata_into(metadata: &HashMap<String, String>, buf: &mut [u8
 
 // TODO: Move this because it's only used in tests.
 /// Serialize metadata into a freshly allocated buffer.
-pub fn serialize_metadata(metadata: &HashMap<String, String>) -> Vec<u8> {
+pub fn serialize_metadata(metadata: &[(String, String)]) -> Vec<u8> {
     let mut buf = vec![0u8; metadata_serialized_size(metadata)];
     serialize_metadata_into(metadata, &mut buf);
     buf
@@ -225,7 +223,7 @@ pub fn serialize_metadata(metadata: &HashMap<String, String>) -> Vec<u8> {
 
 /// Read a metadata map from `slice` starting at `*offset`, advancing `*offset`
 /// past the bytes consumed.
-fn read_metadata(slice: &[u8], offset: &mut usize) -> DcbResult<HashMap<String, String>> {
+fn read_metadata(slice: &[u8], offset: &mut usize) -> DcbResult<Vec<(String, String)>> {
     if *offset + 2 > slice.len() {
         return Err(DcbError::DeserializationError(
             "Unexpected end of data while reading metadata entry count".to_string(),
@@ -233,7 +231,7 @@ fn read_metadata(slice: &[u8], offset: &mut usize) -> DcbResult<HashMap<String, 
     }
     let n = LittleEndian::read_u16(&slice[*offset..*offset + 2]) as usize;
     *offset += 2;
-    let mut map = HashMap::with_capacity(n);
+    let mut metadata = Vec::with_capacity(n);
     for _ in 0..n {
         if *offset + 2 > slice.len() {
             return Err(DcbError::DeserializationError(
@@ -277,14 +275,14 @@ fn read_metadata(slice: &[u8], offset: &mut usize) -> DcbResult<HashMap<String, 
             }
         };
         *offset += vl;
-        map.insert(key, value);
+        metadata.push((key, value));
     }
-    Ok(map)
+    Ok(metadata)
 }
 
 /// Deserialize a metadata map from a complete slice (used for the overflow
 /// chain, where metadata bytes follow the event data).
-pub fn deserialize_metadata(slice: &[u8]) -> DcbResult<HashMap<String, String>> {
+pub fn deserialize_metadata(slice: &[u8]) -> DcbResult<Vec<(String, String)>> {
     let mut offset = 0usize;
     read_metadata(slice, &mut offset)
 }
@@ -653,7 +651,7 @@ impl EventLeafNode {
                 let metadata = if has_metadata {
                     read_metadata(slice, &mut offset)?
                 } else {
-                    HashMap::new()
+                    Vec::new()
                 };
 
                 values.push(EventValue::Inline(EventRecord {
@@ -984,7 +982,7 @@ mod tests {
                     data: vec![1, 0, 0, 0], // 100 as little-endian bytes
                     tags: vec!["tag1".to_string(), "tag2".to_string(), "tag3".to_string()],
                     uuid: None,
-                    metadata: HashMap::new(),
+                    metadata: Vec::new(),
                 }),
                 EventValue::Inline(EventRecord {
                     event_type: "event_type_2".to_string(),
@@ -996,14 +994,14 @@ mod tests {
                         "tag7".to_string(),
                     ],
                     uuid: None,
-                    metadata: HashMap::new(),
+                    metadata: Vec::new(),
                 }),
                 EventValue::Inline(EventRecord {
                     event_type: "event_type_3".to_string(),
                     data: vec![3, 0, 0, 0], // 300 as little-endian bytes
                     tags: vec!["tag8".to_string(), "tag9".to_string()],
                     uuid: None,
-                    metadata: HashMap::new(),
+                    metadata: Vec::new(),
                 }),
             ],
         };
@@ -1090,7 +1088,7 @@ mod tests {
                     data: vec![1, 0, 0, 0], // 100 as little-endian bytes
                     tags: vec!["tag1".to_string(), "tag2".to_string(), "tag3".to_string()],
                     uuid: Some(uuid1),
-                    metadata: HashMap::new(),
+                    metadata: Vec::new(),
                 }),
                 EventValue::Inline(EventRecord {
                     event_type: "event_type_2".to_string(),
@@ -1102,14 +1100,14 @@ mod tests {
                         "tag7".to_string(),
                     ],
                     uuid: Some(uuid2),
-                    metadata: HashMap::new(),
+                    metadata: Vec::new(),
                 }),
                 EventValue::Inline(EventRecord {
                     event_type: "event_type_3".to_string(),
                     data: vec![3, 0, 0, 0], // 300 as little-endian bytes
                     tags: vec!["tag8".to_string(), "tag9".to_string()],
                     uuid: Some(uuid3),
-                    metadata: HashMap::new(),
+                    metadata: Vec::new(),
                 }),
             ],
         };
@@ -1281,7 +1279,7 @@ mod tests {
             data: vec![1, 2, 3],
             tags: vec!["x".to_string()],
             uuid: None,
-            metadata: HashMap::new(),
+            metadata: Vec::new(),
         });
         let overflow = EventValue::Overflow {
             event_type: "overflow_evt".to_string(),
@@ -1332,10 +1330,10 @@ mod tests {
 
     #[test]
     fn test_metadata_serialize_roundtrip() {
-        let mut metadata = HashMap::new();
-        metadata.insert("source".to_string(), "web".to_string());
-        metadata.insert("correlation_id".to_string(), "abc-123".to_string());
-        metadata.insert("empty_value".to_string(), "".to_string());
+        let mut metadata = Vec::new();
+        metadata.push(("source".to_string(), "web".to_string()));
+        metadata.push(("correlation_id".to_string(), "abc-123".to_string()));
+        metadata.push(("empty_value".to_string(), "".to_string()));
 
         let bytes = serialize_metadata(&metadata);
         assert_eq!(bytes.len(), metadata_serialized_size(&metadata));
@@ -1346,11 +1344,11 @@ mod tests {
 
     #[test]
     fn test_validate_metadata_within_limits_ok() {
-        let mut metadata = HashMap::new();
-        metadata.insert("k".to_string(), "v".to_string());
+        let mut metadata = Vec::new();
+        metadata.push(("k".to_string(), "v".to_string()));
         // A key and value exactly at the maximum length are allowed.
-        metadata.insert("a".repeat(MAX_METADATA_ENTRY_LEN), "b".to_string());
-        metadata.insert("c".to_string(), "d".repeat(MAX_METADATA_ENTRY_LEN));
+        metadata.push(("a".repeat(MAX_METADATA_ENTRY_LEN), "b".to_string()));
+        metadata.push(("c".to_string(), "d".repeat(MAX_METADATA_ENTRY_LEN)));
         assert!(validate_metadata(&metadata).is_ok());
     }
 
@@ -1392,8 +1390,8 @@ mod tests {
 
     #[test]
     fn test_validate_metadata_rejects_oversized_value() {
-        let mut metadata = HashMap::new();
-        metadata.insert("k".to_string(), "v".repeat(MAX_METADATA_ENTRY_LEN + 1));
+        let mut metadata = Vec::new();
+        metadata.push(("k".to_string(), "v".repeat(MAX_METADATA_ENTRY_LEN + 1)));
         match validate_metadata(&metadata) {
             Err(DcbError::InvalidArgument(_)) => {}
             other => panic!("Expected InvalidArgument, got {other:?}"),
@@ -1402,8 +1400,8 @@ mod tests {
 
     #[test]
     fn test_validate_metadata_rejects_oversized_key() {
-        let mut metadata = HashMap::new();
-        metadata.insert("k".repeat(MAX_METADATA_ENTRY_LEN + 1), "v".to_string());
+        let mut metadata = Vec::new();
+        metadata.push(("k".repeat(MAX_METADATA_ENTRY_LEN + 1), "v".to_string()));
         match validate_metadata(&metadata) {
             Err(DcbError::InvalidArgument(_)) => {}
             other => panic!("Expected InvalidArgument, got {other:?}"),
@@ -1413,9 +1411,9 @@ mod tests {
     #[test]
     fn test_metadata_serialize_roundtrip_at_max_entry_len() {
         // A key/value at exactly the maximum length must survive a round-trip.
-        let mut metadata = HashMap::new();
-        metadata.insert("k".repeat(MAX_METADATA_ENTRY_LEN), "v".to_string());
-        metadata.insert("k2".to_string(), "v".repeat(MAX_METADATA_ENTRY_LEN));
+        let mut metadata = Vec::new();
+        metadata.push(("k".repeat(MAX_METADATA_ENTRY_LEN), "v".to_string()));
+        metadata.push(("k2".to_string(), "v".repeat(MAX_METADATA_ENTRY_LEN)));
         let bytes = serialize_metadata(&metadata);
         assert_eq!(bytes.len(), metadata_serialized_size(&metadata));
         assert_eq!(metadata, deserialize_metadata(&bytes).unwrap());
@@ -1423,7 +1421,7 @@ mod tests {
 
     #[test]
     fn test_empty_metadata_serialize_roundtrip() {
-        let metadata: HashMap<String, String> = HashMap::new();
+        let metadata: Vec<(String, String)> = Vec::new();
         let bytes = serialize_metadata(&metadata);
         // Just the 2-byte entry count of zero.
         assert_eq!(bytes.len(), 2);
@@ -1432,12 +1430,12 @@ mod tests {
 
     #[test]
     fn test_event_leaf_serialize_inline_with_metadata() {
-        let mut md1 = HashMap::new();
-        md1.insert("source".to_string(), "ingest".to_string());
-        md1.insert("schema".to_string(), "v2".to_string());
+        let mut md1 = Vec::new();
+        md1.push(("source".to_string(), "ingest".to_string()));
+        md1.push(("schema".to_string(), "v2".to_string()));
 
-        let mut md3 = HashMap::new();
-        md3.insert("trace".to_string(), "deadbeef".to_string());
+        let mut md3 = Vec::new();
+        md3.push(("trace".to_string(), "deadbeef".to_string()));
 
         let uuid2 = Uuid::new_v4();
         let leaf_node = EventLeafNode {
@@ -1465,7 +1463,7 @@ mod tests {
                     data: vec![7],
                     tags: vec![],
                     uuid: None,
-                    metadata: HashMap::new(),
+                    metadata: Vec::new(),
                 }),
             ],
         };
