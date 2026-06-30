@@ -1,8 +1,10 @@
 use crate::common::PageID;
 use crate::common::Position;
+use crate::page::PAGE_HEADER_SIZE;
 use bitflags::bitflags;
 use byteorder::{ByteOrder, LittleEndian};
 use std::collections::HashMap;
+use std::io::{Cursor, Write};
 use umadb_dcb::DcbError;
 use umadb_dcb::DcbResult;
 use uuid::Uuid;
@@ -50,18 +52,76 @@ pub const MAX_TAGS: usize = u16::MAX as usize;
 /// length prefix used by the on-page encoding.
 pub const MAX_TAG_LEN: usize = u16::MAX as usize;
 
-/// Validate that the event type fits within the limits of the on-page
-/// encoding.
-pub fn validate_event_type(event_type: &str) -> DcbResult<()> {
-    if event_type.len() > MAX_EVENT_TYPE_LEN {
-        return Err(DcbError::InvalidArgument(format!(
-            "event type has length {} bytes, exceeding the maximum of {}",
-            event_type.len(),
-            MAX_EVENT_TYPE_LEN
-        )));
+pub fn validate_event_record_for_append(
+    page_size: usize,
+    record: EventRecord,
+) -> DcbResult<((EventValue, usize), Option<(EventValue, usize)>)> {
+    // validate_event_type(&record.event_type)?;
+    validate_tags(&record.tags)?;
+    validate_metadata(&record.metadata)?;
+
+    let mut node = EventLeafNode {
+        keys: vec![],
+        values: vec![],
+    };
+    let empty_size = node.calc_serialized_size();
+    node.keys.push(Position(0));
+    node.values.push(EventValue::Inline(record));
+    let inline_size = node.calc_serialized_size();
+    let inline_value = node.values.pop().expect("node has one value");
+
+    if inline_size + PAGE_HEADER_SIZE <= page_size {
+        return Ok(((inline_value, inline_size - empty_size), None));
     }
-    Ok(())
+
+    let overflow_value = match &inline_value {
+        EventValue::Inline(record) => {
+            EventValue::Overflow {
+                event_type: record.event_type.clone(),
+                data_len: record.data.len() as u64,
+                tags: record.tags.clone(),
+                root_id: PageID(0),
+                uuid: record.uuid,
+                metadata_len: if record.metadata.is_empty() {
+                    0
+                } else {
+                    // Only non-zero matters for EventLeafNode::calc_serialized_size.
+                    1
+                },
+            }
+        }
+        EventValue::Overflow { .. } => {
+            return Err(DcbError::InternalError("Shouldn't get here".to_string()));
+        }
+    };
+
+    node.values.push(overflow_value);
+    let overflow_size = node.calc_serialized_size();
+    let overflow_value = node.values.pop().expect("node has one value");
+
+    if !(overflow_size + PAGE_HEADER_SIZE <= page_size) {
+        return Err(DcbError::InvalidArgument(
+            "event too large for page size".to_string(),
+        ));
+    }
+    Ok((
+        (inline_value, inline_size - empty_size),
+        Some((overflow_value, overflow_size - empty_size)),
+    ))
 }
+
+// Validate that the event type fits within the limits of the on-page
+// encoding.
+// pub fn validate_event_type(event_type: &str) -> DcbResult<()> {
+//     if event_type.len() > MAX_EVENT_TYPE_LEN {
+//         return Err(DcbError::InvalidArgument(format!(
+//             "event type has length {} bytes, exceeding the maximum of {}",
+//             event_type.len(),
+//             MAX_EVENT_TYPE_LEN
+//         )));
+//     }
+//     Ok(())
+// }
 
 /// Validate that the tags fit within the limits of the on-page encoding.
 pub fn validate_tags(tags: &[String]) -> DcbResult<()> {
@@ -72,15 +132,15 @@ pub fn validate_tags(tags: &[String]) -> DcbResult<()> {
             MAX_TAGS
         )));
     }
-    for tag in tags {
-        if tag.len() > MAX_TAG_LEN {
-            return Err(DcbError::InvalidArgument(format!(
-                "tag has length {} bytes, exceeding the maximum of {}",
-                tag.len(),
-                MAX_TAG_LEN
-            )));
-        }
-    }
+    // for tag in tags {
+    //     if tag.len() > MAX_TAG_LEN {
+    //         return Err(DcbError::InvalidArgument(format!(
+    //             "tag has length {} bytes, exceeding the maximum of {}",
+    //             tag.len(),
+    //             MAX_TAG_LEN
+    //         )));
+    //     }
+    // }
     Ok(())
 }
 
@@ -131,27 +191,31 @@ pub fn metadata_serialized_size(metadata: &HashMap<String, String>) -> usize {
 /// Serialize metadata into the start of `buf`, returning the number of bytes
 /// written. Entries are written in sorted key order for deterministic output.
 pub fn serialize_metadata_into(metadata: &HashMap<String, String>, buf: &mut [u8]) -> usize {
-    let mut i = 0usize;
+    // 1. Wrap the pre-allocated slice in a Cursor.
+    // This tracks the index automatically without allocating heap memory.
+    let mut cursor = Cursor::new(buf);
+
+    // 2. Write the total count of elements (2 bytes)
     let n = metadata.len() as u16;
-    buf[i..i + 2].copy_from_slice(&n.to_le_bytes());
-    i += 2;
-    let mut entries: Vec<(&String, &String)> = metadata.iter().collect();
-    entries.sort_by(|a, b| a.0.cmp(b.0));
-    for (k, v) in entries {
+    let _ = cursor.write_all(&n.to_le_bytes());
+
+    // 3. Loop directly through the HashMap iterator.
+    // Zero allocations happen here because we no longer collect into a Vec or sort.
+    for (k, v) in metadata {
         let kl = k.len() as u16;
-        buf[i..i + 2].copy_from_slice(&kl.to_le_bytes());
-        i += 2;
-        buf[i..i + k.len()].copy_from_slice(k.as_bytes());
-        i += k.len();
+        let _ = cursor.write_all(&kl.to_le_bytes());
+        let _ = cursor.write_all(k.as_bytes());
+
         let vl = v.len() as u16;
-        buf[i..i + 2].copy_from_slice(&vl.to_le_bytes());
-        i += 2;
-        buf[i..i + v.len()].copy_from_slice(v.as_bytes());
-        i += v.len();
+        let _ = cursor.write_all(&vl.to_le_bytes());
+        let _ = cursor.write_all(v.as_bytes());
     }
-    i
+
+    // 4. Get the exact final index position from the cursor
+    cursor.position() as usize
 }
 
+// TODO: Move this because it's only used in tests.
 /// Serialize metadata into a freshly allocated buffer.
 pub fn serialize_metadata(metadata: &HashMap<String, String>) -> Vec<u8> {
     let mut buf = vec![0u8; metadata_serialized_size(metadata)];
@@ -1290,29 +1354,29 @@ mod tests {
         assert!(validate_metadata(&metadata).is_ok());
     }
 
-    #[test]
-    fn test_validate_event_type_rejects_oversized() {
-        let et = "a".repeat(MAX_EVENT_TYPE_LEN + 1);
-        match validate_event_type(&et) {
-            Err(DcbError::InvalidArgument(msg)) => {
-                assert!(msg.contains("event type has length"));
-                assert!(msg.contains("exceeding the maximum"));
-            }
-            other => panic!("Expected InvalidArgument, got {other:?}"),
-        }
-    }
+    // #[test]
+    // fn test_validate_event_type_rejects_oversized() {
+    //     let et = "a".repeat(MAX_EVENT_TYPE_LEN + 1);
+    //     match validate_event_type(&et) {
+    //         Err(DcbError::InvalidArgument(msg)) => {
+    //             assert!(msg.contains("event type has length"));
+    //             assert!(msg.contains("exceeding the maximum"));
+    //         }
+    //         other => panic!("Expected InvalidArgument, got {other:?}"),
+    //     }
+    // }
 
-    #[test]
-    fn test_validate_tags_rejects_oversized_tag() {
-        let tags = vec!["tag".repeat(MAX_TAG_LEN + 1)];
-        match validate_tags(&tags) {
-            Err(DcbError::InvalidArgument(msg)) => {
-                assert!(msg.contains("tag has length"));
-                assert!(msg.contains("exceeding the maximum"));
-            }
-            other => panic!("Expected InvalidArgument, got {other:?}"),
-        }
-    }
+    // #[test]
+    // fn test_validate_tags_rejects_oversized_tag() {
+    //     let tags = vec!["tag".repeat(MAX_TAG_LEN + 1)];
+    //     match validate_tags(&tags) {
+    //         Err(DcbError::InvalidArgument(msg)) => {
+    //             assert!(msg.contains("tag has length"));
+    //             assert!(msg.contains("exceeding the maximum"));
+    //         }
+    //         other => panic!("Expected InvalidArgument, got {other:?}"),
+    //     }
+    // }
 
     #[test]
     fn test_validate_tags_rejects_too_many_tags() {

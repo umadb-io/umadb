@@ -2,8 +2,8 @@ use crate::common::PageID;
 use crate::common::Position;
 use crate::events_tree_nodes::{
     EventInternalNode, EventLeafNode, EventOverflowNode, EventRecord, EventValue,
-    deserialize_metadata, serialize_metadata, validate_event_type, validate_metadata,
-    validate_tags,
+    deserialize_metadata, metadata_serialized_size, serialize_metadata_into,
+    validate_event_record_for_append,
 };
 use crate::mvcc::{Mvcc, Writer};
 use crate::node::Node;
@@ -92,33 +92,35 @@ where
     }
 }
 
-/// Convert an inline `EventRecord` into an `EventValue::Overflow`, writing the
-/// serialized metadata followed by the event data into a fresh overflow chain.
+/// Writes a fresh overflow chain with serialized event metadata followed by the event data.
 ///
-/// Metadata is placed first (the first `metadata_len` bytes) so that a future
-/// metadata-only read can stop after the leading page(s) without walking the
-/// potentially large event data (the remaining `data_len` bytes).
-fn record_to_overflow(mvcc: &Mvcc, writer: &mut Writer, rec: EventRecord) -> DcbResult<EventValue> {
-    let data_len = rec.data.len() as u64;
-    let (metadata_len, mut combined) = if rec.metadata.is_empty() {
-        (0, Vec::with_capacity(rec.data.len()))
+/// Metadata is placed first so that a future metadata-only read can stop after
+/// the leading page(s) without walking the potentially large event data.
+fn data_and_metadata_to_overflow_chain(
+    mvcc: &Mvcc,
+    writer: &mut Writer,
+    record_data: &Vec<u8>,
+    metadata: &HashMap<String, String>,
+) -> DcbResult<(PageID, usize)> {
+    let metadata_len = if metadata.is_empty() {
+        0
     } else {
-        let metadata_bytes = serialize_metadata(&rec.metadata);
-        let len = metadata_bytes.len() as u64;
-        let mut combined = Vec::with_capacity(metadata_bytes.len() + rec.data.len());
-        combined.extend_from_slice(&metadata_bytes);
-        (len, combined)
+        metadata_serialized_size(metadata)
     };
-    combined.extend_from_slice(&rec.data);
+
+    // 1. One allocation, perfectly sized for the final product
+    let mut combined = vec![0u8; metadata_len + record_data.len()];
+
+    if metadata_len > 0 {
+        // 2. Overwrite the first part with metadata
+        serialize_metadata_into(metadata, &mut combined[..metadata_len]);
+    }
+
+    // 3. Overwrite the second part with record data (Fast memcpy)
+    combined[metadata_len..].copy_from_slice(record_data);
+
     let root_id = write_overflow_chain(mvcc, writer, &combined)?;
-    Ok(EventValue::Overflow {
-        event_type: rec.event_type,
-        data_len,
-        tags: rec.tags,
-        root_id,
-        uuid: rec.uuid,
-        metadata_len,
-    })
+    Ok((root_id, metadata_len))
 }
 
 fn materialize_event_value(
@@ -137,10 +139,11 @@ fn materialize_event_value(
             metadata_len,
         } => {
             let all_data = read_overflow_chain(mvcc, dirty, *root_id)?;
-            if (all_data.len() as u64) != *data_len + *metadata_len {
-                return Err(DcbError::DatabaseCorrupted(
-                    "Overflow data length mismatch".to_string(),
-                ));
+            let all_data_len = all_data.len();
+            if (all_data_len as u64) != *data_len + *metadata_len {
+                return Err(DcbError::DatabaseCorrupted(format!(
+                    "Overflow data length mismatch, data: {data_len}, metadata: {metadata_len}"
+                )));
             }
             // The chain holds leading metadata bytes followed by event data.
             let split = *metadata_len as usize;
@@ -161,28 +164,34 @@ fn materialize_event_value(
     }
 }
 
+// TODO: Move this because it's now only used in tests.
+pub fn event_tree_append(
+    mvcc: &Mvcc,
+    writer: &mut Writer,
+    event_record: EventRecord,
+    position: Position,
+) -> DcbResult<()> {
+    let event_values_and_size_diffs =
+        validate_event_record_for_append(mvcc.page_size, event_record)?;
+    event_tree_append_event_value(mvcc, writer, event_values_and_size_diffs, position)
+}
+
 /// Append an event to the root event leaf page.
 ///
 /// This function obtains a mutable reference to a dirty copy of the root event
 /// leaf page (using copy-on-write if necessary) and appends the provided
 /// Position to the keys and the EventRecord to the values.
-pub fn event_tree_append(
+pub fn event_tree_append_event_value(
     mvcc: &Mvcc,
     writer: &mut Writer,
-    event: EventRecord,
+    event_values_and_size_diffs: ((EventValue, usize), Option<(EventValue, usize)>),
     position: Position,
 ) -> DcbResult<()> {
     let verbose = mvcc.verbose;
-    if verbose {
-        println!("Appending event: {position:?} {event:?}");
-        println!("Root is {:?}", writer.events_tree_root_id);
-    }
-    // Reject metadata that cannot be encoded before writing anything, so an
-    // over-long key/value fails cleanly instead of silently corrupting the
-    // u16 length prefixes used by the serialization format.
-    validate_event_type(&event.event_type)?;
-    validate_tags(&event.tags)?;
-    validate_metadata(&event.metadata)?;
+    // if verbose {
+    //     println!("Appending event: {position:?} {inline_value:?}");
+    //     println!("Root is {:?}", writer.events_tree_root_id);
+    // }
     // Get the current root page id for the event tree
     let mut current_page_id: PageID = writer.events_tree_root_id;
 
@@ -201,7 +210,9 @@ pub fn event_tree_append(
             current_page_id = *internal_node
                 .child_ids
                 .last()
-                .expect("Internal node should have some children");
+                .ok_or_else(|| DcbError::DatabaseCorrupted(
+                    "Internal node has no children".to_string()
+                ))?;
         } else {
             return Err(DcbError::DatabaseCorrupted(
                 "Expected EventInternal node".to_string(),
@@ -211,13 +222,6 @@ pub fn event_tree_append(
     if verbose {
         println!("{current_page_id:?} is leaf node");
     }
-
-    // Decide inline vs overflow based on data length before mut-borrowing the page
-    let pending_value = if event.data.len() > u16::MAX as usize {
-        record_to_overflow(mvcc, writer, event)?
-    } else {
-        EventValue::Inline(event)
-    };
 
     // Make the leaf page dirty
     let dirty_page_id = { writer.get_dirty_page_id(current_page_id)? };
@@ -229,77 +233,111 @@ pub fn event_tree_append(
         }
     };
 
-    // We may need to pop the last key/value for splitting; hold it after we drop the borrow
-    let mut popped: Option<(Position, EventValue)> = None;
+    let serialized_size = writer
+        .get_page_ref(mvcc, dirty_page_id)?
+        .calc_serialized_size();
 
-    // Get a mutable leaf node and append the data
-    {
+    // Decide what we need to do.
+    // - if we already know inline value is too large for any page, indicated by
+    //   the received overflow_value_and_size being Some(), we have to
+    //   consider what to do with the given overflow value. Either it fits in the
+    //   current page, or we must to split and append the overflow value to a new page.
+    // - otherwise, if the received over_value_and_size is None, then we know the given
+    //   inline_value can at least fit an empty page, so we have to decide whether it
+    //   will fit this page. If it does fit this page then we can append it.
+    // - otherwise, we need to decide between three options: (a) splitting the page
+    //   and appending the inline value to the new page, (b) making an overflow node
+    //   and seeing if it will fit this page, (c) splitting the page and appending an
+    //   overflow value to the new page. The decision is about avoiding sparse pages
+    //   as much as possible.
+    //
+    // Design:
+    // - if we don't have an overflow value, then append if inline value fits or split and append
+    // - otherwise, append if overflow value fits or split and append overflow value
+
+    let (event_value, size_diff) = match event_values_and_size_diffs {
+        ((EventValue::Inline(record), _), Some((mut overflow_value, overflow_size_diff))) => {
+            let (overflow_root_id, overflow_metadata_len) =
+                data_and_metadata_to_overflow_chain(mvcc, writer, &record.data, &record.metadata)?;
+            if let EventValue::Overflow {
+                root_id,
+                metadata_len,
+                ..
+            } = &mut overflow_value
+            {
+                *root_id = overflow_root_id;
+                *metadata_len = overflow_metadata_len as u64;
+            } else {
+                return Err(DcbError::InternalError(
+                    "Shouldn't get here when setting root_id on event overflow value".to_string(),
+                ));
+            }
+
+            (overflow_value, overflow_size_diff)
+        }
+        ((inline_value, inline_size_diff), None) => (inline_value, inline_size_diff),
+        _ => {
+            return Err(DcbError::InternalError(
+                "Shouldn't get here when matching event_values_and_size_diffs".to_string(),
+            ));
+        }
+    };
+
+    // We may need to split the page.
+    let mut popped: Option<EventValue> = None;
+
+    if serialized_size + size_diff <= mvcc.page_size {
+        // Get a mutable leaf node and append the event value and position.
         let dirty_leaf_page = writer.get_mut_dirty(dirty_page_id)?;
         match &mut dirty_leaf_page.node {
             Node::EventLeaf(node) => {
-                node.keys.push(position);
-                node.values.push(pending_value);
-
-                // Check if the leaf needs splitting by estimating the serialized size
-                let serialized_size = dirty_leaf_page.calc_serialized_size();
-                if serialized_size > mvcc.page_size {
-                    if let Node::EventLeaf(dirty_leaf_node) = &mut dirty_leaf_page.node {
-                        let (last_key, last_value) = dirty_leaf_node.pop_last_key_and_value()?;
-                        if verbose {
-                            println!(
-                                "Split leaf {:?}: {:?}",
-                                dirty_page_id,
-                                dirty_leaf_node.clone()
-                            );
-                        }
-                        popped = Some((last_key, last_value));
-                    } else {
-                        return Err(DcbError::DatabaseCorrupted(
-                            "Expected EventLeaf node".to_string(),
-                        ));
-                    }
+                if verbose {
+                    println!(
+                        "Pushing {:?} at {:?} onto {:?}",
+                        event_value, position, dirty_page_id,
+                    );
                 }
+                node.keys.push(position);
+                node.values.push(event_value);
+                // // Final check that the serialized size is okay.
+                // let serialized_size = dirty_leaf_page.calc_serialized_size();
+                // if serialized_size > mvcc.page_size {
+                //     return Err(DcbError::DatabaseCorrupted(format!(
+                //         "New event leaf page too large after appending value: {serialized_size}, max: {})",
+                //         mvcc.page_size
+                //     )));
+                // }
             }
             _ => {
                 return Err(DcbError::DatabaseCorrupted(
-                    "Expected EventLeaf node at event tree root".to_string(),
+                    "Expected EventLeaf node".to_string(),
                 ));
             }
         }
+    } else {
+        // Let's split and add this event value to a new page.
+        popped = Some(event_value);
     }
 
     // Prepare for split propagation
     let mut split_info: Option<(Position, PageID)> = None;
 
-    if let Some((last_key, mut last_value)) = popped {
-        // Build new leaf node; convert to overflow if needed to fit
+    if let Some(event_value) = popped {
+        // Build new leaf node page.
         let new_leaf_page_id = writer.alloc_page_id();
-        let mut new_leaf_node = EventLeafNode {
-            keys: vec![last_key],
-            values: vec![last_value.clone()],
+        let new_leaf_node = EventLeafNode {
+            keys: vec![position],
+            values: vec![event_value],
         };
-        let mut new_leaf_page = Page::new(new_leaf_page_id, Node::EventLeaf(new_leaf_node.clone()));
-        let serialized_size = new_leaf_page.calc_serialized_size();
-        if serialized_size > mvcc.page_size
-            && let EventValue::Inline(rec) = last_value
-        {
-            last_value = record_to_overflow(mvcc, writer, rec)?;
-            new_leaf_node = EventLeafNode {
-                keys: vec![last_key],
-                values: vec![last_value.clone()],
-            };
-            new_leaf_page = Page::new(new_leaf_page_id, Node::EventLeaf(new_leaf_node.clone()));
-
-            // Final check that the serialized size is okay.
-            // TODO: Maybe instead check all pages before writing to the buffer?
-            let serialized_size = new_leaf_page.calc_serialized_size();
-            if serialized_size > mvcc.page_size {
-                return Err(DcbError::DatabaseCorrupted(format!(
-                    "Event too large even after overflow conversion (size: {serialized_size}, max: {})",
-                    mvcc.page_size
-                )));
-            }
-        }
+        let new_leaf_page = Page::new(new_leaf_page_id, Node::EventLeaf(new_leaf_node.clone()));
+        // // Final check that the serialized size is okay.
+        // let serialized_size = new_leaf_page.calc_serialized_size();
+        // if serialized_size > mvcc.page_size {
+        //     return Err(DcbError::DatabaseCorrupted(format!(
+        //         "New event leaf page too large after appending value: {serialized_size}, max: {})",
+        //         mvcc.page_size
+        //     )));
+        // }
         if verbose {
             println!(
                 "Created new leaf {:?}: {:?}",
@@ -308,9 +346,9 @@ pub fn event_tree_append(
         }
         writer.insert_dirty(new_leaf_page)?;
         if verbose {
-            println!("Promoting {last_key:?} and {new_leaf_page_id:?}");
+            println!("Promoting {position:?} and {new_leaf_page_id:?}");
         }
-        split_info = Some((last_key, new_leaf_page_id));
+        split_info = Some((position, new_leaf_page_id));
     }
 
     // Propagate splits and replacements up the stack
@@ -2017,10 +2055,10 @@ mod tests {
         };
 
         match event_tree_append(&db, &mut writer, event, pos) {
-            Err(DcbError::DatabaseCorrupted(message)) => {
+            Err(DcbError::InvalidArgument(message)) => {
                 assert!(
-                    message.contains("Event too large even after overflow conversion"),
-                    "unexpected DatabaseCorrupted message: {message}"
+                    message.contains("event too large for page size"),
+                    "unexpected InvalidArgument message: {message}"
                 );
             }
             other => panic!("Expected DatabaseCorrupted, got {other:?}"),
