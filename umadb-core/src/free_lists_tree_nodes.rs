@@ -488,7 +488,7 @@ mod tests {
 
         // Serialize the FreeListLeafNode
         let mut serialized = vec![0u8; leaf_node.calc_serialized_size()];
-        leaf_node.serialize_into(&mut serialized);
+        leaf_node.serialize_into(&mut serialized).unwrap();
 
         // Verify the serialized output is not empty
         assert!(!serialized.is_empty());

@@ -1,3 +1,4 @@
+use std::io::{Cursor, Write};
 use crate::common::Position;
 use crate::common::{PageID, Tsn};
 use bitflags::bitflags;
@@ -57,40 +58,38 @@ impl HeaderNode {
     }
 
     pub fn serialize_into(&self, buf: &mut [u8]) -> DcbResult<usize> {
-        let mut required_buf = 52;
-        assert!(
-            buf.len() >= required_buf,
-            "HeaderNode::serialize_into buf must be at least 52 bytes"
-        );
-        let mut flags = HeaderFlags::empty();
+        let mut cursor = Cursor::new(buf);
 
-        // Write fields in little-endian order (first 48 bytes are the legacy layout)
-        buf[0..8].copy_from_slice(&self.tsn.0.to_le_bytes());
-        buf[8..16].copy_from_slice(&self.next_page_id.0.to_le_bytes());
-        buf[16..24].copy_from_slice(&self.free_lists_tree_root_id.0.to_le_bytes());
-        buf[24..32].copy_from_slice(&self.events_tree_root_id.0.to_le_bytes());
-        buf[32..40].copy_from_slice(&self.tags_tree_root_id.0.to_le_bytes());
-        buf[40..48].copy_from_slice(&self.next_position.0.to_le_bytes());
-        // Append schema version at the end (new field, keeps first 48 bytes compatible)
-        buf[48..52].copy_from_slice(&self.schema_version.to_le_bytes());
+        // 1. Write the legacy layout sequentially (first 48 bytes)
+        cursor.write_all(&self.tsn.0.to_le_bytes())?;
+        cursor.write_all(&self.next_page_id.0.to_le_bytes())?;
+        cursor.write_all(&self.free_lists_tree_root_id.0.to_le_bytes())?;
+        cursor.write_all(&self.events_tree_root_id.0.to_le_bytes())?;
+        cursor.write_all(&self.tags_tree_root_id.0.to_le_bytes())?;
+        cursor.write_all(&self.next_position.0.to_le_bytes())?;
+
+        // 2. Append schema version (keeps first 48 bytes compatible)
+        cursor.write_all(&self.schema_version.to_le_bytes())?;
+
+        // 3. Determine dynamic flags
+        let mut flags = HeaderFlags::empty();
         if self.tracking_root_page_id != PageID(0) {
             flags |= HeaderFlags::HAS_TRACKING_ROOT_ID;
-            required_buf += 8;
         }
-        if flags.is_empty() {
-            return Ok(required_buf);
+
+        // 4. Append extensions if necessary
+        if !flags.is_empty() {
+            // Write the flags themselves (2 bytes)
+            cursor.write_all(&flags.bits().to_le_bytes())?;
+
+            // Write optional fields
+            if flags.contains(HeaderFlags::HAS_TRACKING_ROOT_ID) {
+                cursor.write_all(&self.tracking_root_page_id.0.to_le_bytes())?;
+            }
         }
-        required_buf += 2;
-        assert!(
-            buf.len() >= required_buf,
-            "HeaderNode::serialize_into buf must be at least {required_buf} bytes",
-        );
-        // Set the flags.
-        buf[52..54].copy_from_slice(&flags.bits().to_le_bytes());
-        if flags.contains(HeaderFlags::HAS_TRACKING_ROOT_ID) {
-            buf[54..62].copy_from_slice(&self.tracking_root_page_id.0.to_le_bytes())
-        }
-        Ok(required_buf)
+
+        // 5. Let the cursor tell us exactly how many bytes were required
+        Ok(cursor.position() as usize)
     }
 
     /// Creates a HeaderNode from a byte slice
@@ -331,7 +330,7 @@ mod header_node_legacy_tests {
             tracking_root_page_id: PageID(0),
         };
         let mut bytes52 = [0u8; 52];
-        header_node.serialize_into(&mut bytes52);
+        header_node.serialize_into(&mut bytes52).unwrap();
 
         // Take only the first 48 bytes to simulate legacy on-disk header
         let mut bytes48 = [0u8; 48];
