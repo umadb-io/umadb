@@ -216,40 +216,28 @@ pub fn serialize_page_into(
     node_ref: &Node,
     zero_fill_remainder: bool,
 ) -> DcbResult<()> {
-    let body_len = serialize_page_node_into(buf, node_ref, zero_fill_remainder)?;
-    serialize_page_header_into(buf, body_len, node_ref.get_type_byte());
-    Ok(())
-}
-
-#[inline(always)]
-fn serialize_page_node_into(
-    buf: &mut [u8],
-    node_ref: &Node,
-    zero_fill_remainder: bool,
-) -> DcbResult<usize> {
-    // Serialize body into the front of the body region using the space after header
+    // 1. Serialize the body and handle zero-filling within an explicit
+    // scope so we drop the mutable borrow of `buf` before step 2.
     let body_len = {
         let body_slice = &mut buf[PAGE_HEADER_SIZE..];
-        node_ref.serialize_into(body_slice)?
+        let len = node_ref.serialize_into(body_slice)?;
+
+        if zero_fill_remainder {
+            body_slice[len..].fill(0);
+        }
+
+        len
     };
 
-    // Zero-fill the remainder of the page after the serialized body
-    let tail_start = PAGE_HEADER_SIZE + body_len;
-    if zero_fill_remainder && tail_start < buf.len() {
-        buf[tail_start..].fill(0);
-    }
-    Ok(body_len)
-}
-
-#[inline(always)]
-fn serialize_page_header_into(buf: &mut [u8], body_len: usize, node_type_byte: u8) {
-    // Compute CRC over the actual body bytes
+    // 2. Compute CRC over the actual serialized body bytes
     let crc = calc_crc(&buf[PAGE_HEADER_SIZE..PAGE_HEADER_SIZE + body_len]);
 
-    // Fill page header
-    buf[HEADER_LAYOUT_NODE_TYPE_BYTE] = node_type_byte;
+    // 3. Fill page header
+    buf[HEADER_LAYOUT_NODE_TYPE_BYTE] = node_ref.get_type_byte();
     buf[HEADER_LAYOUT_CRC_BYTES].copy_from_slice(&crc.to_le_bytes());
     buf[HEADER_LAYOUT_BODY_LEN_BYTES].copy_from_slice(&(body_len as u32).to_le_bytes());
+
+    Ok(())
 }
 
 /// Calculate CRC32 checksum for data
