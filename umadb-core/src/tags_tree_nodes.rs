@@ -1,3 +1,4 @@
+use std::io::{Cursor, Write};
 use crate::common::{PageID, Position};
 use byteorder::{ByteOrder, LittleEndian};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -64,35 +65,35 @@ impl TagsLeafNode {
         total
     }
 
-    /// No-allocation serialization into the provided buffer. Returns bytes written.
     pub fn serialize_into(&self, buf: &mut [u8]) -> DcbResult<usize> {
-        let mut i = 0usize;
+        let mut cursor = Cursor::new(buf);
+
         // keys_len
         let klen = self.keys.len() as u16;
-        buf[i..i + 2].copy_from_slice(&klen.to_le_bytes());
-        i += 2;
+        cursor.write_all(&klen.to_le_bytes())?;
+
         // keys
         let keyw = get_tag_key_width();
         for key in &self.keys {
-            buf[i..i + keyw].copy_from_slice(&key[..keyw]);
-            i += keyw;
+            cursor.write_all(&key[..keyw])?;
         }
+
         // values
         for v in &self.values {
             // root_id
-            buf[i..i + 8].copy_from_slice(&v.root_id.0.to_le_bytes());
-            i += 8;
+            cursor.write_all(&v.root_id.0.to_le_bytes())?;
+
             // positions length
             let plen = v.positions.len() as u16;
-            buf[i..i + 2].copy_from_slice(&plen.to_le_bytes());
-            i += 2;
+            cursor.write_all(&plen.to_le_bytes())?;
+
             // positions
             for pos in &v.positions {
-                buf[i..i + 8].copy_from_slice(&pos.0.to_le_bytes());
-                i += 8;
+                cursor.write_all(&pos.0.to_le_bytes())?;
             }
         }
-        Ok(i)
+
+        Ok(cursor.position() as usize)
     }
 
     pub fn from_slice(slice: &[u8]) -> DcbResult<Self> {
