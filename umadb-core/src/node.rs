@@ -105,48 +105,20 @@ impl Node {
     /// Implemented for key node types; for others it falls back to allocate-and-copy.
     pub fn serialize_into(&self, buf: &mut [u8]) -> DcbResult<usize> {
         match self {
-            Node::Header(node) => {
-                node.serialize_into(buf)
-            }
-            Node::FreeListLeaf(node) => {
-                node.serialize_into(buf)
-            }
-            Node::FreeListInternal(node) => {
-                node.serialize_into(buf)
-            }
-            Node::EventLeaf(node) => {
-                node.serialize_into(buf)
-            }
-            Node::EventInternal(node) => {
-                node.serialize_into(buf)
-            }
-            Node::EventOverflow(node) => {
-                node.serialize_into(buf)
-            }
-            Node::TagsLeaf(node) => {
-                node.serialize_into(buf)
-            }
-            Node::TagsInternal(node) => {
-                node.serialize_into(buf)
-            }
-            Node::TagLeaf(node) => {
-                node.serialize_into(buf)
-            }
-            Node::TagInternal(node) => {
-                node.serialize_into(buf)
-            }
-            Node::FreeListTsnLeaf(node) => {
-                node.serialize_into(buf)
-            }
-            Node::FreeListTsnInternal(node) => {
-                node.serialize_into(buf)
-            }
-            Node::TrackingLeaf(node) => {
-                node.serialize_into(buf)
-            }
-            Node::TrackingInternal(node) => {
-                node.serialize_into(buf)
-            }
+            Node::Header(node) => node.serialize_into(buf),
+            Node::FreeListLeaf(node) => node.serialize_into(buf),
+            Node::FreeListInternal(node) => node.serialize_into(buf),
+            Node::EventLeaf(node) => node.serialize_into(buf),
+            Node::EventInternal(node) => node.serialize_into(buf),
+            Node::EventOverflow(node) => node.serialize_into(buf),
+            Node::TagsLeaf(node) => node.serialize_into(buf),
+            Node::TagsInternal(node) => node.serialize_into(buf),
+            Node::TagLeaf(node) => node.serialize_into(buf),
+            Node::TagInternal(node) => node.serialize_into(buf),
+            Node::FreeListTsnLeaf(node) => node.serialize_into(buf),
+            Node::FreeListTsnInternal(node) => node.serialize_into(buf),
+            Node::TrackingLeaf(node) => node.serialize_into(buf),
+            Node::TrackingInternal(node) => node.serialize_into(buf),
         }
     }
 

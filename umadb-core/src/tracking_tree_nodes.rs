@@ -1,6 +1,6 @@
-use std::io::{Cursor, Write};
 use crate::common::{PageID, Position};
 use byteorder::{ByteOrder, LittleEndian};
+use std::io::{Cursor, Write};
 use umadb_dcb::{DcbError, DcbResult};
 
 /// A simple leaf-only node for the tracking tree.
@@ -33,7 +33,6 @@ impl TrackingLeafNode {
         size
     }
 
-
     pub fn serialize_into(&self, buf: &mut [u8]) -> DcbResult<usize> {
         let mut cursor = Cursor::new(buf);
 
@@ -52,7 +51,7 @@ impl TrackingLeafNode {
             let kb_len = u8::try_from(kb.len()).map_err(|_| {
                 std::io::Error::new(
                     std::io::ErrorKind::InvalidInput,
-                    "tracking key too long to serialize (len > 255)"
+                    "tracking key too long to serialize (len > 255)",
                 )
             })?;
 
@@ -300,7 +299,7 @@ impl TrackingInternalNode {
             let kb_len = u8::try_from(kb.len()).map_err(|_| {
                 std::io::Error::new(
                     std::io::ErrorKind::InvalidInput,
-                    "tracking internal key too long to serialize (len > 255)"
+                    "tracking internal key too long to serialize (len > 255)",
                 )
             })?;
 

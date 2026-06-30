@@ -1,8 +1,8 @@
-use std::io::{Cursor, Write};
 use crate::common::Position;
 use crate::common::{PageID, Tsn};
 use bitflags::bitflags;
 use byteorder::{ByteOrder, LittleEndian};
+use std::io::{Cursor, Write};
 use umadb_dcb::{DcbError, DcbResult};
 
 bitflags! {

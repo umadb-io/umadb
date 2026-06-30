@@ -1,6 +1,6 @@
-use std::io::{Cursor, Write};
 use crate::common::{PageID, Position};
 use byteorder::{ByteOrder, LittleEndian};
+use std::io::{Cursor, Write};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use umadb_dcb::{DcbError, DcbResult};
 
