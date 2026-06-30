@@ -1,3 +1,4 @@
+use std::io::{Cursor, Write};
 use crate::common::{PageID, Tsn};
 use byteorder::{ByteOrder, LittleEndian};
 use umadb_dcb::{DcbError, DcbResult};
@@ -42,26 +43,33 @@ impl FreeListLeafNode {
     }
 
     pub fn serialize_into(&self, buf: &mut [u8]) -> DcbResult<usize> {
-        let mut i = 0usize;
+        let mut cursor = Cursor::new(buf);
+
+        // Keys length
         let klen = self.keys.len() as u16;
-        buf[i..i + 2].copy_from_slice(&klen.to_le_bytes());
-        i += 2;
+        cursor.write_all(&klen.to_le_bytes())?;
+
+        // Keys
         for key in &self.keys {
-            buf[i..i + 8].copy_from_slice(&key.0.to_le_bytes());
-            i += 8;
+            cursor.write_all(&key.0.to_le_bytes())?;
         }
+
+        // Values
         for value in &self.values {
+            // Page IDs length
             let plen = value.page_ids.len() as u16;
-            buf[i..i + 2].copy_from_slice(&plen.to_le_bytes());
-            i += 2;
+            cursor.write_all(&plen.to_le_bytes())?;
+
+            // Page IDs
             for page_id in &value.page_ids {
-                buf[i..i + 8].copy_from_slice(&page_id.0.to_le_bytes());
-                i += 8;
+                cursor.write_all(&page_id.0.to_le_bytes())?;
             }
-            buf[i..i + 8].copy_from_slice(&value.root_id.0.to_le_bytes());
-            i += 8;
+
+            // Root ID
+            cursor.write_all(&value.root_id.0.to_le_bytes())?;
         }
-        Ok(i)
+
+        Ok(cursor.position() as usize)
     }
 
     /// Creates a FreeListLeafNode from a byte slice
