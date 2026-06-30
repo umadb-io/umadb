@@ -56,7 +56,7 @@ impl HeaderNode {
         required_buf
     }
 
-    pub fn serialize_into(&self, buf: &mut [u8]) -> usize {
+    pub fn serialize_into(&self, buf: &mut [u8]) -> DcbResult<usize> {
         let mut required_buf = 52;
         assert!(
             buf.len() >= required_buf,
@@ -78,7 +78,7 @@ impl HeaderNode {
             required_buf += 8;
         }
         if flags.is_empty() {
-            return required_buf;
+            return Ok(required_buf);
         }
         required_buf += 2;
         assert!(
@@ -90,7 +90,7 @@ impl HeaderNode {
         if flags.contains(HeaderFlags::HAS_TRACKING_ROOT_ID) {
             buf[54..62].copy_from_slice(&self.tracking_root_page_id.0.to_le_bytes())
         }
-        required_buf
+        Ok(required_buf)
     }
 
     /// Creates a HeaderNode from a byte slice
@@ -182,7 +182,7 @@ mod tests {
 
         // Serialize the HeaderNode
         let mut serialized = [0u8; 52];
-        let serialized_size = header_node.serialize_into(&mut serialized);
+        let serialized_size = header_node.serialize_into(&mut serialized).unwrap();
 
         // Verify the serialized output has the correct length
         assert_eq!(52, serialized_size);
@@ -253,7 +253,7 @@ mod tests {
 
         // Serialize the HeaderNode
         let mut serialized = [0u8; 62];
-        let serialized_size = header_node.serialize_into(&mut serialized);
+        let serialized_size = header_node.serialize_into(&mut serialized).unwrap();
 
         // Verify the serialized output has the correct length
         assert_eq!(62, serialized_size);

@@ -133,7 +133,7 @@ pub mod bench_api {
             if self.buf.len() < need {
                 self.buf.resize(need, 0);
             }
-            self.last_size = self.node.serialize_into(&mut self.buf);
+            self.last_size = self.node.serialize_into(&mut self.buf).unwrap();
             self.last_size
         }
 
@@ -183,7 +183,7 @@ pub mod bench_api {
             if self.buf.len() < need {
                 self.buf.resize(need, 0);
             }
-            self.last_size = self.node.serialize_into(&mut self.buf);
+            self.last_size = self.node.serialize_into(&mut self.buf).unwrap();
             self.last_size
         }
 

@@ -392,7 +392,7 @@ impl EventLeafNode {
     }
 
     /// No-allocation serialization into the provided buffer. Returns number of bytes written.
-    pub fn serialize_into(&self, buf: &mut [u8]) -> usize {
+    pub fn serialize_into(&self, buf: &mut [u8]) -> DcbResult<usize> {
         let mut i = 0usize;
         // keys_len
         let klen = self.keys.len() as u16;
@@ -496,7 +496,7 @@ impl EventLeafNode {
                 }
             }
         }
-        i
+        Ok(i)
     }
 
     pub fn from_slice(slice: &[u8]) -> DcbResult<Self> {
@@ -790,11 +790,11 @@ impl EventOverflowNode {
         8 + self.data.len()
     }
 
-    pub fn serialize_into(&self, buf: &mut [u8]) -> usize {
+    pub fn serialize_into(&self, buf: &mut [u8]) -> DcbResult<usize> {
         let size = self.calc_serialized_size();
         buf[0..8].copy_from_slice(&self.next.0.to_le_bytes());
         buf[8..size].copy_from_slice(&self.data);
-        size
+        Ok(size)
     }
 
     pub fn from_slice(slice: &[u8]) -> DcbResult<Self> {
@@ -1008,7 +1008,7 @@ mod tests {
 
         // Serialize the EventLeafNode
         let mut serialized = vec![0u8; leaf_node.calc_serialized_size()];
-        leaf_node.serialize_into(&mut serialized);
+        leaf_node.serialize_into(&mut serialized).unwrap();
 
         // Verify the serialized output is not empty
         assert!(!serialized.is_empty());
@@ -1114,7 +1114,7 @@ mod tests {
 
         // Serialize the EventLeafNode
         let mut serialized = vec![0u8; leaf_node.calc_serialized_size()];
-        leaf_node.serialize_into(&mut serialized);
+        leaf_node.serialize_into(&mut serialized).unwrap();
 
         // Verify the serialized output is not empty
         assert!(!serialized.is_empty());
@@ -1195,7 +1195,7 @@ mod tests {
         };
         // Serialize
         let mut serialized = vec![0u8; leaf_node.calc_serialized_size()];
-        leaf_node.serialize_into(&mut serialized);
+        leaf_node.serialize_into(&mut serialized).unwrap();
         assert!(!serialized.is_empty());
         // Deserialize
         let deserialized = EventLeafNode::from_slice(&serialized)
@@ -1242,7 +1242,7 @@ mod tests {
         };
         // Serialize
         let mut serialized = vec![0u8; leaf_node.calc_serialized_size()];
-        leaf_node.serialize_into(&mut serialized);
+        leaf_node.serialize_into(&mut serialized).unwrap();
         assert!(!serialized.is_empty());
         // Deserialize
         let deserialized = EventLeafNode::from_slice(&serialized)
@@ -1294,7 +1294,7 @@ mod tests {
             values: vec![inline.clone(), overflow.clone()],
         };
         let mut serialized = vec![0u8; leaf_node.calc_serialized_size()];
-        leaf_node.serialize_into(&mut serialized);
+        leaf_node.serialize_into(&mut serialized).unwrap();
         let deserialized = EventLeafNode::from_slice(&serialized).unwrap();
         assert_eq!(leaf_node, deserialized);
 
@@ -1469,7 +1469,7 @@ mod tests {
         };
 
         let mut serialized = vec![0u8; leaf_node.calc_serialized_size()];
-        let written = leaf_node.serialize_into(&mut serialized);
+        let written = leaf_node.serialize_into(&mut serialized).unwrap();
         assert_eq!(written, serialized.len());
 
         let deserialized =
@@ -1500,7 +1500,7 @@ mod tests {
             data: vec![7, 8, 9, 10],
         };
         let mut ser = vec![0u8; node.calc_serialized_size()];
-        node.serialize_into(&mut ser);
+        node.serialize_into(&mut ser).unwrap();
         assert_eq!(8 + 4, ser.len()); // 8 bytes next + 4 bytes data
         let de = EventOverflowNode::from_slice(&ser).unwrap();
         assert_eq!(node, de);

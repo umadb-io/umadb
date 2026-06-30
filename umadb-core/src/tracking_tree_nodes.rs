@@ -32,7 +32,7 @@ impl TrackingLeafNode {
         size
     }
 
-    pub fn serialize_into(&self, buf: &mut [u8]) -> usize {
+    pub fn serialize_into(&self, buf: &mut [u8]) -> DcbResult<usize> {
         let needed = self.calc_serialized_size();
         assert!(buf.len() >= needed, "buffer too small for TrackingLeafNode");
         buf[0] = 1; // version >=1 means keys are sorted
@@ -55,7 +55,7 @@ impl TrackingLeafNode {
             LittleEndian::write_u64(&mut buf[off..off + 8], v.0);
             off += 8;
         }
-        needed
+        Ok(needed)
     }
 
     pub fn from_slice(slice: &[u8]) -> DcbResult<Self> {
@@ -272,7 +272,7 @@ impl TrackingInternalNode {
         size
     }
 
-    pub fn serialize_into(&self, buf: &mut [u8]) -> usize {
+    pub fn serialize_into(&self, buf: &mut [u8]) -> DcbResult<usize> {
         let needed = self.calc_serialized_size();
         assert!(
             buf.len() >= needed,
@@ -298,7 +298,7 @@ impl TrackingInternalNode {
             LittleEndian::write_u64(&mut buf[off..off + 8], id.0);
             off += 8;
         }
-        needed
+        Ok(needed)
     }
 
     pub fn from_slice(slice: &[u8]) -> DcbResult<Self> {
@@ -368,7 +368,7 @@ mod tests {
         node.keys = vec!["a".to_string(), "b".to_string()];
         node.values = vec![Position(1), Position(2)];
         let mut buf = vec![0u8; node.calc_serialized_size()];
-        let n = node.serialize_into(&mut buf);
+        let n = node.serialize_into(&mut buf).unwrap();
         assert_eq!(n, buf.len());
         let dec = TrackingLeafNode::from_slice(&buf).unwrap();
         assert_eq!(node, dec);
@@ -444,7 +444,7 @@ mod tests {
             child_ids: vec![PageID(10), PageID(20), PageID(30), PageID(40)],
         };
         let mut buf = vec![0u8; node.calc_serialized_size()];
-        let n = node.serialize_into(&mut buf);
+        let n = node.serialize_into(&mut buf).unwrap();
         assert_eq!(n, buf.len());
         let dec = TrackingInternalNode::from_slice(&buf).unwrap();
         assert_eq!(dec, node);
@@ -457,7 +457,7 @@ mod tests {
             child_ids: vec![PageID(123)],
         };
         let mut buf = vec![0u8; node.calc_serialized_size()];
-        let n = node.serialize_into(&mut buf);
+        let n = node.serialize_into(&mut buf).unwrap();
         assert_eq!(n, buf.len());
         let dec = TrackingInternalNode::from_slice(&buf).unwrap();
         assert_eq!(dec, node);
@@ -471,7 +471,7 @@ mod tests {
             child_ids: vec![PageID(1), PageID(2)],
         };
         let mut buf = vec![0u8; node.calc_serialized_size()];
-        let _ = node.serialize_into(&mut buf);
+        let _ = node.serialize_into(&mut buf).unwrap();
         buf.truncate(buf.len() - 4); // remove less than 8 to force error path
         let err = TrackingInternalNode::from_slice(&buf).unwrap_err();
         match err {

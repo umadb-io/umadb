@@ -418,6 +418,7 @@ pub enum DcbError {
     AuthenticationError(String),
 }
 
+
 pub type DcbResult<T> = Result<T, DcbError>;
 
 #[cfg(feature = "serde")]

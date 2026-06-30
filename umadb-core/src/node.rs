@@ -106,60 +106,46 @@ impl Node {
     pub fn serialize_into(&self, buf: &mut [u8]) -> DcbResult<usize> {
         match self {
             Node::Header(node) => {
-                let n = node.serialize_into(buf);
-                Ok(n)
+                node.serialize_into(buf)
             }
             Node::FreeListLeaf(node) => {
-                let n = node.serialize_into(buf);
-                Ok(n)
+                node.serialize_into(buf)
             }
             Node::FreeListInternal(node) => {
-                let n = node.serialize_into(buf);
-                Ok(n)
+                node.serialize_into(buf)
             }
             Node::EventLeaf(node) => {
-                let n = node.serialize_into(buf);
-                Ok(n)
+                node.serialize_into(buf)
             }
             Node::EventInternal(node) => {
-                let n = node.serialize_into(buf)?;
-                Ok(n)
+                node.serialize_into(buf)
             }
             Node::EventOverflow(node) => {
-                let n = node.serialize_into(buf);
-                Ok(n)
+                node.serialize_into(buf)
             }
             Node::TagsLeaf(node) => {
-                let n = node.serialize_into(buf);
-                Ok(n)
+                node.serialize_into(buf)
             }
             Node::TagsInternal(node) => {
-                let n = node.serialize_into(buf);
-                Ok(n)
+                node.serialize_into(buf)
             }
             Node::TagLeaf(node) => {
-                let n = node.serialize_into(buf);
-                Ok(n)
+                node.serialize_into(buf)
             }
             Node::TagInternal(node) => {
-                let n = node.serialize_into(buf);
-                Ok(n)
+                node.serialize_into(buf)
             }
             Node::FreeListTsnLeaf(node) => {
-                let n = node.serialize_into(buf);
-                Ok(n)
+                node.serialize_into(buf)
             }
             Node::FreeListTsnInternal(node) => {
-                let n = node.serialize_into(buf);
-                Ok(n)
+                node.serialize_into(buf)
             }
             Node::TrackingLeaf(node) => {
-                let n = node.serialize_into(buf);
-                Ok(n)
+                node.serialize_into(buf)
             }
             Node::TrackingInternal(node) => {
-                let n = node.serialize_into(buf);
-                Ok(n)
+                node.serialize_into(buf)
             }
         }
     }
