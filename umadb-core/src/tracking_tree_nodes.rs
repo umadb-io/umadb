@@ -283,32 +283,37 @@ impl TrackingInternalNode {
     }
 
     pub fn serialize_into(&self, buf: &mut [u8]) -> DcbResult<usize> {
-        let needed = self.calc_serialized_size();
-        assert!(
-            buf.len() >= needed,
-            "buffer too small for TrackingInternalNode"
-        );
-        buf[0] = 1; // version 1
-        LittleEndian::write_u16(&mut buf[1..3], self.keys.len() as u16);
-        let mut off = 3;
+        let mut cursor = Cursor::new(buf);
+
+        // Version (1 = keys are sorted)
+        cursor.write_all(&[1])?;
+
+        // Keys length
+        let klen = self.keys.len() as u16;
+        cursor.write_all(&klen.to_le_bytes())?;
+
+        // Keys
         for k in &self.keys {
             let kb = k.as_bytes();
-            assert!(
-                kb.len() <= u8::MAX as usize,
-                "tracking internal key too long to serialize (len>{})",
-                u8::MAX
-            );
-            buf[off] = kb.len() as u8;
-            off += 1;
-            buf[off..off + kb.len()].copy_from_slice(kb);
-            off += kb.len();
+
+            // Safely check length without panicking
+            let kb_len = u8::try_from(kb.len()).map_err(|_| {
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "tracking internal key too long to serialize (len > 255)"
+                )
+            })?;
+
+            cursor.write_all(&[kb_len])?;
+            cursor.write_all(kb)?;
         }
-        // children count is implied as keys.len() + 1
+
+        // Child IDs (count is implied as keys.len() + 1)
         for id in &self.child_ids {
-            LittleEndian::write_u64(&mut buf[off..off + 8], id.0);
-            off += 8;
+            cursor.write_all(&id.0.to_le_bytes())?;
         }
-        Ok(needed)
+
+        Ok(cursor.position() as usize)
     }
 
     pub fn from_slice(slice: &[u8]) -> DcbResult<Self> {
