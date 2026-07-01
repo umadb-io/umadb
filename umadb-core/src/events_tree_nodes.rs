@@ -594,13 +594,14 @@ impl EventOverflowNode {
     }
 
     pub fn from_slice(slice: &[u8]) -> DcbResult<Self> {
-        if slice.len() < 8 {
-            return Err(DcbError::DeserializationError(
-                "Overflow node too small".to_string(),
-            ));
-        }
-        let next = PageID(LittleEndian::read_u64(&slice[0..8]));
-        let data = slice[8..].to_vec();
+        let mut reader = SliceReader::new(slice);
+
+        // Read the next page pointer
+        let next = reader.read_page_id()?;
+
+        // Consume all remaining bytes for the data payload
+        let data = reader.read_bytes(reader.remaining())?.to_vec();
+
         Ok(Self { next, data })
     }
 }
