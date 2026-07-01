@@ -323,42 +323,24 @@ impl TagInternalNode {
     }
 
     pub fn from_slice(slice: &[u8]) -> DcbResult<Self> {
-        if slice.len() < 2 {
-            return Err(DcbError::DeserializationError(format!(
-                "Expected at least 2 bytes, got {}",
-                slice.len()
-            )));
-        }
-        let keys_len = LittleEndian::read_u16(&slice[0..2]) as usize;
-        let keys_bytes = 2 + keys_len * 8;
-        if slice.len() < keys_bytes {
-            return Err(DcbError::DeserializationError(format!(
-                "Expected at least {} bytes for keys, got {}",
-                keys_bytes,
-                slice.len()
-            )));
-        }
+        let mut reader = SliceReader::new(slice);
+
+        // Read keys length
+        let keys_len = reader.read_u16()? as usize;
+
+        // Read keys (Positions)
         let mut keys = Vec::with_capacity(keys_len);
-        for i in 0..keys_len {
-            let p = 2 + i * 8;
-            let v = LittleEndian::read_u64(&slice[p..p + 8]);
-            keys.push(Position(v));
+        for _ in 0..keys_len {
+            keys.push(reader.read_position()?);
         }
 
+        // Derive child_ids length (always keys_len + 1 for internal nodes)
         let child_ids_len = keys_len + 1;
-        let need = child_ids_len * 8;
-        if slice.len() < keys_bytes + need {
-            return Err(DcbError::DeserializationError(format!(
-                "Expected at least {} bytes for child_ids, got {}",
-                keys_bytes + need,
-                slice.len()
-            )));
-        }
+
+        // Read child IDs (PageIDs)
         let mut child_ids = Vec::with_capacity(child_ids_len);
-        for i in 0..child_ids_len {
-            let p = keys_bytes + i * 8;
-            let v = LittleEndian::read_u64(&slice[p..p + 8]);
-            child_ids.push(PageID(v));
+        for _ in 0..child_ids_len {
+            child_ids.push(reader.read_page_id()?);
         }
 
         Ok(TagInternalNode { keys, child_ids })
