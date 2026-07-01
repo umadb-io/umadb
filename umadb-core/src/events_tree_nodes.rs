@@ -646,61 +646,29 @@ impl EventInternalNode {
     }
 
     pub fn from_slice(slice: &[u8]) -> DcbResult<Self> {
-        // Check if the slice has at least 2 bytes for keys_len
-        if slice.len() < 2 {
-            return Err(DcbError::DeserializationError(format!(
-                "Expected at least 2 bytes, got {}",
-                slice.len()
-            )));
-        }
+        let mut reader = SliceReader::new(slice);
 
-        // Extract the length of the keys (first 2 bytes)
-        let keys_len = LittleEndian::read_u16(&slice[0..2]) as usize;
+        // Read keys length
+        let keys_len = reader.read_u16()? as usize;
 
-        // Calculate the minimum expected size for the keys
-        let min_expected_size = 2 + (keys_len * 8);
-        if slice.len() < min_expected_size {
-            return Err(DcbError::DeserializationError(format!(
-                "Expected at least {} bytes for keys, got {}",
-                min_expected_size,
-                slice.len()
-            )));
-        }
-
-        // Extract the keys (8 bytes each)
+        // Read keys (Positions)
         let mut keys = Vec::with_capacity(keys_len);
-        for i in 0..keys_len {
-            let start = 2 + (i * 8);
-            let position = LittleEndian::read_u64(&slice[start..start + 8]);
-            keys.push(Position(position));
+        for _ in 0..keys_len {
+            keys.push(reader.read_position()?);
         }
 
-        // Calculate the offset after reading keys
-        let offset = 2 + (keys_len * 8);
-
-        // Derive child_ids_len from keys_len (always keys_len + 1)
+        // Derive child_ids length (always keys_len + 1 for internal nodes)
         let child_ids_len = keys_len + 1;
 
-        // Calculate the minimum expected size for the child_ids
-        let min_expected_size = offset + (child_ids_len * 8);
-        if slice.len() < min_expected_size {
-            return Err(DcbError::DeserializationError(format!(
-                "Expected at least {} bytes for child_ids, got {}",
-                min_expected_size,
-                slice.len()
-            )));
-        }
-
-        // Extract the child_ids (8 bytes each)
+        // Read child IDs (PageIDs)
         let mut child_ids = Vec::with_capacity(child_ids_len);
-        for i in 0..child_ids_len {
-            let start = offset + (i * 8);
-            let page_id = LittleEndian::read_u64(&slice[start..start + 8]);
-            child_ids.push(PageID(page_id));
+        for _ in 0..child_ids_len {
+            child_ids.push(reader.read_page_id()?);
         }
 
         Ok(EventInternalNode { keys, child_ids })
     }
+
     pub fn replace_last_child_id(&mut self, old_id: PageID, new_id: PageID) -> DcbResult<()> {
         // Replace the last child ID.
         let last_idx = self.child_ids.len() - 1;
