@@ -1,5 +1,4 @@
 use crate::common::{PageID, Tsn};
-use byteorder::{ByteOrder, LittleEndian};
 use std::io::{Cursor, Write};
 use umadb_dcb::{DcbError, DcbResult};
 use crate::slice_reader::SliceReader;
@@ -363,33 +362,26 @@ impl FreeListTsnInternalNode {
     }
 
     pub fn from_slice(slice: &[u8]) -> DcbResult<Self> {
-        if slice.len() < 2 {
-            return Err(DcbError::DeserializationError(
-                "Expected at least 2 bytes".to_string(),
-            ));
-        }
-        let klen = LittleEndian::read_u16(&slice[0..2]) as usize;
-        if slice.len() < 2 + klen * 8 + 2 {
-            return Err(DcbError::DeserializationError("Data too short".to_string()));
-        }
+        let mut reader = SliceReader::new(slice);
+
+        // Read keys length
+        let klen = reader.read_u16()? as usize;
+
+        // Read keys (PageIDs)
         let mut keys = Vec::with_capacity(klen);
-        let mut offset = 2;
         for _ in 0..klen {
-            let v = LittleEndian::read_u64(&slice[offset..offset + 8]);
-            keys.push(PageID(v));
-            offset += 8;
+            keys.push(reader.read_page_id()?);
         }
-        let clen = LittleEndian::read_u16(&slice[offset..offset + 2]) as usize;
-        offset += 2;
-        if slice.len() < offset + clen * 8 {
-            return Err(DcbError::DeserializationError("Data too short".to_string()));
-        }
+
+        // Read child IDs length (explicitly stored for this node type)
+        let clen = reader.read_u16()? as usize;
+
+        // Read child IDs (PageIDs)
         let mut child_ids = Vec::with_capacity(clen);
         for _ in 0..clen {
-            let v = LittleEndian::read_u64(&slice[offset..offset + 8]);
-            child_ids.push(PageID(v));
-            offset += 8;
+            child_ids.push(reader.read_page_id()?);
         }
+
         Ok(FreeListTsnInternalNode { keys, child_ids })
     }
 
