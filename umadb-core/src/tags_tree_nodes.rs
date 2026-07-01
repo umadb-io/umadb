@@ -3,6 +3,7 @@ use byteorder::{ByteOrder, LittleEndian};
 use std::io::{Cursor, Write};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use umadb_dcb::{DcbError, DcbResult};
+use crate::slice_reader::SliceReader;
 
 /// Length in bytes of the hashed tag key used in-memory for TagHash
 pub const TAG_HASH_LEN: usize = 16;
@@ -97,72 +98,33 @@ impl TagsLeafNode {
     }
 
     pub fn from_slice(slice: &[u8]) -> DcbResult<Self> {
-        let slice_len = slice.len();
-        if slice_len < 2 {
-            return Err(DcbError::DeserializationError(format!(
-                "Expected at least 2 bytes, got {}",
-                slice_len
-            )));
-        }
+        let mut reader = SliceReader::new(slice);
 
-        // keys_len
-        let keys_len = LittleEndian::read_u16(&slice[0..2]) as usize;
+        // Read keys length
+        let keys_len = reader.read_u16()? as usize;
 
-        // keys (runtime width)
-        let keyw = get_tag_key_width();
-        let keys_bytes = 2 + keys_len * keyw;
-        if slice_len < keys_bytes {
-            return Err(DcbError::DeserializationError(format!(
-                "Expected at least {} bytes for keys, got {}",
-                keys_bytes, slice_len
-            )));
-        }
-
+        // Read keys (runtime width)
         let mut keys = Vec::with_capacity(keys_len);
-        for i in 0..keys_len {
-            let start = 2 + i * keyw;
+        let keyw = get_tag_key_width();
+        for _ in 0..keys_len {
+            let key_bytes = reader.read_bytes(keyw)?;
             let mut key = [0u8; TAG_HASH_LEN];
-            // copy the on-disk width and leave the rest as zeros (legacy schema 0)
-            key[..keyw].copy_from_slice(&slice[start..start + keyw]);
+            // copy the on-disk width and leave the rest as zeros
+            key[..keyw].copy_from_slice(key_bytes);
             keys.push(key);
         }
 
-        // values
+        // Read values
         let mut values = Vec::with_capacity(keys_len);
-        let mut offset = keys_bytes;
-        for i in 0..keys_len {
-            let need = 10;
-            if offset + need > slice_len {
-                let key_number = i + 1;
-                let shortfall = offset + need - slice_len;
-                return Err(DcbError::DeserializationError(format!(
-                    "Unexpected end of data while reading tags leaf value header for key {key_number}/{keys_len}: shortfall: {shortfall}, slice len: {slice_len}, offset: {offset}, need: {need}"
-                )));
-            }
-            // root_id (8 bytes)
-            let root_id_u64 = LittleEndian::read_u64(&slice[offset..offset + 8]);
-            let root_id = PageID(root_id_u64);
-            offset += 8;
-            // positions len
-            let positions_len = LittleEndian::read_u16(&slice[offset..offset + 2]) as usize;
-            offset += 2;
+        for _ in 0..keys_len {
+            let root_id = reader.read_page_id()?;
 
-            // positions
-            let need = positions_len * 8;
-            if offset + need > slice_len {
-                let key_number = i + 1;
-                let shortfall = offset + need - slice_len;
-                return Err(DcbError::DeserializationError(format!(
-                    "Unexpected end of data while reading tags leaf value positions for key {key_number}/{keys_len}: shortfall: {shortfall}, slice len: {slice_len}, offset: {offset}, need: {need}"
-                )));
-            }
+            let positions_len = reader.read_u16()? as usize;
+
             let mut positions = Vec::with_capacity(positions_len);
-            for i in 0..positions_len {
-                let p = offset + i * 8;
-                let pos = LittleEndian::read_u64(&slice[p..p + 8]);
-                positions.push(Position(pos));
+            for _ in 0..positions_len {
+                positions.push(reader.read_position()?);
             }
-            offset += need;
 
             values.push(TagsLeafValue { root_id, positions });
         }

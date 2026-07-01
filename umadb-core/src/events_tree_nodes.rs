@@ -2,7 +2,6 @@ use crate::common::PageID;
 use crate::common::Position;
 use crate::page::PAGE_HEADER_SIZE;
 use bitflags::bitflags;
-use byteorder::{ByteOrder, LittleEndian};
 use std::io::{Cursor, Write};
 use umadb_dcb::DcbError;
 use umadb_dcb::DcbResult;
