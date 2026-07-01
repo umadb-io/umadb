@@ -181,7 +181,6 @@ impl TagsInternalNode {
         let keys_len = reader.read_u16()? as usize;
 
         // Read keys (runtime width mapped)
-        let keyw = get_tag_key_width();
         let mut keys = Vec::with_capacity(keys_len);
         for _ in 0..keys_len {
             keys.push(reader.read_tag_hash()?);
@@ -270,28 +269,17 @@ impl TagLeafNode {
     }
 
     pub fn from_slice(slice: &[u8]) -> DcbResult<Self> {
-        if slice.len() < 2 {
-            return Err(DcbError::DeserializationError(format!(
-                "Expected at least 2 bytes, got {}",
-                slice.len()
-            )));
-        }
-        // positions len (first 2 bytes)
-        let positions_len = LittleEndian::read_u16(&slice[0..2]) as usize;
-        let need = positions_len * 8;
-        if slice.len() < 2 + need {
-            return Err(DcbError::DeserializationError(format!(
-                "Expected at least {} bytes for positions, got {}",
-                2 + need,
-                slice.len()
-            )));
-        }
+        let mut reader = SliceReader::new(slice);
+
+        // Read positions length
+        let positions_len = reader.read_u16()? as usize;
+
+        // Read positions
         let mut positions = Vec::with_capacity(positions_len);
-        for i in 0..positions_len {
-            let p = 2 + i * 8;
-            let v = LittleEndian::read_u64(&slice[p..p + 8]);
-            positions.push(Position(v));
+        for _ in 0..positions_len {
+            positions.push(reader.read_position()?);
         }
+
         Ok(TagLeafNode { positions })
     }
 
