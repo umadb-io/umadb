@@ -1,5 +1,4 @@
 use crate::common::{PageID, Position};
-use byteorder::{ByteOrder, LittleEndian};
 use std::io::{Cursor, Write};
 use umadb_dcb::{DcbError, DcbResult};
 use crate::slice_reader::SliceReader;
@@ -271,64 +270,43 @@ impl TrackingInternalNode {
     }
 
     pub fn from_slice(slice: &[u8]) -> DcbResult<Self> {
-        if slice.is_empty() {
-            return Err(DcbError::DeserializationError(
-                "tracking internal too small".to_string(),
-            ));
-        }
-        let ver = slice[0];
+        let mut reader = SliceReader::new(slice);
+
+        // Read format version
+        let ver = reader.read_u8()?;
         if ver == 0 {
             return Err(DcbError::DeserializationError(
                 "unsupported tracking internal version 0".to_string(),
             ));
         }
-        if slice.len() < 3 {
-            return Err(DcbError::DeserializationError(
-                "tracking internal too small (v1)".to_string(),
-            ));
-        }
-        let count = LittleEndian::read_u16(&slice[1..3]) as usize;
-        let mut off = 3;
+
+        // Read keys count
+        let count = reader.read_u16()? as usize;
+
+        // Read keys
         let mut keys = Vec::with_capacity(count);
         for _ in 0..count {
-            if off + 1 > slice.len() {
-                return Err(DcbError::DeserializationError(
-                    "tracking internal truncated klen (v1)".to_string(),
-                ));
-            }
-            let klen = slice[off] as usize;
-            off += 1;
-            if off + klen > slice.len() {
-                return Err(DcbError::DeserializationError(
-                    "tracking internal truncated key (v1)".to_string(),
-                ));
-            }
-            let k = std::str::from_utf8(&slice[off..off + klen])
-                .map_err(|e| DcbError::DeserializationError(format!("invalid utf8: {e}")))?
-                .to_string();
-            off += klen;
+            let klen = reader.read_u8()? as usize;
+            let k = reader.read_string(klen)?;
             keys.push(k);
         }
-        // Now children: implied count = keys.len() + 1
+
+        // Derive child_ids length (always keys.len() + 1 for internal B-Tree nodes)
         let child_count = keys.len() + 1;
-        let need = off + 8 * child_count;
-        if slice.len() < need {
-            return Err(DcbError::DeserializationError(
-                "tracking internal truncated children".to_string(),
-            ));
-        }
+
+        // Read child IDs (PageIDs)
         let mut child_ids = Vec::with_capacity(child_count);
         for _ in 0..child_count {
-            let v = LittleEndian::read_u64(&slice[off..off + 8]);
-            off += 8;
-            child_ids.push(PageID(v));
+            child_ids.push(reader.read_page_id()?);
         }
+
         Ok(Self { keys, child_ids })
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use byteorder::{ByteOrder, LittleEndian};
     use super::*;
 
     #[test]
