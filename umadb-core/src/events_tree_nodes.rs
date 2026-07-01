@@ -7,6 +7,7 @@ use std::io::{Cursor, Write};
 use umadb_dcb::DcbError;
 use umadb_dcb::DcbResult;
 use uuid::Uuid;
+use crate::slice_reader::SliceReader;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EventRecord {

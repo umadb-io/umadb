@@ -1,4 +1,6 @@
+use uuid::Uuid;
 use umadb_dcb::{DcbError, DcbResult};
+use crate::common::{PageID, Position, Tsn};
 
 /// A zero-copy, advancing reader for byte slices.
 pub struct SliceReader<'a> {
@@ -43,6 +45,40 @@ impl<'a> SliceReader<'a> {
         Ok(u64::from_le_bytes(b.try_into().unwrap()))
     }
 
+    pub fn read_uuid(&mut self) -> DcbResult<Uuid> {
+        let bytes = self.read_bytes(16)?;
+        Uuid::from_slice(bytes).map_err(|e| {
+            DcbError::DeserializationError(format!("Invalid UUID sequence: {e}"))
+        })
+    }
+
+    pub fn read_page_id(&mut self) -> DcbResult<PageID> {
+        Ok(PageID(self.read_u64()?))
+    }
+
+    pub fn read_position(&mut self) -> DcbResult<Position> {
+        Ok(Position(self.read_u64()?))
+    }
+
+    pub fn read_tsn(&mut self) -> DcbResult<Tsn> {
+        Ok(Tsn(self.read_u64()?))
+    }
+
+    /// Safely reads `len` bytes and validates them as a zero-copy UTF-8 string reference.
+    pub fn read_str(&mut self, len: usize) -> DcbResult<&'a str> {
+        let bytes = self.read_bytes(len)?;
+        std::str::from_utf8(bytes).map_err(|_| {
+            DcbError::DeserializationError("Invalid UTF-8 sequence".to_string())
+        })
+    }
+
+    /// Safely reads `len` bytes and allocates them into an owned String.
+    pub fn read_string(&mut self, len: usize) -> DcbResult<String> {
+        // Calls our zero-copy method, then allocates if successful
+        let s = self.read_str(len)?;
+        Ok(s.to_string())
+    }
+    
     /// Returns the number of unread bytes remaining.
     pub fn remaining(&self) -> usize {
         self.slice.len()

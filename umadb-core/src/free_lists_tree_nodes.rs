@@ -98,7 +98,7 @@ impl FreeListLeafNode {
         // Read keys
         let mut keys = Vec::with_capacity(keys_len);
         for _ in 0..keys_len {
-            keys.push(Tsn(reader.read_u64()?));
+            keys.push(reader.read_tsn()?);
         }
 
         // Read values
@@ -108,11 +108,11 @@ impl FreeListLeafNode {
             let page_ids_len = reader.read_u16()? as usize;
             let mut page_ids = Vec::with_capacity(page_ids_len);
             for _ in 0..page_ids_len {
-                page_ids.push(PageID(reader.read_u64()?));
+                page_ids.push(reader.read_page_id()?);
             }
 
             // Read root_id for this value
-            let root_id = PageID(reader.read_u64()?);
+            let root_id = reader.read_page_id()?;
 
             values.push(FreeListLeafValue { page_ids, root_id });
         }
@@ -231,7 +231,7 @@ impl FreeListInternalNode {
         // Read keys
         let mut keys = Vec::with_capacity(keys_len);
         for _ in 0..keys_len {
-            keys.push(Tsn(reader.read_u64()?));
+            keys.push(reader.read_tsn()?);
         }
 
         // Read child IDs length
@@ -240,7 +240,7 @@ impl FreeListInternalNode {
         // Read child IDs
         let mut child_ids = Vec::with_capacity(child_ids_len);
         for _ in 0..child_ids_len {
-            child_ids.push(PageID(reader.read_u64()?));
+            child_ids.push(reader.read_page_id()?);
         }
 
         Ok(FreeListInternalNode { keys, child_ids })
