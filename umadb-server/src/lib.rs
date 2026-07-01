@@ -369,6 +369,16 @@ impl umadb_proto::v1::dcb_server::Dcb for DcbServer {
         self.enforce_api_key(request.metadata())?;
         let read_request = request.into_inner();
 
+        // Avoid confusion by reporting the usage error with guidance.
+        #[allow(deprecated)]
+        if read_request.subscribe.unwrap_or(false) {
+            return Err(status_from_dcb_error(DcbError::InvalidArgument(
+                "The `subscribe` argument of `read()` has been deprecated. \
+                Please call the `subscribe()` method instead."
+                    .to_string(),
+            )));
+        }
+
         // Convert protobuf query to DCB types
         let query: Option<DcbQuery> = read_request.query.map(|q| q.into());
         let start = read_request.start;

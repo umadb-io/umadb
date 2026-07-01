@@ -4,7 +4,7 @@ use std::time::Duration;
 use tempfile::tempdir;
 use tokio::runtime::Builder as RtBuilder;
 use tokio::time::sleep;
-
+use tonic::Request;
 use tonic_health::pb::HealthCheckRequest;
 use tonic_health::pb::health_check_response::ServingStatus as PbServingStatus;
 use tonic_health::pb::health_client::HealthClient;
@@ -170,6 +170,54 @@ fn client_sync_covers_all_methods() {
 
     // Shutdown server
     let _ = shutdown_tx.send(());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn read_with_subscribe_true_returns_invalid_argument_error() {
+    // Arrange: start server on a free port
+    let temp_dir = tempdir().unwrap();
+    let db_path = temp_dir.path().to_path_buf();
+    let port = get_free_port();
+    let addr = format!("127.0.0.1:{}", port);
+    let url = format!("http://{}", addr);
+
+    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+
+    // Start server task
+    let db_clone = db_path.clone();
+    let addr_clone = addr.clone();
+    let server_task = tokio::spawn(async move {
+        let _ = start_server(db_clone, &addr_clone, shutdown_rx).await;
+    });
+
+    // Wait for health
+    wait_for_health(&url).await;
+
+    // Build basic gRPC client directly from generated proto client.
+    let mut client = umadb_proto::v1::dcb_client::DcbClient::connect(url.clone())
+        .await
+        .expect("connect grpc client");
+
+    // Check we get an invalid argument error from effectively calling `read(subscribe=True)`.
+    #[allow(deprecated)]
+    let req_body = umadb_proto::v1::ReadRequest {
+        query: None,
+        start: None,
+        backwards: None,
+        limit: None,
+        subscribe: Some(true),
+        batch_size: None,
+    };
+    let err = client
+        .read(Request::new(req_body))
+        .await
+        .expect_err("read(subscribe=true) should fail");
+    assert_eq!(err.code(), tonic::Code::InvalidArgument);
+    assert!(err.message().contains("subscribe"));
+
+    // Shutdown server
+    let _ = shutdown_tx.send(());
+    let _ = server_task.await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
