@@ -2,111 +2,184 @@ syntax = "proto3";
 
 package umadb.v1;
 
+// Represents a discrete state change, fact, or action within the system.
 message Event {
+  // The domain type or schema identifier of the event (e.g., 'UserCreated').
   string event_type = 1;
+  // Indexed labels used for filtering and categorizing events.
   repeated string tags = 2;
+  // The serialized payload of the event (e.g., JSON, Protobuf).
   bytes data = 3;
+  // A universally unique identifier for the event, useful for idempotency and deduplication.
   string uuid = 4;
+  // Additional context or headers (e.g., correlation IDs, user agents) not part of the core payload.
   repeated MetadataEntry metadata = 5;
 }
 
+// A simple key-value pair used to store custom event metadata.
 message MetadataEntry {
   string key = 1;
   string value = 2;
 }
 
+// An event that has been successfully committed to the event log.
 message SequencedEvent {
+  // The global, monotonically increasing sequence number of this event in the store.
   uint64 position = 1;
+  // The original event data.
   Event event = 2;
 }
 
+// A specific filter condition used to match events in the store.
 message QueryItem {
+  // A list of event types to match.
   repeated string types = 1;
+  // A list of event tags to match.
   repeated string tags = 2;
 }
 
+// A collection of filter conditions. Events matching these items will be returned.
 message Query {
+  // A list of query items, typically evaluated as a logical OR (match this item OR that item).
   repeated QueryItem items = 1;
 }
 
+// Concurrency control and conditional checks applied before appending new events.
 message AppendCondition {
+  // If provided, the append operation will fail if any existing events match this query.
+  // Useful for ensuring uniqueness or preventing duplicate state changes.
   optional Query fail_if_events_match = 1;
+  // If provided, the append operation is only valid if the current head of the stream
+  // exactly matches (or is greater than) this position. Used for optimistic concurrency.
   optional uint64 after = 2;
 }
 
+// Request parameters for querying historical events from the store.
 message ReadRequest {
+  // The filter criteria to apply. If omitted, all events are returned.
   optional Query query = 1;
+  // The sequence position to start reading from.
   optional uint64 start = 2;
+  // If true, reads events in reverse order (from newest to oldest).
   optional bool backwards = 3;
+  // The maximum number of events to return in the entire read operation.
   optional uint32 limit = 4;
+  // Deprecated: Use the separate Subscribe RPC instead for streaming new events.
   optional bool subscribe = 5 [deprecated=true];
+  // The maximum number of events to include in a single response chunk/batch.
   optional uint32 batch_size = 6;
 }
 
+// A chunk of historical events returned from a Read request.
 message ReadResponse {
+  // The list of events matching the read criteria.
   repeated SequencedEvent events = 1;
+  // The position of the most recent event in the store at the time of the read.
   optional uint64 head = 2;
 }
 
+// Request parameters for opening a real-time, continuous stream of events.
 message SubscribeRequest {
+  // The filter criteria for the events you want to listen to.
   optional Query query = 1;
+  // The sequence position to start subscribing from (allows resuming a disconnected stream).
   optional uint64 after = 2;
+  // The maximum number of events to buffer/send in a single stream push.
   optional uint32 batch_size = 3;
 }
 
+// A chunk of real-time events pushed to the subscriber.
 message SubscribeResponse {
   repeated SequencedEvent events = 1;
 }
 
+// Represents the read/processing progress of a specific client or source.
 message TrackingInfo {
+  // The unique identifier of the consumer, projection, or system tracking the events.
   string source = 1;
+  // The sequence position up to which the source has successfully processed.
   uint64 position = 2;
 }
 
+// Request payload for writing new events to the store.
 message AppendRequest {
+  // The list of new events to commit to the log.
   repeated Event events = 1;
+  // Concurrency controls to apply before allowing the append.
   optional AppendCondition condition = 2;
+  // Optional checkpointing information to update the source's tracking cursor upon success.
   optional TrackingInfo tracking_info = 3;
 }
 
+// Confirmation of a successful append operation.
 message AppendResponse {
+  // The new head position of the event store after committing these events.
   uint64 position = 1;
 }
 
+// Request to fetch the current highest sequence number in the store.
 message HeadRequest {
 }
 
+// Response containing the current highest sequence number in the store.
 message HeadResponse {
+  // The position of the most recently recorded event.
   optional uint64 position = 1;
 }
 
+// Request to fetch the saved cursor/position for a specific consumer.
 message TrackingRequest {
+  // The unique identifier of the consumer/source.
   string source = 1;
 }
 
+// Response containing the last known cursor/position for the requested consumer.
 message TrackingResponse {
+  // The position up to which the source has processed, if tracking info exists.
   optional uint64 position = 1;
 }
 
+// Standardized error payload for RPC failures.
 message ErrorResponse {
+  // A human-readable description of the error.
   string message = 1;
+  // The categorized type of the error.
   ErrorType error_type = 2;
 
+  // Categories of errors that can occur within the event store operations.
   enum ErrorType {
+    // Disk or network input/output failure.
     IO = 0;
+    // Failed to parse or serialize event payloads or metadata.
     SERIALIZATION = 1;
+    // Data constraints violated (e.g., AppendCondition failed).
     INTEGRITY = 2;
+    // Underlying storage is corrupted.
     CORRUPTION = 3;
+    // Unhandled or unexpected internal server error.
     INTERNAL = 4;
+    // Client is not authorized to perform the operation.
     AUTHENTICATION = 5;
+    // The request was malformed or contained invalid parameters.
     INVALID_ARGUMENT = 6;
   }
 }
 
+// Service providing Event Store RPCs supporting DCB.
 service DCB {
+
+  // Provides a stream of batches of already-recorded events, up to a captured head position.
   rpc Read(ReadRequest) returns (stream ReadResponse);
+
+  // Provides a stream of batches of already-recorded events, then continues as new events are recorded.
   rpc Subscribe(SubscribeRequest) returns (stream SubscribeResponse);
+
+  // Appends new events to the store.
   rpc Append(AppendRequest) returns (AppendResponse);
+
+  // Gets the position of the last recorded event in the store.
   rpc Head(HeadRequest) returns (HeadResponse);
+
+  // Gets the last record position for a named source.
   rpc GetTrackingInfo(TrackingRequest) returns (TrackingResponse);
 }
