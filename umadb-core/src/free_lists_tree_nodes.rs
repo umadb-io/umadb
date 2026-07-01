@@ -304,28 +304,17 @@ impl FreeListTsnLeafNode {
     }
 
     pub fn from_slice(slice: &[u8]) -> DcbResult<Self> {
-        if slice.len() < 2 {
-            return Err(DcbError::DeserializationError(format!(
-                "Expected at least 2 bytes, got {}",
-                slice.len()
-            )));
-        }
-        let plen = LittleEndian::read_u16(&slice[0..2]) as usize;
-        let need = 2 + plen * 8;
-        if slice.len() < need {
-            return Err(DcbError::DeserializationError(format!(
-                "Expected at least {} bytes, got {}",
-                need,
-                slice.len()
-            )));
-        }
+        let mut reader = SliceReader::new(slice);
+
+        // Read page_ids length
+        let plen = reader.read_u16()? as usize;
+
+        // Read page_ids (PageIDs)
         let mut page_ids = Vec::with_capacity(plen);
-        let mut offset = 2;
         for _ in 0..plen {
-            let v = LittleEndian::read_u64(&slice[offset..offset + 8]);
-            page_ids.push(PageID(v));
-            offset += 8;
+            page_ids.push(reader.read_page_id()?);
         }
+
         Ok(FreeListTsnLeafNode { page_ids })
     }
 
