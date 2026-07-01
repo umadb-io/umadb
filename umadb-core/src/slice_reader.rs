@@ -1,7 +1,7 @@
-use uuid::Uuid;
-use umadb_dcb::{DcbError, DcbResult};
 use crate::common::{PageID, Position, Tsn};
-use crate::tags_tree_nodes::{get_tag_key_width, TAG_HASH_LEN};
+use crate::tags_tree_nodes::{TAG_HASH_LEN, get_tag_key_width};
+use umadb_dcb::{DcbError, DcbResult};
+use uuid::Uuid;
 
 /// A zero-copy, advancing reader for byte slices.
 pub struct SliceReader<'a> {
@@ -48,9 +48,8 @@ impl<'a> SliceReader<'a> {
 
     pub fn read_uuid(&mut self) -> DcbResult<Uuid> {
         let bytes = self.read_bytes(16)?;
-        Uuid::from_slice(bytes).map_err(|e| {
-            DcbError::DeserializationError(format!("Invalid UUID sequence: {e}"))
-        })
+        Uuid::from_slice(bytes)
+            .map_err(|e| DcbError::DeserializationError(format!("Invalid UUID sequence: {e}")))
     }
 
     pub fn read_page_id(&mut self) -> DcbResult<PageID> {
@@ -68,9 +67,8 @@ impl<'a> SliceReader<'a> {
     /// Safely reads `len` bytes and validates them as a zero-copy UTF-8 string reference.
     pub fn read_str(&mut self, len: usize) -> DcbResult<&'a str> {
         let bytes = self.read_bytes(len)?;
-        std::str::from_utf8(bytes).map_err(|_| {
-            DcbError::DeserializationError("Invalid UTF-8 sequence".to_string())
-        })
+        std::str::from_utf8(bytes)
+            .map_err(|_| DcbError::DeserializationError("Invalid UTF-8 sequence".to_string()))
     }
 
     /// Safely reads `len` bytes and allocates them into an owned String.
@@ -91,7 +89,7 @@ impl<'a> SliceReader<'a> {
 
         Ok(key)
     }
-    
+
     /// Returns the number of unread bytes remaining.
     pub fn remaining(&self) -> usize {
         self.slice.len()

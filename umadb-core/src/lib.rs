@@ -10,7 +10,7 @@ pub mod mvcc;
 pub mod node;
 pub mod page;
 pub mod pager;
+pub mod slice_reader;
 pub mod tags_tree;
 pub mod tags_tree_nodes;
 pub mod tracking_tree_nodes;
-pub mod slice_reader;

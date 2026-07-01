@@ -1,9 +1,9 @@
 use crate::common::Position;
 use crate::common::{PageID, Tsn};
+use crate::slice_reader::SliceReader;
 use bitflags::bitflags;
 use std::io::{Cursor, Write};
 use umadb_dcb::{DcbError, DcbResult};
-use crate::slice_reader::SliceReader;
 
 bitflags! {
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]

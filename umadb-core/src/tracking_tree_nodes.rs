@@ -1,7 +1,7 @@
 use crate::common::{PageID, Position};
+use crate::slice_reader::SliceReader;
 use std::io::{Cursor, Write};
 use umadb_dcb::{DcbError, DcbResult};
-use crate::slice_reader::SliceReader;
 
 /// A simple leaf-only node for the tracking tree.
 /// Keys are UTF-8 source strings; values are positions.
@@ -76,9 +76,9 @@ impl TrackingLeafNode {
         // Read element count based on version
         let count = if ver == 0 {
             let cnt_u32 = reader.read_u32()?;
-            u16::try_from(cnt_u32)
-                .map_err(|_| DcbError::DeserializationError("v0 tracking leaf count exceeds u16".to_string()))?
-                as usize
+            u16::try_from(cnt_u32).map_err(|_| {
+                DcbError::DeserializationError("v0 tracking leaf count exceeds u16".to_string())
+            })? as usize
         } else {
             reader.read_u16()? as usize
         };
@@ -88,9 +88,11 @@ impl TrackingLeafNode {
         for _ in 0..count {
             let klen = if ver == 0 {
                 let klen_u32 = reader.read_u32()?;
-                u8::try_from(klen_u32)
-                    .map_err(|_| DcbError::DeserializationError("v0 tracking leaf key length exceeds u8".to_string()))?
-                    as usize
+                u8::try_from(klen_u32).map_err(|_| {
+                    DcbError::DeserializationError(
+                        "v0 tracking leaf key length exceeds u8".to_string(),
+                    )
+                })? as usize
             } else {
                 reader.read_u8()? as usize
             };
@@ -306,8 +308,8 @@ impl TrackingInternalNode {
 
 #[cfg(test)]
 mod tests {
-    use byteorder::{ByteOrder, LittleEndian};
     use super::*;
+    use byteorder::{ByteOrder, LittleEndian};
 
     #[test]
     fn test_tracking_leaf_roundtrip() {

@@ -1,8 +1,8 @@
 use crate::common::{PageID, Position};
+use crate::slice_reader::SliceReader;
 use std::io::{Cursor, Write};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use umadb_dcb::{DcbError, DcbResult};
-use crate::slice_reader::SliceReader;
 
 /// Length in bytes of the hashed tag key used in-memory for TagHash
 pub const TAG_HASH_LEN: usize = 16;

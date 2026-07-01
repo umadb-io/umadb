@@ -1,7 +1,7 @@
 use crate::common::{PageID, Tsn};
+use crate::slice_reader::SliceReader;
 use std::io::{Cursor, Write};
 use umadb_dcb::{DcbError, DcbResult};
-use crate::slice_reader::SliceReader;
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct FreeListLeafNode {

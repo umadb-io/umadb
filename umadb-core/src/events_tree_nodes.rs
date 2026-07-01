@@ -1,12 +1,12 @@
 use crate::common::PageID;
 use crate::common::Position;
 use crate::page::PAGE_HEADER_SIZE;
+use crate::slice_reader::SliceReader;
 use bitflags::bitflags;
 use std::io::{Cursor, Write};
 use umadb_dcb::DcbError;
 use umadb_dcb::DcbResult;
 use uuid::Uuid;
-use crate::slice_reader::SliceReader;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EventRecord {
@@ -514,7 +514,6 @@ impl EventLeafNode {
                     uuid,
                     metadata,
                 }));
-
             } else {
                 // --- Overflow Event ---
                 let data_len = reader.read_u64()?;
@@ -535,11 +534,7 @@ impl EventLeafNode {
                     None
                 };
 
-                let metadata_len = if has_metadata {
-                    reader.read_u64()?
-                } else {
-                    0
-                };
+                let metadata_len = if has_metadata { reader.read_u64()? } else { 0 };
 
                 values.push(EventValue::Overflow {
                     event_type,
