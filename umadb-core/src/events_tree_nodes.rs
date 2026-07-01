@@ -222,70 +222,29 @@ pub fn serialize_metadata(metadata: &[(String, String)]) -> Vec<u8> {
     buf
 }
 
-/// Read a metadata map from `slice` starting at `*offset`, advancing `*offset`
-/// past the bytes consumed.
-fn read_metadata(slice: &[u8], offset: &mut usize) -> DcbResult<Vec<(String, String)>> {
-    if *offset + 2 > slice.len() {
-        return Err(DcbError::DeserializationError(
-            "Unexpected end of data while reading metadata entry count".to_string(),
-        ));
-    }
-    let n = LittleEndian::read_u16(&slice[*offset..*offset + 2]) as usize;
-    *offset += 2;
+/// Read a metadata map using the provided SliceReader.
+fn read_metadata(reader: &mut SliceReader<'_>) -> DcbResult<Vec<(String, String)>> {
+    let n = reader.read_u16()? as usize;
     let mut metadata = Vec::with_capacity(n);
+
     for _ in 0..n {
-        if *offset + 2 > slice.len() {
-            return Err(DcbError::DeserializationError(
-                "Unexpected end of data while reading metadata key length".to_string(),
-            ));
-        }
-        let kl = LittleEndian::read_u16(&slice[*offset..*offset + 2]) as usize;
-        *offset += 2;
-        if *offset + kl > slice.len() {
-            return Err(DcbError::DeserializationError(
-                "Unexpected end of data while reading metadata key".to_string(),
-            ));
-        }
-        let key = match std::str::from_utf8(&slice[*offset..*offset + kl]) {
-            Ok(s) => s.to_string(),
-            Err(_) => {
-                return Err(DcbError::DeserializationError(
-                    "Invalid UTF-8 sequence in metadata key".to_string(),
-                ));
-            }
-        };
-        *offset += kl;
-        if *offset + 2 > slice.len() {
-            return Err(DcbError::DeserializationError(
-                "Unexpected end of data while reading metadata value length".to_string(),
-            ));
-        }
-        let vl = LittleEndian::read_u16(&slice[*offset..*offset + 2]) as usize;
-        *offset += 2;
-        if *offset + vl > slice.len() {
-            return Err(DcbError::DeserializationError(
-                "Unexpected end of data while reading metadata value".to_string(),
-            ));
-        }
-        let value = match std::str::from_utf8(&slice[*offset..*offset + vl]) {
-            Ok(s) => s.to_string(),
-            Err(_) => {
-                return Err(DcbError::DeserializationError(
-                    "Invalid UTF-8 sequence in metadata value".to_string(),
-                ));
-            }
-        };
-        *offset += vl;
+        let kl = reader.read_u16()? as usize;
+        let key = reader.read_string(kl)?;
+
+        let vl = reader.read_u16()? as usize;
+        let value = reader.read_string(vl)?;
+
         metadata.push((key, value));
     }
+
     Ok(metadata)
 }
 
 /// Deserialize a metadata map from a complete slice (used for the overflow
 /// chain, where metadata bytes follow the event data).
 pub fn deserialize_metadata(slice: &[u8]) -> DcbResult<Vec<(String, String)>> {
-    let mut offset = 0usize;
-    read_metadata(slice, &mut offset)
+    let mut reader = SliceReader::new(slice);
+    read_metadata(&mut reader)
 }
 
 impl PartialEq<EventValue> for EventRecord {
@@ -499,156 +458,52 @@ impl EventLeafNode {
     }
 
     pub fn from_slice(slice: &[u8]) -> DcbResult<Self> {
-        // Check if the slice has at least 2 bytes for keys_len
-        if slice.len() < 2 {
-            return Err(DcbError::DeserializationError(format!(
-                "Expected at least 2 bytes, got {}",
-                slice.len()
-            )));
-        }
+        let mut reader = SliceReader::new(slice);
 
-        // Extract the length of the keys (first 2 bytes)
-        let keys_len = LittleEndian::read_u16(&slice[0..2]) as usize;
-
-        // Calculate the minimum expected size for the keys
-        let min_expected_size = 2 + (keys_len * 8);
-        if slice.len() < min_expected_size {
-            return Err(DcbError::DeserializationError(format!(
-                "Expected at least {} bytes for keys, got {}",
-                min_expected_size,
-                slice.len()
-            )));
-        }
-
-        // Extract the keys (8 bytes each)
+        // Read keys
+        let keys_len = reader.read_u16()? as usize;
         let mut keys = Vec::with_capacity(keys_len);
-        for i in 0..keys_len {
-            let start = 2 + (i * 8);
-            let position = LittleEndian::read_u64(&slice[start..start + 8]);
-            keys.push(Position(position));
+        for _ in 0..keys_len {
+            keys.push(reader.read_position()?);
         }
 
-        // Extract the values (EventValue)
+        // Read values
         let mut values = Vec::with_capacity(keys_len);
-        let mut offset = 2 + (keys_len * 8);
 
         for _ in 0..keys_len {
-            // Read discriminator (1 byte)
-            if offset + 1 > slice.len() {
-                return Err(DcbError::DeserializationError(
-                    "Unexpected end of data while reading value kind".to_string(),
-                ));
-            }
+            // Flags
+            let flags_byte = reader.read_u8()?;
+            let flags = EventValueFlags::from_bits(flags_byte).ok_or_else(|| {
+                DcbError::DeserializationError("unknown flag bits set".to_string())
+            })?;
 
-            let flags = EventValueFlags::from_bits(slice[offset]).ok_or(
-                DcbError::DeserializationError("unknown flag bits set".to_string()),
-            )?;
-            offset += 1;
-
-            // Extract event_type length (2 bytes)
-            if offset + 2 > slice.len() {
-                return Err(DcbError::DeserializationError(
-                    "Unexpected end of data while reading event_type length".to_string(),
-                ));
-            }
-            let event_type_len = LittleEndian::read_u16(&slice[offset..offset + 2]) as usize;
-            offset += 2;
-            if offset + event_type_len > slice.len() {
-                return Err(DcbError::DeserializationError(
-                    "Unexpected end of data while reading event_type".to_string(),
-                ));
-            }
-            let event_type = match std::str::from_utf8(&slice[offset..offset + event_type_len]) {
-                Ok(s) => s.to_string(),
-                Err(_) => {
-                    return Err(DcbError::DeserializationError(
-                        "Invalid UTF-8 sequence in event_type".to_string(),
-                    ));
-                }
-            };
-            offset += event_type_len;
+            // Event Type
+            let event_type_len = reader.read_u16()? as usize;
+            let event_type = reader.read_string(event_type_len)?;
 
             let overflow = flags.contains(EventValueFlags::OVERFLOW);
             let has_uuid = flags.contains(EventValueFlags::HAS_UUID);
             let has_metadata = flags.contains(EventValueFlags::HAS_METADATA);
 
             if !overflow {
-                // Inline: data_len u16 + data bytes
-                if offset + 2 > slice.len() {
-                    return Err(DcbError::DeserializationError(
-                        "Unexpected end of data while reading data length".to_string(),
-                    ));
-                }
-                let data_len = LittleEndian::read_u16(&slice[offset..offset + 2]) as usize;
-                offset += 2;
-                if offset + data_len > slice.len() {
-                    return Err(DcbError::DeserializationError(
-                        "Unexpected end of data while reading data".to_string(),
-                    ));
-                }
-                let data = slice[offset..offset + data_len].to_vec();
-                offset += data_len;
+                // --- Inline Event ---
+                let data_len = reader.read_u16()? as usize;
+                let data = reader.read_bytes(data_len)?.to_vec();
 
-                // num tags
-                if offset + 2 > slice.len() {
-                    return Err(DcbError::DeserializationError(
-                        "Unexpected end of data while reading number of tags".to_string(),
-                    ));
-                }
-                let num_tags = LittleEndian::read_u16(&slice[offset..offset + 2]) as usize;
-                offset += 2;
+                let num_tags = reader.read_u16()? as usize;
                 let mut tags = Vec::with_capacity(num_tags);
                 for _ in 0..num_tags {
-                    if offset + 2 > slice.len() {
-                        return Err(DcbError::DeserializationError(
-                            "Unexpected end of data while reading tag length".to_string(),
-                        ));
-                    }
-                    let tag_len = LittleEndian::read_u16(&slice[offset..offset + 2]) as usize;
-                    offset += 2;
-                    if offset + tag_len > slice.len() {
-                        return Err(DcbError::DeserializationError(
-                            "Unexpected end of data while reading tag".to_string(),
-                        ));
-                    }
-                    let tag = match std::str::from_utf8(&slice[offset..offset + tag_len]) {
-                        Ok(s) => s.to_string(),
-                        Err(_) => {
-                            return Err(DcbError::DeserializationError(
-                                "Invalid UTF-8 sequence in tag".to_string(),
-                            ));
-                        }
-                    };
-                    offset += tag_len;
+                    let tag_len = reader.read_u16()? as usize;
+                    let tag = reader.read_string(tag_len)?;
                     tags.push(tag);
                 }
-
-                let uuid = {
-                    if has_uuid {
-                        if offset + 16 > slice.len() {
-                            return Err(DcbError::DeserializationError(
-                                "Unexpected end of data while reading UUID".to_string(),
-                            ));
-                        }
-
-                        match Uuid::from_slice(&slice[offset..offset + 16]) {
-                            Ok(uuid) => {
-                                offset += 16;
-                                Some(uuid)
-                            }
-                            Err(err) => {
-                                return Err(DcbError::DeserializationError(
-                                    format!("Invalid UUID sequence: {err} ").to_string(),
-                                ));
-                            }
-                        }
-                    } else {
-                        None
-                    }
+                let uuid = if has_uuid {
+                    Some(reader.read_uuid()?)
+                } else {
+                    None
                 };
-
                 let metadata = if has_metadata {
-                    read_metadata(slice, &mut offset)?
+                    read_metadata(&mut reader)?
                 } else {
                     Vec::new()
                 };
@@ -660,94 +515,31 @@ impl EventLeafNode {
                     uuid,
                     metadata,
                 }));
-            } else {
-                // Overflow: data_len u64 + tags + root_id
-                if offset + 8 > slice.len() {
-                    return Err(DcbError::DeserializationError(
-                        "Unexpected end of data while reading overflow data_len".to_string(),
-                    ));
-                }
-                let data_len = LittleEndian::read_u64(&slice[offset..offset + 8]);
-                offset += 8;
 
-                if offset + 2 > slice.len() {
-                    return Err(DcbError::DeserializationError(
-                        "Unexpected end of data while reading number of tags".to_string(),
-                    ));
-                }
-                let num_tags = LittleEndian::read_u16(&slice[offset..offset + 2]) as usize;
-                offset += 2;
+            } else {
+                // --- Overflow Event ---
+                let data_len = reader.read_u64()?;
+
+                let num_tags = reader.read_u16()? as usize;
                 let mut tags = Vec::with_capacity(num_tags);
                 for _ in 0..num_tags {
-                    if offset + 2 > slice.len() {
-                        return Err(DcbError::DeserializationError(
-                            "Unexpected end of data while reading tag length".to_string(),
-                        ));
-                    }
-                    let tag_len = LittleEndian::read_u16(&slice[offset..offset + 2]) as usize;
-                    offset += 2;
-                    if offset + tag_len > slice.len() {
-                        return Err(DcbError::DeserializationError(
-                            "Unexpected end of data while reading tag".to_string(),
-                        ));
-                    }
-                    let tag = match std::str::from_utf8(&slice[offset..offset + tag_len]) {
-                        Ok(s) => s.to_string(),
-                        Err(_) => {
-                            return Err(DcbError::DeserializationError(
-                                "Invalid UTF-8 sequence in tag".to_string(),
-                            ));
-                        }
-                    };
-                    offset += tag_len;
+                    let tag_len = reader.read_u16()? as usize;
+                    let tag = reader.read_string(tag_len)?;
                     tags.push(tag);
                 }
-                if offset + 8 > slice.len() {
-                    return Err(DcbError::DeserializationError(
-                        "Unexpected end of data while reading overflow root_id".to_string(),
-                    ));
-                }
-                let root_id = PageID(LittleEndian::read_u64(&slice[offset..offset + 8]));
-                offset += 8;
 
-                let uuid = {
-                    if has_uuid {
-                        if offset + 16 > slice.len() {
-                            return Err(DcbError::DeserializationError(
-                                "Unexpected end of data while reading UUID".to_string(),
-                            ));
-                        }
+                let root_id = reader.read_page_id()?;
 
-                        match Uuid::from_slice(&slice[offset..offset + 16]) {
-                            Ok(uuid) => {
-                                offset += 16;
-                                Some(uuid)
-                            }
-                            Err(err) => {
-                                return Err(DcbError::DeserializationError(
-                                    format!("Invalid UUID sequence: {err} ").to_string(),
-                                ));
-                            }
-                        }
-                    } else {
-                        None
-                    }
+                let uuid = if has_uuid {
+                    Some(reader.read_uuid()?)
+                } else {
+                    None
                 };
-                let metadata_len = {
-                    if has_metadata {
-                        // metadata_len u64 (metadata bytes live at the tail of the overflow chain)
-                        if offset + 8 > slice.len() {
-                            return Err(DcbError::DeserializationError(
-                                "Unexpected end of data while reading overflow metadata_len"
-                                    .to_string(),
-                            ));
-                        }
-                        let metadata_len = LittleEndian::read_u64(&slice[offset..offset + 8]);
-                        offset += 8;
-                        metadata_len
-                    } else {
-                        0
-                    }
+
+                let metadata_len = if has_metadata {
+                    reader.read_u64()?
+                } else {
+                    0
                 };
 
                 values.push(EventValue::Overflow {
