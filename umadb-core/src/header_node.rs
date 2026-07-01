@@ -1,9 +1,9 @@
 use crate::common::Position;
 use crate::common::{PageID, Tsn};
 use bitflags::bitflags;
-use byteorder::{ByteOrder, LittleEndian};
 use std::io::{Cursor, Write};
 use umadb_dcb::{DcbError, DcbResult};
+use crate::slice_reader::SliceReader;
 
 bitflags! {
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -92,60 +92,68 @@ impl HeaderNode {
         Ok(cursor.position() as usize)
     }
 
-    /// Creates a HeaderNode from a byte slice
-    /// Accepts legacy 48-byte layout (no schema, schema_version=0) or the current 52-byte layout (schema as u32 at the end).
-    /// Layout (first 48 bytes):
-    /// - 8 bytes for tsn
-    /// - 8 bytes for next_page_id
-    /// - 8 bytes for free_lists_tree_root_id
-    /// - 8 bytes for events_tree_root_id
-    /// - 8 bytes for tags_tree_root_id
-    /// - 8 bytes for next_position
+    /// Deserializes a `HeaderNode` from a byte slice.
+    ///
+    /// This function is strictly backward-compatible. It accepts legacy 48-byte layouts
+    /// and dynamically defaults newer fields to `0` or `empty` if the provided slice
+    /// is shorter than the current schema.
+    ///
+    /// # Byte Layout
+    /// **Core Header (Required - 48 bytes):**
+    /// - `00..08`: `tsn` (u64)
+    /// - `08..16`: `next_page_id` (u64)
+    /// - `16..24`: `free_lists_tree_root_id` (u64)
+    /// - `24..32`: `events_tree_root_id` (u64)
+    /// - `32..40`: `tags_tree_root_id` (u64)
+    /// - `40..48`: `next_position` (u64)
+    ///
+    /// **Extensions (Optional):**
+    /// - `48..52`: `schema_version` (u32, defaults to 0)
+    /// - `52..54`: `flags` (u16, defaults to empty)
+    /// - `54..62`: `tracking_root_page_id` (u64, parsed only if `HAS_TRACKING_ROOT_ID` flag is set, defaults to 0)
     ///
     /// # Arguments
-    /// * `slice` - The byte slice to deserialize from
+    /// * `slice` - The byte slice containing the serialized header data.
     ///
-    /// # Returns
-    /// * `Result<Self>` - The deserialized HeaderNode or an error
+    /// # Errors
+    /// Returns a `DcbError::DeserializationError` if:
+    /// * The slice is smaller than the core 48 bytes.
+    /// * Unrecognized bits are set in the `flags` field.
+    /// * The `HAS_TRACKING_ROOT_ID` flag is present, but the slice is too short to contain the 8-byte ID.
     pub fn from_slice(slice: &[u8]) -> DcbResult<Self> {
-        if slice.len() < 48 {
-            return Err(DcbError::DeserializationError(format!(
-                "Expected at least 48 bytes, got {}",
-                slice.len()
-            )));
-        }
+        let mut reader = SliceReader::new(slice);
 
-        let tsn = LittleEndian::read_u64(&slice[0..8]);
-        let next_page_id = LittleEndian::read_u64(&slice[8..16]);
-        let freetree_root_id = LittleEndian::read_u64(&slice[16..24]);
-        let position_root_id = LittleEndian::read_u64(&slice[24..32]);
-        let tags_root_id = LittleEndian::read_u64(&slice[32..40]);
-        let next_position = LittleEndian::read_u64(&slice[40..48]);
-        let schema_version: u32 = if slice.len() >= 52 {
-            LittleEndian::read_u32(&slice[48..52])
+        // Read the core 48-byte header
+        let tsn = reader.read_u64()?;
+        let next_page_id = reader.read_u64()?;
+        let freetree_root_id = reader.read_u64()?;
+        let position_root_id = reader.read_u64()?;
+        let tags_root_id = reader.read_u64()?;
+        let next_position = reader.read_u64()?;
+
+        // Read schema_version if the slice is long enough (backwards compatibility)
+        let schema_version = if reader.remaining() >= 4 {
+            reader.read_u32()?
         } else {
-            0u32
+            0
         };
-        let flags = if slice.len() >= 54 {
-            HeaderFlags::from_bits(LittleEndian::read_u16(&slice[52..54])).ok_or(
-                DcbError::DeserializationError("unknown flag bits set".to_string()),
-            )?
+
+        // Read flags if the slice is long enough
+        let flags = if reader.remaining() >= 2 {
+            let bits = reader.read_u16()?;
+            HeaderFlags::from_bits(bits).ok_or_else(|| {
+                DcbError::DeserializationError("unknown flag bits set".to_string())
+            })?
         } else {
             HeaderFlags::empty()
         };
-        let mut required_len = 54;
-        let mut tracking_tree_root_id = 0u64;
 
-        if flags.contains(HeaderFlags::HAS_TRACKING_ROOT_ID) {
-            required_len += 8;
-            if slice.len() < required_len {
-                return Err(DcbError::DeserializationError(format!(
-                    "Expected at least {required_len} bytes, got {}",
-                    slice.len()
-                )));
-            }
-            tracking_tree_root_id = LittleEndian::read_u64(&slice[required_len - 8..required_len]);
-        }
+        // Read tracking_tree_root_id conditionally based on the flag we just parsed
+        let tracking_tree_root_id = if flags.contains(HeaderFlags::HAS_TRACKING_ROOT_ID) {
+            reader.read_u64()?
+        } else {
+            0
+        };
 
         Ok(HeaderNode {
             tsn: Tsn(tsn),
