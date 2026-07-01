@@ -13,3 +13,4 @@ pub mod pager;
 pub mod tags_tree;
 pub mod tags_tree_nodes;
 pub mod tracking_tree_nodes;
+pub mod slice_reader;
