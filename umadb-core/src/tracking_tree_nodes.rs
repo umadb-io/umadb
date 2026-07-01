@@ -2,6 +2,7 @@ use crate::common::{PageID, Position};
 use byteorder::{ByteOrder, LittleEndian};
 use std::io::{Cursor, Write};
 use umadb_dcb::{DcbError, DcbResult};
+use crate::slice_reader::SliceReader;
 
 /// A simple leaf-only node for the tracking tree.
 /// Keys are UTF-8 source strings; values are positions.
@@ -68,90 +69,44 @@ impl TrackingLeafNode {
     }
 
     pub fn from_slice(slice: &[u8]) -> DcbResult<Self> {
-        if slice.is_empty() {
-            return Err(DcbError::DeserializationError(
-                "tracking leaf too small".to_string(),
-            ));
-        }
-        let ver = slice[0];
-        let (mut off, count): (usize, usize) = if ver == 0 {
-            if slice.len() < 5 {
-                return Err(DcbError::DeserializationError(
-                    "tracking leaf too small (v0)".to_string(),
-                ));
-            }
-            let cnt_u32 = LittleEndian::read_u32(&slice[1..5]);
-            if cnt_u32 > u16::MAX as u32 {
-                return Err(DcbError::DeserializationError(
-                    "v0 tracking leaf count exceeds u16".to_string(),
-                ));
-            }
-            (5, cnt_u32 as usize)
+        let mut reader = SliceReader::new(slice);
+
+        // Read format version
+        let ver = reader.read_u8()?;
+
+        // Read element count based on version
+        let count = if ver == 0 {
+            let cnt_u32 = reader.read_u32()?;
+            u16::try_from(cnt_u32)
+                .map_err(|_| DcbError::DeserializationError("v0 tracking leaf count exceeds u16".to_string()))?
+                as usize
         } else {
-            if slice.len() < 3 {
-                return Err(DcbError::DeserializationError(
-                    "tracking leaf too small (v1)".to_string(),
-                ));
-            }
-            (3, LittleEndian::read_u16(&slice[1..3]) as usize)
+            reader.read_u16()? as usize
         };
+
+        // Read keys
         let mut keys = Vec::with_capacity(count);
         for _ in 0..count {
-            if ver == 0 {
-                if off + 4 > slice.len() {
-                    return Err(DcbError::DeserializationError(
-                        "tracking leaf truncated klen (v0)".to_string(),
-                    ));
-                }
-                let klen_u32 = LittleEndian::read_u32(&slice[off..off + 4]);
-                if klen_u32 > u8::MAX as u32 {
-                    return Err(DcbError::DeserializationError(
-                        "v0 tracking leaf key length exceeds u8".to_string(),
-                    ));
-                }
-                let klen = klen_u32 as usize;
-                off += 4;
-                if off + klen > slice.len() {
-                    return Err(DcbError::DeserializationError(
-                        "tracking leaf truncated key (v0)".to_string(),
-                    ));
-                }
-                let k = std::str::from_utf8(&slice[off..off + klen])
-                    .map_err(|e| DcbError::DeserializationError(format!("invalid utf8: {e}")))?
-                    .to_string();
-                off += klen;
-                keys.push(k);
+            let klen = if ver == 0 {
+                let klen_u32 = reader.read_u32()?;
+                u8::try_from(klen_u32)
+                    .map_err(|_| DcbError::DeserializationError("v0 tracking leaf key length exceeds u8".to_string()))?
+                    as usize
             } else {
-                if off + 1 > slice.len() {
-                    return Err(DcbError::DeserializationError(
-                        "tracking leaf truncated klen (v1)".to_string(),
-                    ));
-                }
-                let klen = slice[off] as usize;
-                off += 1;
-                if off + klen > slice.len() {
-                    return Err(DcbError::DeserializationError(
-                        "tracking leaf truncated key (v1)".to_string(),
-                    ));
-                }
-                let k = std::str::from_utf8(&slice[off..off + klen])
-                    .map_err(|e| DcbError::DeserializationError(format!("invalid utf8: {e}")))?
-                    .to_string();
-                off += klen;
-                keys.push(k);
-            }
+                reader.read_u8()? as usize
+            };
+
+            let k = reader.read_string(klen)?;
+            keys.push(k);
         }
+
+        // Read values (Positions)
         let mut values = Vec::with_capacity(count);
         for _ in 0..count {
-            if off + 8 > slice.len() {
-                return Err(DcbError::DeserializationError(
-                    "tracking leaf truncated value".to_string(),
-                ));
-            }
-            let v = LittleEndian::read_u64(&slice[off..off + 8]);
-            off += 8;
-            values.push(Position(v));
+            values.push(reader.read_position()?);
         }
+
+        // Handle legacy sorting requirements
         if ver == 0 {
             // Old format: keys may be unsorted. Sort keys and keep values aligned.
             let mut pairs: Vec<(String, Position)> = keys.into_iter().zip(values).collect();
@@ -162,7 +117,7 @@ impl TrackingLeafNode {
                 values: new_vals,
             })
         } else {
-            // v>=1: keys are already sorted
+            // v>=1: keys are already sorted on disk
             Ok(Self { keys, values })
         }
     }
