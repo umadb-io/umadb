@@ -2,6 +2,7 @@ use crate::common::{PageID, Tsn};
 use byteorder::{ByteOrder, LittleEndian};
 use std::io::{Cursor, Write};
 use umadb_dcb::{DcbError, DcbResult};
+use crate::slice_reader::SliceReader;
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct FreeListLeafNode {
@@ -72,83 +73,46 @@ impl FreeListLeafNode {
         Ok(cursor.position() as usize)
     }
 
-    /// Creates a FreeListLeafNode from a byte slice
+    /// Deserializes a `FreeListLeafNode` from a byte slice.
+    ///
+    /// # Byte Layout
+    /// - `00..02`: `keys_len` (u16)
+    /// - `02..??`: Array of `keys_len` keys (8 bytes each, mapped to `Tsn`)
+    /// - `??..??`: Array of `keys_len` values, where each value consists of:
+    ///   - `page_ids_len` (u16)
+    ///   - Array of `page_ids_len` page IDs (8 bytes each, mapped to `PageID`)
+    ///   - `root_id` (8 bytes, mapped to `PageID`; 0 indicates no subtree)
     ///
     /// # Arguments
-    /// * `slice` - The byte slice to deserialize from
+    /// * `slice` - The byte slice containing the serialized free list leaf node data.
     ///
-    /// # Returns
-    /// * `Result<Self>` - The deserialized FreeListLeafNode or an error
+    /// # Errors
+    /// Returns a `DcbError::DeserializationError` if the slice is truncated or too
+    /// short to contain the expected lengths and fields at any point during parsing.
     pub fn from_slice(slice: &[u8]) -> DcbResult<Self> {
-        // Check if the slice has at least 2 bytes for keys_len
-        if slice.len() < 2 {
-            return Err(DcbError::DeserializationError(format!(
-                "Expected at least 2 bytes, got {}",
-                slice.len()
-            )));
-        }
+        let mut reader = SliceReader::new(slice);
 
-        // Extract the length of the keys (first 2 bytes)
-        let keys_len = LittleEndian::read_u16(&slice[0..2]) as usize;
+        // Read keys length
+        let keys_len = reader.read_u16()? as usize;
 
-        // Calculate the minimum expected size for the keys
-        let min_expected_size = 2 + (keys_len * 8);
-        if slice.len() < min_expected_size {
-            return Err(DcbError::DeserializationError(format!(
-                "Expected at least {} bytes for keys, got {}",
-                min_expected_size,
-                slice.len()
-            )));
-        }
-
-        // Extract the keys (8 bytes each)
+        // Read keys
         let mut keys = Vec::with_capacity(keys_len);
-        for i in 0..keys_len {
-            let start = 2 + (i * 8);
-            let tsn = LittleEndian::read_u64(&slice[start..start + 8]);
-            keys.push(Tsn(tsn));
+        for _ in 0..keys_len {
+            keys.push(Tsn(reader.read_u64()?));
         }
 
-        // Extract the values
+        // Read values
         let mut values = Vec::with_capacity(keys_len);
-        let mut offset = 2 + (keys_len * 8);
-
         for _ in 0..keys_len {
-            if offset + 2 > slice.len() {
-                return Err(DcbError::DeserializationError(
-                    "Unexpected end of data while reading page_ids length".to_string(),
-                ));
-            }
-
-            // Extract the length of page_ids (2 bytes)
-            let page_ids_len = LittleEndian::read_u16(&slice[offset..offset + 2]) as usize;
-            offset += 2;
-
-            if offset + (page_ids_len * 8) > slice.len() {
-                return Err(DcbError::DeserializationError(
-                    "Unexpected end of data while reading page_ids".to_string(),
-                ));
-            }
-
-            // Extract the page_ids (8 bytes each)
+            // Read page_ids for this value
+            let page_ids_len = reader.read_u16()? as usize;
             let mut page_ids = Vec::with_capacity(page_ids_len);
-            for j in 0..page_ids_len {
-                let start = offset + (j * 8);
-                let page_id = LittleEndian::read_u64(&slice[start..start + 8]);
-                page_ids.push(PageID(page_id));
-            }
-            offset += page_ids_len * 8;
-
-            if offset + 8 > slice.len() {
-                return Err(DcbError::DeserializationError(
-                    "Unexpected end of data while reading root_id".to_string(),
-                ));
+            for _ in 0..page_ids_len {
+                page_ids.push(PageID(reader.read_u64()?));
             }
 
-            // Extract the root_id (always 8 bytes); PageID(0) indicates no subtree
-            let page_id = LittleEndian::read_u64(&slice[offset..offset + 8]);
-            offset += 8;
-            let root_id = PageID(page_id);
+            // Read root_id for this value
+            let root_id = PageID(reader.read_u64()?);
 
             values.push(FreeListLeafValue { page_ids, root_id });
         }
