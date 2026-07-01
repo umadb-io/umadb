@@ -105,13 +105,8 @@ impl TagsLeafNode {
 
         // Read keys (runtime width)
         let mut keys = Vec::with_capacity(keys_len);
-        let keyw = get_tag_key_width();
         for _ in 0..keys_len {
-            let key_bytes = reader.read_bytes(keyw)?;
-            let mut key = [0u8; TAG_HASH_LEN];
-            // copy the on-disk width and leave the rest as zeros
-            key[..keyw].copy_from_slice(key_bytes);
-            keys.push(key);
+            keys.push(reader.read_tag_hash()?);
         }
 
         // Read values
@@ -189,11 +184,7 @@ impl TagsInternalNode {
         let keyw = get_tag_key_width();
         let mut keys = Vec::with_capacity(keys_len);
         for _ in 0..keys_len {
-            let key_bytes = reader.read_bytes(keyw)?;
-            let mut key = [0u8; TAG_HASH_LEN];
-            // copy the on-disk width and leave the rest as zeros
-            key[..keyw].copy_from_slice(key_bytes);
-            keys.push(key);
+            keys.push(reader.read_tag_hash()?);
         }
 
         // Derive child_ids length (always keys_len + 1 for internal nodes)

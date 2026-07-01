@@ -1,6 +1,7 @@
 use uuid::Uuid;
 use umadb_dcb::{DcbError, DcbResult};
 use crate::common::{PageID, Position, Tsn};
+use crate::tags_tree_nodes::{get_tag_key_width, TAG_HASH_LEN};
 
 /// A zero-copy, advancing reader for byte slices.
 pub struct SliceReader<'a> {
@@ -77,6 +78,18 @@ impl<'a> SliceReader<'a> {
         // Calls our zero-copy method, then allocates if successful
         let s = self.read_str(len)?;
         Ok(s.to_string())
+    }
+
+    /// Reads a dynamically sized tag hash from disk and zero-pads it to the in-memory size.
+    pub fn read_tag_hash(&mut self) -> DcbResult<[u8; TAG_HASH_LEN]> {
+        let keyw = get_tag_key_width();
+        let key_bytes = self.read_bytes(keyw)?;
+
+        let mut key = [0u8; TAG_HASH_LEN];
+        // Copy the on-disk width and leave the rest as zeros
+        key[..keyw].copy_from_slice(key_bytes);
+
+        Ok(key)
     }
     
     /// Returns the number of unread bytes remaining.
