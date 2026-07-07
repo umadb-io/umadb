@@ -20,6 +20,7 @@ UVX ?= uvx@$(UV_VERSION)
 .PHONY: bench-read-cond
 .PHONY: bench-read-with-writers
 .PHONY: bench-page-approx-deserialized-bytes
+.PHONY: bench-metadata-containers
 .PHONY: bench-all
 .PHONY: release-dry-run
 .PHONY: release-execute
@@ -179,6 +180,10 @@ bench-throughput-vs-volume:
 
 bench-page-approx-deserialized-bytes:
 	cargo bench -p umadb-benches --bench page_approx_deserialized_bytes_bench
+
+bench-metadata-containers:
+	@echo "Running metadata container benchmark"
+	cargo bench -p umadb-benches --bench metadata_container_bench
 
 
 release-crates-dry-run:
