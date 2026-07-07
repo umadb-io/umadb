@@ -433,7 +433,7 @@ self-signed-cert:
       -nodes \
       -subj "/CN=localhost" \
       -addext "basicConstraints = CA:FALSE" \
-      -addext "subjectAltName = DNS:localhost"
+      -addext "subjectAltName = DNS:localhost,IP:127.0.0.1"
 
 build-local-docker-arm64:
 	make build-cross-umadb-aarch64-unknown-linux-musl

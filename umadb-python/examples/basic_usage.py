@@ -27,10 +27,12 @@ def main() -> None:
     # Connect to UmaDB server (make sure server is running)
     api_key = os.environ.get("UMADB_API_KEY")
     ca_path = os.environ.get("UMADB_TLS_CERT")
-    if ca_path:
-        url = "https://localhost:50051"
-    else:
-        url = "http://localhost:50051"
+    url = os.environ.get("UMADB_URL")
+    if url is None:
+        if ca_path:
+            url = "https://127.0.0.1:50051"
+        else:
+            url = "http://127.0.0.1:50051"
     print("Connecting to UmaDB server...")
     client = Client(url, ca_path=ca_path, api_key=api_key, batch_size=2)
 
