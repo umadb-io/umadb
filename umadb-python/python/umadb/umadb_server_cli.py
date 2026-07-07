@@ -66,3 +66,5 @@ def main() -> None:
         page_cache_max_mb=args.page_cache_max_mb,
         zero_fill_pages=args.zero_fill_pages,
     )
+
+__all__ = ["main"]
