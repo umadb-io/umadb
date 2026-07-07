@@ -615,16 +615,27 @@ fn run_server(
 #[pyo3(signature = (listen="127.0.0.1:50051".to_string(), db_path="./uma.db".to_string(), tls_cert=None, tls_key=None, api_key=None, read_method="fileio".to_string(), page_cache_max_pages=0, page_cache_max_mb=0, zero_fill_pages=true))]
 #[allow(clippy::too_many_arguments)]
 fn run_server(
-    _listen: String,
-    _db_path: String,
-    _tls_cert: Option<String>,
-    _tls_key: Option<String>,
-    _api_key: Option<String>,
-    _read_method: String,
-    _page_cache_max_pages: usize,
-    _page_cache_max_mb: usize,
-    _zero_fill_pages: bool,
+    listen: String,
+    db_path: String,
+    tls_cert: Option<String>,
+    tls_key: Option<String>,
+    api_key: Option<String>,
+    read_method: String,
+    page_cache_max_pages: usize,
+    page_cache_max_mb: usize,
+    zero_fill_pages: bool,
 ) -> PyResult<()> {
+    let _ = (
+        listen,
+        db_path,
+        tls_cert,
+        tls_key,
+        api_key,
+        read_method,
+        page_cache_max_pages,
+        page_cache_max_mb,
+        zero_fill_pages,
+    );
     Err(ServerStartError::new_err(
         "Running the UmaDB server from the Python package is not supported on Windows.",
     ))
