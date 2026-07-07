@@ -15,3 +15,4 @@
 /umadb-benches/benches/__pycache__/
 /.python-version
 /uma.db
+/umadb-python/python/umadb/umadb.abi3.so

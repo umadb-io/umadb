@@ -14,6 +14,7 @@ __all__ = [
     "QueryItem",
     "ReadResponse",
     "SequencedEvent",
+    "ServerStartError",
     "Subscription",
     "TrackingInfo",
     "TransportError",
@@ -178,6 +179,9 @@ class SequencedEvent:
     @property
     def position(self) -> builtins.int: ...
     def __repr__(self) -> builtins.str: ...
+
+class ServerStartError(builtins.RuntimeError):
+    ...
 
 @typing.final
 class Subscription:

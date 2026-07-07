@@ -3081,6 +3081,7 @@ version = "0.6.0"
 dependencies = [
  "pyo3",
  "pyo3-stub-gen",
+ "umadb",
  "umadb-client",
  "umadb-dcb",
  "uuid",

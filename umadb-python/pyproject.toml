@@ -32,5 +32,9 @@ classifiers = [
 Homepage = "https://umadb.io"
 Repository = "https://github.com/umadb-io/umadb"
 
+[project.scripts]
+umadb = "umadb_server_cli:main"
+
 [tool.maturin]
 bindings = "pyo3"
+python-source = "python"

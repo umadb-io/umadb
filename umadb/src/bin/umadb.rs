@@ -1,49 +1,5 @@
 use clap::{CommandFactory, FromArgMatches, Parser};
-use std::io::IsTerminal;
-use tokio::signal;
-use tokio::sync::oneshot;
-use umadb_server::{
-    DEFAULT_PAGE_SIZE, ServerOptions, ServerTlsOptions, StorageOptions, start_server_with_options,
-    uptime,
-};
-
-pub fn print_banner() {
-    const ART: &[&str] = &[
-        r"██╗  ██╗ ███╗   ███╗  █████╗  ██████╗  ██████╗ ",
-        r"██║  ██║ ████╗ ████║ ██╔══██╗ ██╔══██╗ ██╔══██╗",
-        r"██║  ██║ ██╔████╔██║ ███████║ ██║  ██║ ██████╔╝",
-        r"██║  ██║ ██║╚██╔╝██║ ██╔══██║ ██║  ██║ ██╔══██╗",
-        r"╚█████╔╝ ██║ ╚═╝ ██║ ██║  ██║ ██████╔╝ ██████╔╝",
-        r" ╚════╝  ╚═╝     ╚═╝ ╚═╝  ╚═╝ ╚═════╝  ╚═════╝ ",
-    ];
-    const PAD: &str = "    ";
-    const VERSION: &str = env!("CARGO_PKG_VERSION");
-
-    println!();
-    const COLORS: &[&str] = &[
-        "\x1b[38;5;214m",
-        "\x1b[38;5;214m",
-        "\x1b[38;5;214m",
-        "\x1b[38;5;214m",
-        "\x1b[38;5;214m",
-        "\x1b[38;5;220m",
-    ];
-    let art_width = ART[0].chars().count();
-    let version_width = VERSION.chars().count() + 1;
-    let offset = " ".repeat(art_width - version_width - 6);
-    if std::io::stdout().is_terminal() {
-        for (line, color) in ART.iter().zip(COLORS) {
-            println!("{PAD}\x1b[1m{color}{line}\x1b[0m");
-        }
-        println!("{PAD}\x1b[2m{offset}v{VERSION}\x1b[0m");
-    } else {
-        for line in ART {
-            println!("{PAD}{line}");
-        }
-        println!("{PAD}{offset}v{VERSION}");
-    }
-    println!();
-}
+use umadb::{ReadMethod, RunOptions, print_banner, run_async, spawn_shutdown_on_signal, uptime};
 
 #[derive(Parser, Debug)]
 #[command(version)]
@@ -103,15 +59,7 @@ struct Args {
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let _ = uptime();
-    let rt = tokio::runtime::Builder::new_multi_thread()
-        .worker_threads(
-            std::thread::available_parallelism()
-                .map(|n| n.get())
-                .unwrap_or(4),
-        )
-        .max_blocking_threads(2048)
-        .enable_all()
-        .build()?;
+    let rt = umadb::build_runtime()?;
 
     rt.block_on(async_main())
 }
@@ -127,56 +75,30 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
     let matches = cmd.get_matches();
     let args = Args::from_arg_matches(&matches)?; // <-- FromArgMatches trait
 
-    if args.cert_path.is_some() != args.key_path.is_some() {
+    let run_options = RunOptions {
+        listen_addr: args.listen,
+        db_path: args.db_path,
+        tls_cert_path: args.cert_path,
+        tls_key_path: args.key_path,
+        api_key: args.api_key,
+        read_method: args.read_method.parse().unwrap_or(ReadMethod::Mmap),
+        page_cache_max_pages: args.page_cache_max_pages,
+        page_cache_max_mb: args.page_cache_max_mb,
+        zero_fill_pages: args.zero_fill_pages,
+    };
+
+    if let Err(err) = run_options.validate() {
         eprintln!(
-            "Both --tls-cert and --tls-key (or UMADB_TLS_CERT and UMADB_TLS_KEY) must be provided for TLS"
+            "Both --tls-cert and --tls-key (or UMADB_TLS_CERT and UMADB_TLS_KEY) must be provided for TLS: {err}"
         );
         std::process::exit(2);
     }
 
-    let server_tls_options = ServerTlsOptions::from_path_strings(args.cert_path, args.key_path)?;
-
-    let storage_options = StorageOptions::default()
-        .db_path(args.db_path)
-        .page_size(DEFAULT_PAGE_SIZE)
-        .read_method(
-            args.read_method
-                .parse()
-                .unwrap_or(umadb_server::ReadMethod::Mmap),
-        )
-        .page_cache_max_pages(args.page_cache_max_pages)
-        .page_cache_max_mb(args.page_cache_max_mb)
-        .zero_fill_pages(args.zero_fill_pages);
-
-    let server_options = ServerOptions {
-        listen_addr: args.listen,
-        tls: server_tls_options,
-        api_key: args.api_key,
-        storage: storage_options,
-    };
-
-    let (tx, rx) = oneshot::channel::<()>();
-    tokio::spawn(async move {
-        #[cfg(unix)]
-        {
-            use tokio::signal::unix::{SignalKind, signal};
-            let mut sigterm =
-                signal(SignalKind::terminate()).expect("failed to register SIGTERM handler");
-            tokio::select! {
-                _ = signal::ctrl_c() => {}
-                _ = sigterm.recv() => {}
-            }
-        }
-        #[cfg(not(unix))]
-        {
-            let _ = signal::ctrl_c().await;
-        }
-        let _ = tx.send(());
-    });
+    let (rx, _shutdown_task) = spawn_shutdown_on_signal();
 
     print_banner();
 
-    start_server_with_options(server_options, rx).await?;
+    run_async(run_options, rx).await?;
 
     Ok(())
 }

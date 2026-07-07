@@ -18,6 +18,60 @@ To install with pip, create and activate a virtual environment, then:
 pip install umadb
 ```
 
+## Running the UmaDB Server from Python Package
+
+The package installs a server script named `umadb`.
+
+```bash
+umadb --help
+```
+
+This script starts the UmaDB server in-process via the Rust/PyO3 bindings (it does not require
+an additional external `umadb` binary).
+
+### Script options
+
+The script supports the same key startup options as the Rust CLI:
+
+- `--listen`
+- `--db-path`
+- `--tls-cert`
+- `--tls-key`
+- `--api-key`
+- `--read-method`
+- `--page-cache-max-pages`
+- `--page-cache-max-mb`
+- `--zero-fill-pages` / `--no-zero-fill-pages`
+
+### Environment variables
+
+If command-line options are not provided, the script reads these environment variables:
+
+- `UMADB_LISTEN`
+- `UMADB_DB_PATH`
+- `UMADB_TLS_CERT`
+- `UMADB_TLS_KEY`
+- `UMADB_API_KEY`
+- `UMADB_READ_METHOD`
+- `UMADB_PAGE_CACHE_MAX_PAGES`
+- `UMADB_PAGE_CACHE_MAX_MB`
+- `UMADB_ZERO_FILL_PAGES`
+
+Boolean environment variable values accepted for `UMADB_ZERO_FILL_PAGES` are:
+`1`/`0`, `true`/`false`, `yes`/`no`, and `on`/`off` (case-insensitive).
+
+Option precedence is:
+
+1. Explicit command-line argument
+2. Environment variable
+3. Built-in default
+
+### Example
+
+```bash
+UMADB_LISTEN=0.0.0.0:50051 UMADB_DB_PATH=./uma.db umadb
+```
+
 ## Connecting to UmaDB
 
 Use the `Client` class as the main entry point for connecting to an UmaDB server.

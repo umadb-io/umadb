@@ -16,6 +16,7 @@ create_exception!(umadb, IntegrityError, PyValueError);
 create_exception!(umadb, TransportError, PyRuntimeError);
 create_exception!(umadb, CorruptionError, PyRuntimeError);
 create_exception!(umadb, AuthenticationError, PyPermissionError);
+create_exception!(umadb, ServerStartError, PyRuntimeError);
 
 /// Convert `umadb_dcb::DcbError` to Python exception
 fn dcb_error_to_py_err(err: umadb_dcb::DcbError) -> PyErr {
@@ -563,6 +564,50 @@ fn trigger_cancel_from_python2() {
     println!("In stub info");
 }
 
+fn parse_read_method(read_method: &str) -> PyResult<umadb_runner::ReadMethod> {
+    read_method
+        .parse()
+        .map_err(|_| PyValueError::new_err(format!("Invalid read_method: '{read_method}'")))
+}
+
+#[pyfunction]
+#[pyo3(signature = (listen="127.0.0.1:50051".to_string(), db_path="./uma.db".to_string(), tls_cert=None, tls_key=None, api_key=None, read_method="fileio".to_string(), page_cache_max_pages=0, page_cache_max_mb=0, zero_fill_pages=true))]
+fn run_server(
+    py: Python<'_>,
+    listen: String,
+    db_path: String,
+    tls_cert: Option<String>,
+    tls_key: Option<String>,
+    api_key: Option<String>,
+    read_method: String,
+    page_cache_max_pages: usize,
+    page_cache_max_mb: usize,
+    zero_fill_pages: bool,
+) -> PyResult<()> {
+    let parsed_read_method = parse_read_method(&read_method)?;
+    let options = umadb_runner::RunOptions {
+        listen_addr: listen,
+        db_path,
+        tls_cert_path: tls_cert,
+        tls_key_path: tls_key,
+        api_key,
+        read_method: parsed_read_method,
+        page_cache_max_pages,
+        page_cache_max_mb,
+        zero_fill_pages,
+    };
+
+    let run_result = py.detach(move || {
+        umadb_runner::run_blocking(options).map_err(|err| {
+            format!(
+                "Unable to start UmaDB server. Check listen address, db path permissions, and TLS options: {err}"
+            )
+        })
+    });
+
+    run_result.map_err(ServerStartError::new_err)
+}
+
 // Define a function to gather stub information.
 define_stub_info_gatherer!(stub_info);
 
@@ -585,6 +630,7 @@ fn umadb(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<QueryItem>()?;
     m.add_class::<AppendCondition>()?;
     m.add_class::<TrackingInfo>()?;
+    m.add_function(wrap_pyfunction!(run_server, m)?)?;
     m.add_function(wrap_pyfunction!(trigger_cancel_from_python, m)?)?;
     m.add_function(wrap_pyfunction!(trigger_cancel_from_python2, m)?)?;
     // m.add_function(wrap_pyfunction!(_generate_umadb_pyi_stubs, m)?)?;
@@ -592,5 +638,6 @@ fn umadb(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("TransportError", py.get_type::<TransportError>())?;
     m.add("CorruptionError", py.get_type::<CorruptionError>())?;
     m.add("AuthenticationError", py.get_type::<AuthenticationError>())?;
+    m.add("ServerStartError", py.get_type::<ServerStartError>())?;
     Ok(())
 }

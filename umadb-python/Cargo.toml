@@ -18,6 +18,7 @@ name = "umadb"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
+umadb-runner = { package = "umadb", path = "../umadb", version = "0.6.0" }
 umadb-client = { path = "../umadb-client", version = "0.6.0" }
 umadb-dcb = { path = "../umadb-dcb", version = "0.6.0" }
 pyo3 = { version = ">=0.28", features = ["abi3-py310"] }
