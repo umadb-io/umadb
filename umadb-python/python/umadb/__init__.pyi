@@ -18,6 +18,7 @@ __all__ = [
     "Subscription",
     "TrackingInfo",
     "TransportError",
+    "run_server_from_args",
 ]
 
 @typing.final
@@ -206,4 +207,6 @@ class TrackingInfo:
 
 class TransportError(builtins.RuntimeError):
     ...
+
+def run_server_from_args(args: typing.Sequence[builtins.str]) -> None: ...
 

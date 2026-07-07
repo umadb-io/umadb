@@ -10,6 +10,7 @@ use std::sync::{Arc, Mutex};
 use umadb_client;
 use umadb_dcb;
 use umadb_dcb::DcbEventStoreSync;
+use umadb_runner::{parse_args_from, run_blocking};
 use uuid::Uuid;
 
 create_exception!(umadb, IntegrityError, PyValueError);
@@ -565,77 +566,27 @@ fn trigger_cancel_from_python2() {
 }
 
 #[cfg(not(windows))]
-fn parse_read_method(read_method: &str) -> PyResult<umadb_runner::ReadMethod> {
-    read_method
-        .parse()
-        .map_err(|_| PyValueError::new_err(format!("Invalid read_method: '{read_method}'")))
-}
-
-#[cfg(not(windows))]
+#[gen_stub_pyfunction]
 #[pyfunction]
-#[pyo3(signature = (listen="127.0.0.1:50051".to_string(), db_path="./uma.db".to_string(), tls_cert=None, tls_key=None, api_key=None, read_method="fileio".to_string(), page_cache_max_pages=0, page_cache_max_mb=0, zero_fill_pages=true))]
-fn run_server(
-    py: Python<'_>,
-    listen: String,
-    db_path: String,
-    tls_cert: Option<String>,
-    tls_key: Option<String>,
-    api_key: Option<String>,
-    read_method: String,
-    page_cache_max_pages: usize,
-    page_cache_max_mb: usize,
-    zero_fill_pages: bool,
-) -> PyResult<()> {
-    let parsed_read_method = parse_read_method(&read_method)?;
-    let options = umadb_runner::RunOptions {
-        listen_addr: listen,
-        db_path,
-        tls_cert_path: tls_cert,
-        tls_key_path: tls_key,
-        api_key,
-        read_method: parsed_read_method,
-        page_cache_max_pages,
-        page_cache_max_mb,
-        zero_fill_pages,
-    };
+#[pyo3(signature = (args))]
+fn run_server_from_args(py: Python<'_>, args: Vec<String>) -> PyResult<()> {
+    // Pass the raw arguments to our Rust clap parser
+    // clap handles --help and --version natively and will gracefully exit the process if they are called.
+    let options =
+        parse_args_from(args).map_err(|err| ServerStartError::new_err(err.to_string()))?;
 
-    let run_result = py.detach(move || {
-        umadb_runner::run_blocking(options).map_err(|err| {
-            format!(
-                "Unable to start UmaDB server. Check listen address, db path permissions, and TLS options: {err}"
-            )
-        })
-    });
+    // Convert any runtime error directly to a ServerStartError
+    let run_result = py.detach(move || run_blocking(options).map_err(|err| err.to_string()));
 
     run_result.map_err(ServerStartError::new_err)
 }
 
 #[cfg(windows)]
+#[gen_stub_pyfunction]
 #[pyfunction]
-#[pyo3(signature = (listen="127.0.0.1:50051".to_string(), db_path="./uma.db".to_string(), tls_cert=None, tls_key=None, api_key=None, read_method="fileio".to_string(), page_cache_max_pages=0, page_cache_max_mb=0, zero_fill_pages=true))]
-#[allow(clippy::too_many_arguments)]
-fn run_server(
-    listen: String,
-    db_path: String,
-    tls_cert: Option<String>,
-    tls_key: Option<String>,
-    api_key: Option<String>,
-    read_method: String,
-    page_cache_max_pages: usize,
-    page_cache_max_mb: usize,
-    zero_fill_pages: bool,
-) -> PyResult<()> {
-    let _ = (
-        listen,
-        db_path,
-        tls_cert,
-        tls_key,
-        api_key,
-        read_method,
-        page_cache_max_pages,
-        page_cache_max_mb,
-        zero_fill_pages,
-    );
+#[pyo3(signature = (args))]
+fn run_server_from_args(args: Vec<String>) -> PyResult<()> {
+    let _ = args;
     Err(ServerStartError::new_err(
         "Running the UmaDB server from the Python package is not supported on Windows.",
     ))
@@ -643,14 +594,6 @@ fn run_server(
 
 // Define a function to gather stub information.
 define_stub_info_gatherer!(stub_info);
-
-// #[pyfunction]
-// #[pyo3(text_signature = "()")]
-// // Generate stubs
-// fn _generate_umadb_pyi_stubs() {
-//     let stub = generate_umadb_pyi_stubs().expect("couldn't derive stubs");
-//     stub.generate().expect("couldn't generate stubs");
-// }
 
 /// UmaDB Python client module
 #[pymodule]
@@ -663,10 +606,9 @@ fn umadb(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<QueryItem>()?;
     m.add_class::<AppendCondition>()?;
     m.add_class::<TrackingInfo>()?;
-    m.add_function(wrap_pyfunction!(run_server, m)?)?;
+    m.add_function(wrap_pyfunction!(run_server_from_args, m)?)?;
     m.add_function(wrap_pyfunction!(trigger_cancel_from_python, m)?)?;
     m.add_function(wrap_pyfunction!(trigger_cancel_from_python2, m)?)?;
-    // m.add_function(wrap_pyfunction!(_generate_umadb_pyi_stubs, m)?)?;
     m.add("IntegrityError", py.get_type::<IntegrityError>())?;
     m.add("TransportError", py.get_type::<TransportError>())?;
     m.add("CorruptionError", py.get_type::<CorruptionError>())?;

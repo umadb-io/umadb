@@ -303,7 +303,7 @@ pub async fn start_server_with_options(
                 .await;
             // Broadcast shutdown to all subscription tasks
             let _ = srv_shutdown_tx.send(true);
-            println!("UmaDB server shutdown complete");
+            println!("\nUmaDB server shutdown complete");
         })
         .await?;
 
