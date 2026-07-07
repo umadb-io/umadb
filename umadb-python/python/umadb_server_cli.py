@@ -1,5 +1,6 @@
 import argparse
 import os
+import platform
 from typing import Callable, cast
 
 import umadb
@@ -23,6 +24,12 @@ def _env_bool(name: str) -> bool | None:
 
 
 def main() -> None:
+    if platform.system() == "Windows":
+        raise SystemExit(
+            "The 'umadb' server script is not supported on Windows. "
+            "Please run the server on Linux or macOS."
+        )
+
     parser = argparse.ArgumentParser(description="UmaDB gRPC server")
     parser.add_argument("--listen", default=os.getenv("UMADB_LISTEN", "127.0.0.1:50051"))
     parser.add_argument("--db-path", default=os.getenv("UMADB_DB_PATH", "./uma.db"))

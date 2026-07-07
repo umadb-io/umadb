@@ -564,12 +564,14 @@ fn trigger_cancel_from_python2() {
     println!("In stub info");
 }
 
+#[cfg(not(windows))]
 fn parse_read_method(read_method: &str) -> PyResult<umadb_runner::ReadMethod> {
     read_method
         .parse()
         .map_err(|_| PyValueError::new_err(format!("Invalid read_method: '{read_method}'")))
 }
 
+#[cfg(not(windows))]
 #[pyfunction]
 #[pyo3(signature = (listen="127.0.0.1:50051".to_string(), db_path="./uma.db".to_string(), tls_cert=None, tls_key=None, api_key=None, read_method="fileio".to_string(), page_cache_max_pages=0, page_cache_max_mb=0, zero_fill_pages=true))]
 fn run_server(
@@ -606,6 +608,26 @@ fn run_server(
     });
 
     run_result.map_err(ServerStartError::new_err)
+}
+
+#[cfg(windows)]
+#[pyfunction]
+#[pyo3(signature = (listen="127.0.0.1:50051".to_string(), db_path="./uma.db".to_string(), tls_cert=None, tls_key=None, api_key=None, read_method="fileio".to_string(), page_cache_max_pages=0, page_cache_max_mb=0, zero_fill_pages=true))]
+#[allow(clippy::too_many_arguments)]
+fn run_server(
+    _listen: String,
+    _db_path: String,
+    _tls_cert: Option<String>,
+    _tls_key: Option<String>,
+    _api_key: Option<String>,
+    _read_method: String,
+    _page_cache_max_pages: usize,
+    _page_cache_max_mb: usize,
+    _zero_fill_pages: bool,
+) -> PyResult<()> {
+    Err(ServerStartError::new_err(
+        "Running the UmaDB server from the Python package is not supported on Windows.",
+    ))
 }
 
 // Define a function to gather stub information.
