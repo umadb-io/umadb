@@ -10,7 +10,6 @@ use std::sync::{Arc, Mutex};
 use umadb_client;
 use umadb_dcb;
 use umadb_dcb::DcbEventStoreSync;
-use umadb_runner::{parse_args_from, run_blocking};
 use uuid::Uuid;
 
 create_exception!(umadb, IntegrityError, PyValueError);
@@ -573,10 +572,10 @@ fn run_server_from_args(py: Python<'_>, args: Vec<String>) -> PyResult<()> {
     // Pass the raw arguments to our Rust clap parser
     // clap handles --help and --version natively and will gracefully exit the process if they are called.
     let options =
-        parse_args_from(args).map_err(|err| ServerStartError::new_err(err.to_string()))?;
+        umadb_runner::parse_args_from(args).map_err(|err| ServerStartError::new_err(err.to_string()))?;
 
     // Convert any runtime error directly to a ServerStartError
-    let run_result = py.detach(move || run_blocking(options).map_err(|err| err.to_string()));
+    let run_result = py.detach(move || umadb_runner::run_blocking(options).map_err(|err| err.to_string()));
 
     run_result.map_err(ServerStartError::new_err)
 }
