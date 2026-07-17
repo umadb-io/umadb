@@ -48,24 +48,16 @@ impl Event {
         event_type: String,
         data: Vec<u8>,
         tags: Option<Vec<String>>,
-        uuid: Option<String>,
+        #[gen_stub(override_type(type_repr = "typing.Optional[_uuid.UUID]"))]
+        uuid: Option<Uuid>,
         metadata: Option<HashMap<String, String>>,
     ) -> PyResult<Self> {
-        let uuid_parsed = if let Some(uuid_str) = uuid {
-            Some(
-                Uuid::parse_str(&uuid_str)
-                    .map_err(|e| PyValueError::new_err(format!("Invalid UUID: {}", e)))?,
-            )
-        } else {
-            None
-        };
-
         Ok(Event {
             inner: umadb_dcb::DcbEvent {
                 event_type,
                 data,
                 tags: tags.unwrap_or_default(),
-                uuid: uuid_parsed,
+                uuid,
                 metadata: metadata.unwrap_or_default().into_iter().collect(),
             },
         })
@@ -87,8 +79,9 @@ impl Event {
     }
 
     #[getter]
-    fn uuid(&self) -> Option<String> {
-        self.inner.uuid.map(|u| u.to_string())
+    #[gen_stub(override_return_type(type_repr = "typing.Optional[_uuid.UUID]"))]
+    fn uuid(&self) -> Option<Uuid> {
+        self.inner.uuid
     }
 
     #[getter]
@@ -102,7 +95,7 @@ impl Event {
             self.inner.event_type,
             self.inner.data.len(),
             self.inner.tags,
-            self.inner.uuid.map(|u| u.to_string()),
+            self.inner.uuid,
             self.inner.metadata
         )
     }

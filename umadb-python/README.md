@@ -184,7 +184,7 @@ ev = Event(
     event_type="example",
     tags=["tag1", "tag2"],
     data=b"Hello, world!",
-    uuid=str(uuid.uuid4()),
+    uuid=uuid.uuid4(),
     metadata={"source": "readme", "correlation_id": str(uuid.uuid4())},
 )
 
@@ -201,7 +201,7 @@ try:
                 event_type="example",
                 tags=["tag1", "tag2"],
                 data=b"Hello, world!",
-                uuid=str(uuid.uuid4()),
+                uuid=uuid.uuid4(),
             )
         ],
         condition=cond,
@@ -498,7 +498,7 @@ event = Event(
     event_type="example",
     tags=["tag1", "tag2"],
     data=b"Hello, world!",
-    uuid=str(uuid.uuid4()),
+    uuid=uuid.uuid4(),
     metadata={"source": "readme", "correlation_id": str(uuid.uuid4())},
 )
 
@@ -513,7 +513,7 @@ try:
         event_type="example",
         tags=["tag1", "tag2"],
         data=b"Hello, world!",
-        uuid=str(uuid.uuid4()),  # different UUID
+        uuid=uuid.uuid4(),  # different UUID
     )
     client.append([conflicting_event], condition=condition)
 except IntegrityError as e:
@@ -579,7 +579,7 @@ event = Event(
     event_type="example",
     tags=["tag1", "tag2"],
     data=b"Hello, world!",
-    uuid=str(uuid.uuid4()),
+    uuid=uuid.uuid4(),
 )
 
 # Append event within the consistency boundary
@@ -606,7 +606,7 @@ try:
         event_type="example",
         tags=["tag1", "tag2"],
         data=b"Hello, world!",
-        uuid=str(uuid.uuid4()),  # different UUID
+        uuid=uuid.uuid4(),  # different UUID
     )
     client.append([conflicting_event], condition=None, tracking_info=tracking_info)
 except IntegrityError as e:
