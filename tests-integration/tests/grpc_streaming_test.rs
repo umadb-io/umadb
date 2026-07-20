@@ -360,3 +360,48 @@ async fn grpc_append_event_with_tag_larger_than_page_size_rejects_and_leaves_no_
     let _ = shutdown_tx.send(());
     let _ = server_task.await;
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn grpc_append_event_with_duplicate_metadata_keys_rejects() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let db_path = temp_dir.path().to_path_buf();
+    let (addr, addr_http) = allocate_grpc_addr();
+
+    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+    let server_task = tokio::spawn(async move {
+        let _ = start_server(db_path, &addr, shutdown_rx).await;
+    });
+
+    let client = connect_async_with_retry(addr_http).await;
+
+    let event = DcbEvent {
+        event_type: "Type".to_string(),
+        data: vec![1, 2, 3],
+        tags: vec!["tag".to_string()],
+        uuid: None,
+        metadata: vec![
+            ("key1".to_string(), "val1".to_string()),
+            ("key1".to_string(), "val2".to_string()),
+        ],
+    };
+
+    match client.append(vec![event], None, None).await {
+        Err(DcbError::InvalidArgument(msg)) => {
+            assert!(msg.contains("metadata contains duplicate keys"));
+        }
+        other => panic!("Expected InvalidArgument with specific message, got {other:?}"),
+    }
+
+    let (events, head) = client
+        .read_with_head(None, None, false, None)
+        .await
+        .expect("read all events after rejected append");
+    assert!(
+        events.is_empty(),
+        "rejected oversized-tag append should not leave any events"
+    );
+    assert_eq!(None, head);
+
+    let _ = shutdown_tx.send(());
+    let _ = server_task.await;
+}

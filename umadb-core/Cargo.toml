@@ -12,6 +12,7 @@ categories = ["database"]
 
 [dependencies]
 umadb-dcb = { path = "../umadb-dcb", version = "0.6.5" }
+rustc-hash = "2.1"
 crc32fast = "1"
 dashmap = "6"
 itertools = "0.14"

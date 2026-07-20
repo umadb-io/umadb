@@ -10,4 +10,5 @@ dependencies = [
     "matplotlib",
     "black",
     "isort",
+    "pandas",
 ]

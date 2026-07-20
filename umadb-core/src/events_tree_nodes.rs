@@ -3,6 +3,7 @@ use crate::common::Position;
 use crate::page::PAGE_HEADER_SIZE;
 use crate::slice_reader::SliceReader;
 use bitflags::bitflags;
+use rustc_hash::FxHashSet;
 use std::io::{Cursor, Write};
 use umadb_dcb::DcbError;
 use umadb_dcb::DcbResult;
@@ -155,6 +156,11 @@ pub fn validate_metadata(metadata: &[(String, String)]) -> DcbResult<()> {
             MAX_METADATA_ENTRIES
         )));
     }
+    if has_duplicate_metadata_key(metadata) {
+        return Err(DcbError::InvalidArgument(
+            "metadata contains duplicate keys".to_string(),
+        ));
+    }
     for (k, v) in metadata {
         if k.len() > MAX_METADATA_ENTRY_LEN {
             return Err(DcbError::InvalidArgument(format!(
@@ -173,6 +179,28 @@ pub fn validate_metadata(metadata: &[(String, String)]) -> DcbResult<()> {
         }
     }
     Ok(())
+}
+
+/// Check if the metadata slice contains duplicate keys.
+/// Uses brute force for small slices (< 8 elements) and FxHashSet for larger ones.
+pub fn has_duplicate_metadata_key(metadata: &[(String, String)]) -> bool {
+    if metadata.len() < 8 {
+        for i in 0..metadata.len() {
+            for j in i + 1..metadata.len() {
+                if metadata[i].0 == metadata[j].0 {
+                    return true;
+                }
+            }
+        }
+    } else {
+        let mut set = FxHashSet::with_capacity_and_hasher(metadata.len(), Default::default());
+        for (k, _) in metadata {
+            if !set.insert(k) {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 /// Number of bytes needed to serialize the given metadata map.
@@ -1148,6 +1176,42 @@ mod tests {
                 assert!(msg.contains("tags, exceeding the maximum"));
             }
             other => panic!("Expected InvalidArgument, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_has_duplicate() {
+        // No duplicates
+        let mut metadata = Vec::new();
+        metadata.push(("key1".to_string(), "val1".to_string()));
+        metadata.push(("key2".to_string(), "val2".to_string()));
+        assert!(!has_duplicate_metadata_key(&metadata));
+
+        // With duplicates
+        metadata.push(("key1".to_string(), "val3".to_string()));
+        assert!(has_duplicate_metadata_key(&metadata));
+
+        // Test with more than 8 elements (switches to FxHashSet)
+        let mut large_metadata = Vec::new();
+        for i in 0..10 {
+            large_metadata.push((format!("key{i}"), "val".to_string()));
+        }
+        assert!(!has_duplicate_metadata_key(&large_metadata));
+
+        large_metadata.push(("key5".to_string(), "duplicate".to_string()));
+        assert!(has_duplicate_metadata_key(&large_metadata));
+    }
+
+    #[test]
+    fn test_validate_metadata_rejects_duplicates() {
+        let mut metadata = Vec::new();
+        metadata.push(("key1".to_string(), "val1".to_string()));
+        metadata.push(("key1".to_string(), "val2".to_string()));
+        match validate_metadata(&metadata) {
+            Err(DcbError::InvalidArgument(msg)) => {
+                assert!(msg.contains("duplicate keys"));
+            }
+            other => panic!("Expected InvalidArgument with duplicate keys message, got {other:?}"),
         }
     }
 
