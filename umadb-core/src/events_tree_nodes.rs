@@ -184,23 +184,27 @@ pub fn validate_metadata(metadata: &[(String, String)]) -> DcbResult<()> {
 /// Check if the metadata slice contains duplicate keys.
 /// Uses brute force for small slices (< 8 elements) and FxHashSet for larger ones.
 pub fn has_duplicate_metadata_key(metadata: &[(String, String)]) -> bool {
-    if metadata.len() < 8 {
-        for i in 0..metadata.len() {
-            for j in i + 1..metadata.len() {
-                if metadata[i].0 == metadata[j].0 {
-                    return true;
-                }
-            }
-        }
-    } else {
-        let mut set = FxHashSet::with_capacity_and_hasher(metadata.len(), Default::default());
-        for (k, _) in metadata {
-            if !set.insert(k) {
+    // 1. Fast path for empty or single-item slices
+    if metadata.len() < 2 {
+        return false;
+    }
+
+    // 2. Linear search for small sizes avoids hashing/allocation overhead
+    if metadata.len() < 9 {
+        for (i, (k1, _)) in metadata.iter().enumerate() {
+            // Using slicing and iterators completely eliminates bounds-checking
+            if metadata[i + 1..].iter().any(|(k2, _)| k1 == k2) {
                 return true;
             }
         }
+        return false;
     }
-    false
+
+    // 3. Fallback to a fast hash set for larger slices
+    let mut set = FxHashSet::with_capacity_and_hasher(metadata.len(), Default::default());
+
+    // Using `.any()` combined with `.insert()` is short-circuiting and idiomatic
+    metadata.iter().any(|(k, _)| !set.insert(k))
 }
 
 /// Number of bytes needed to serialize the given metadata map.
