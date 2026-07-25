@@ -412,8 +412,6 @@ pub enum DcbError {
     TransportError(String),
     #[error("cancelled by user")]
     CancelledByUser(),
-    #[error("stopped by user")]
-    StoppedByUser(),
 
     // Authentication error
     #[error("authentication error: {0}")]

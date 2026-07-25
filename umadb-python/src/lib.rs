@@ -1,4 +1,4 @@
-use pyo3::exceptions::{PyException, PyKeyboardInterrupt, PyPermissionError, PyRuntimeError, PyStopIteration, PyValueError};
+use pyo3::exceptions::{PyException, PyKeyboardInterrupt, PyPermissionError, PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::PyBytes;
 use pyo3::wrap_pyfunction;
@@ -24,7 +24,6 @@ fn dcb_error_to_py_err(err: umadb_dcb::DcbError) -> PyErr {
         umadb_dcb::DcbError::TransportError(msg) => TransportError::new_err(msg),
         umadb_dcb::DcbError::Corruption(msg) => CorruptionError::new_err(msg),
         umadb_dcb::DcbError::CancelledByUser() => PyKeyboardInterrupt::new_err(()),
-        umadb_dcb::DcbError::StoppedByUser() => PyStopIteration::new_err(()),
         umadb_dcb::DcbError::AuthenticationError(msg) => AuthenticationError::new_err(msg),
         other => PyException::new_err(format!("{}", other)),
     }

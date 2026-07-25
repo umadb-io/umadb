@@ -601,8 +601,7 @@ impl AsyncClientReadResponse {
             }
             _ = self.stop.changed() => {
                 self.ended = true;
-                // return Ok(());
-                return Err(DcbError::StoppedByUser());
+                return Ok(());
             }
             msg = self.stream.message() => {
                 match msg {
@@ -746,7 +745,6 @@ impl AsyncClientSubscribeResponse {
             }
             _ = self.stop.changed() => {
                 self.ended = true;
-                return Err(DcbError::StoppedByUser());
             }
             msg = self.stream.message() => {
                 match msg {
