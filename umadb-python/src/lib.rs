@@ -255,6 +255,9 @@ impl AppendCondition {
 #[pyclass]
 pub struct ReadResponse {
     inner: Arc<Mutex<Box<dyn umadb_dcb::DcbReadResponseSync + Send + 'static>>>,
+    // Cloneable handle used to stop the stream without acquiring `inner`'s lock,
+    // which is held while blocking on the next batch of events.
+    stop_handle: Option<umadb_dcb::StopHandle>,
 }
 
 #[gen_stub_pymethods()]
@@ -321,6 +324,24 @@ impl ReadResponse {
             Err(err) => Err(dcb_error_to_py_err(err)),
         }
     }
+
+    /// Ends this individual read response stream.
+    ///
+    /// After calling `stop()`, iterating over this response (or calling
+    /// `next_batch()`) will stop yielding new events. Unlike
+    /// `stop_all_stream_responses()`, this only affects this particular
+    /// `ReadResponse`.
+    fn stop(slf: PyRefMut<Self>, py: Python<'_>) {
+        println!("Python ReadResponse.stop() called");
+        // Use the stop handle so we do NOT need to acquire `inner`'s Mutex, which
+        // is held while another thread blocks in `next()`/`next_batch()`.
+        let handle = slf.stop_handle.clone();
+        drop(slf);
+        py.detach(move || match handle {
+            Some(handle) => handle.stop(),
+            None => println!("Python ReadResponse.stop(): no stop handle available"),
+        });
+    }
 }
 
 /// Python iterator over sequenced events
@@ -328,6 +349,9 @@ impl ReadResponse {
 #[pyclass]
 pub struct Subscription {
     inner: Arc<Mutex<Box<dyn umadb_dcb::DcbSubscriptionSync + Send + 'static>>>,
+    // Cloneable handle used to stop the stream without acquiring `inner`'s lock,
+    // which is held while blocking on the next batch of events.
+    stop_handle: Option<umadb_dcb::StopHandle>,
 }
 
 #[gen_stub_pymethods()]
@@ -365,6 +389,23 @@ impl Subscription {
                 .collect()),
             Err(err) => Err(dcb_error_to_py_err(err)),
         }
+    }
+
+    /// Ends this individual subscription stream.
+    ///
+    /// After calling `stop()`, iterating over this subscription (or calling
+    /// `next_batch()`) will stop yielding new events. Unlike
+    /// `stop_all_stream_responses()`, this only affects this particular
+    /// `Subscription`.
+    fn stop(slf: PyRefMut<Self>, py: Python<'_>) {
+        // Use the stop handle so we do NOT need to acquire `inner`'s Mutex, which
+        // is held while another thread blocks in `next()`/`next_batch()`.
+        let handle = slf.stop_handle.clone();
+        drop(slf);
+        py.detach(move || match handle {
+            Some(handle) => handle.stop(),
+            None => println!("Python Subscription.stop(): no stop handle available"),
+        });
     }
 }
 
@@ -449,8 +490,10 @@ impl Client {
             .detach(move || inner.read(query_inner, start, backwards, limit))
             .map_err(dcb_error_to_py_err)?;
 
+        let stop_handle = response_iter.stop_handle();
         Ok(ReadResponse {
             inner: Arc::new(Mutex::new(response_iter)),
+            stop_handle,
         })
     }
 
@@ -479,8 +522,10 @@ impl Client {
             .detach(move || inner.subscribe(query_inner, after))
             .map_err(dcb_error_to_py_err)?;
 
+        let stop_handle = response_iter.stop_handle();
         Ok(Subscription {
             inner: Arc::new(Mutex::new(response_iter)),
+            stop_handle,
         })
     }
 

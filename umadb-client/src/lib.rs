@@ -15,10 +15,10 @@ use tokio::runtime::{Handle, Runtime};
 use umadb_dcb::{
     DcbAppendCondition, DcbError, DcbEvent, DcbEventStoreAsync, DcbEventStoreSync, DcbQuery,
     DcbReadResponseAsync, DcbReadResponseSync, DcbResult, DcbSequencedEvent, DcbSubscriptionAsync,
-    DcbSubscriptionSync, TrackingInfo,
+    DcbSubscriptionSync, StopHandle, TrackingInfo,
 };
 
-use std::sync::{Once, OnceLock};
+use std::sync::{Arc, Once, OnceLock};
 use tokio::sync::watch;
 
 /// A global watch channel for shutdown/cancel signals.
@@ -336,6 +336,15 @@ impl DcbReadResponseSync for SyncClientReadResponse {
         self.fetch_next_batch()?;
         Ok(self.buffer.drain(..).collect())
     }
+
+    fn stop(&mut self) {
+        self.finished = true;
+        self.async_resp.stop();
+    }
+
+    fn stop_handle(&self) -> Option<StopHandle> {
+        self.async_resp.stop_handle()
+    }
 }
 
 pub struct SyncClientSubscription {
@@ -387,6 +396,15 @@ impl DcbSubscriptionSync for SyncClientSubscription {
         // Otherwise fetch a new batch
         self.fetch_next_batch()?;
         Ok(self.buffer.drain(..).collect())
+    }
+
+    fn stop(&mut self) {
+        self.finished = true;
+        self.async_resp.stop();
+    }
+
+    fn stop_handle(&self) -> Option<StopHandle> {
+        self.async_resp.stop_handle()
     }
 }
 
@@ -573,10 +591,15 @@ pub struct AsyncClientReadResponse {
     ended: bool,
     cancel: watch::Receiver<()>,
     stop: watch::Receiver<()>,
+    // Per-stream stop signal, affecting only this individual response.
+    local_stop_tx: Arc<watch::Sender<()>>,
+    local_stop: watch::Receiver<()>,
 }
 
 impl AsyncClientReadResponse {
     pub fn new(stream: tonic::Streaming<umadb_proto::v1::ReadResponse>) -> Self {
+        let (local_stop_tx, local_stop) = watch::channel(());
+        let local_stop_tx = Arc::new(local_stop_tx);
         Self {
             stream,
             buffered: VecDeque::new(),
@@ -584,6 +607,8 @@ impl AsyncClientReadResponse {
             ended: false,
             cancel: cancel_receiver(),
             stop: stop_receiver(),
+            local_stop_tx,
+            local_stop,
         }
     }
 
@@ -600,6 +625,10 @@ impl AsyncClientReadResponse {
                 return Err(DcbError::CancelledByUser());
             }
             _ = self.stop.changed() => {
+                self.ended = true;
+                return Ok(());
+            }
+            _ = self.local_stop.changed() => {
                 self.ended = true;
                 return Ok(());
             }
@@ -649,6 +678,19 @@ impl DcbReadResponseAsync for AsyncClientReadResponse {
         }
 
         Ok(Vec::new())
+    }
+
+    fn stop(&mut self) {
+        println!("Rust async read stop() called");
+        let _ = self.local_stop_tx.send(());
+    }
+
+    fn stop_handle(&self) -> Option<StopHandle> {
+        let tx = self.local_stop_tx.clone();
+        Some(StopHandle::new(move || {
+            println!("Rust async read stop_handle() invoked");
+            let _ = tx.send(());
+        }))
     }
 }
 
@@ -720,16 +762,23 @@ pub struct AsyncClientSubscribeResponse {
     ended: bool,
     cancel: watch::Receiver<()>,
     stop: watch::Receiver<()>,
+    // Per-stream stop signal, affecting only this individual subscription.
+    local_stop_tx: Arc<watch::Sender<()>>,
+    local_stop: watch::Receiver<()>,
 }
 
 impl AsyncClientSubscribeResponse {
     pub fn new(stream: tonic::Streaming<umadb_proto::v1::SubscribeResponse>) -> Self {
+        let (local_stop_tx, local_stop) = watch::channel(());
+        let local_stop_tx = Arc::new(local_stop_tx);
         Self {
             stream,
             buffered: VecDeque::new(),
             ended: false,
             cancel: cancel_receiver(),
             stop: stop_receiver(),
+            local_stop_tx,
+            local_stop,
         }
     }
 
@@ -745,6 +794,10 @@ impl AsyncClientSubscribeResponse {
             }
             _ = self.stop.changed() => {
                 self.ended = true;
+            }
+            _ = self.local_stop.changed() => {
+                self.ended = true;
+                println!("Rust async subscription received stop");
             }
             msg = self.stream.message() => {
                 match msg {
@@ -778,6 +831,19 @@ impl DcbSubscriptionAsync for AsyncClientSubscribeResponse {
             return Ok(self.buffered.drain(..).collect());
         }
         Ok(Vec::new())
+    }
+
+    fn stop(&mut self) {
+        println!("Rust async subscription sending stop");
+        let _ = self.local_stop_tx.send(());
+    }
+
+    fn stop_handle(&self) -> Option<StopHandle> {
+        let tx = self.local_stop_tx.clone();
+        Some(StopHandle::new(move || {
+            println!("Rust async subscription stop_handle() invoked");
+            let _ = tx.send(());
+        }))
     }
 }
 

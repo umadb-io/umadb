@@ -7,8 +7,42 @@ use async_trait::async_trait;
 use futures_core::Stream;
 use futures_util::StreamExt;
 use std::iter::Iterator;
+use std::sync::Arc;
 use thiserror::Error;
 use uuid::Uuid;
+
+/// A cloneable, thread-safe handle that can end an individual streaming
+/// response/subscription without needing mutable (or any) access to the
+/// response object itself.
+///
+/// This is important because the Python bindings guard the response behind a
+/// `Mutex` that is held while blocking on the next batch of events. Calling
+/// `stop()` on the response directly would require acquiring that same `Mutex`,
+/// which is impossible while a read/next call is blocked. A `StopHandle` can be
+/// obtained up front and used from another thread to signal the stream to end.
+#[derive(Clone)]
+pub struct StopHandle(Arc<dyn Fn() + Send + Sync>);
+
+impl StopHandle {
+    /// Creates a new `StopHandle` from the given closure.
+    pub fn new<F>(f: F) -> Self
+    where
+        F: Fn() + Send + Sync + 'static,
+    {
+        StopHandle(Arc::new(f))
+    }
+
+    /// Signals the associated stream to stop.
+    pub fn stop(&self) {
+        (self.0)()
+    }
+}
+
+impl std::fmt::Debug for StopHandle {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("StopHandle")
+    }
+}
 
 /// Non-async Rust interface for recording and retrieving events
 pub trait DcbEventStoreSync {
@@ -69,6 +103,22 @@ pub trait DcbReadResponseSync: Iterator<Item = DcbResult<DcbSequencedEvent>> + S
     /// events available, returns an empty Vec. The head() method should reflect
     /// the latest known head as reported by the underlying store.
     fn next_batch(&mut self) -> DcbResult<Vec<DcbSequencedEvent>>;
+
+    /// Ends this individual streaming response.
+    ///
+    /// After calling `stop()`, the iterator/`next_batch()` will stop yielding new
+    /// events (returning `None`/an empty `Vec`). Unlike the global stop signal,
+    /// this only affects this particular response. The default implementation is
+    /// a no-op for backends that do not support per-stream stopping.
+    fn stop(&mut self) {}
+
+    /// Returns a cloneable [`StopHandle`] that can end this response from
+    /// another thread without requiring access to the response itself.
+    ///
+    /// Returns `None` for backends that do not support per-stream stopping.
+    fn stop_handle(&self) -> Option<StopHandle> {
+        None
+    }
 }
 
 /// Response from a subscribe operation, providing an iterator over sequenced events
@@ -77,6 +127,22 @@ pub trait DcbSubscriptionSync: Iterator<Item = DcbResult<DcbSequencedEvent>> + S
     /// events per underlying transport message ("batch"). If there are no more
     /// events available, returns an empty Vec.
     fn next_batch(&mut self) -> DcbResult<Vec<DcbSequencedEvent>>;
+
+    /// Ends this individual streaming subscription.
+    ///
+    /// After calling `stop()`, the iterator/`next_batch()` will stop yielding new
+    /// events (returning `None`/an empty `Vec`). Unlike the global stop signal,
+    /// this only affects this particular subscription. The default implementation
+    /// is a no-op for backends that do not support per-stream stopping.
+    fn stop(&mut self);
+
+    /// Returns a cloneable [`StopHandle`] that can end this subscription from
+    /// another thread without requiring access to the subscription itself.
+    ///
+    /// Returns `None` for backends that do not support per-stream stopping.
+    fn stop_handle(&self) -> Option<StopHandle> {
+        None
+    }
 }
 
 /// Async Rust interface for recording and retrieving events
@@ -144,12 +210,40 @@ pub trait DcbReadResponseAsync: Stream<Item = DcbResult<DcbSequencedEvent>> + Se
     }
 
     async fn next_batch(&mut self) -> DcbResult<Vec<DcbSequencedEvent>>;
+
+    /// Ends this individual streaming response.
+    ///
+    /// After calling `stop()`, the stream/`next_batch()` will stop yielding new
+    /// events. Unlike the global stop signal, this only affects this particular
+    /// response. The default implementation is a no-op for backends that do not
+    /// support per-stream stopping.
+    fn stop(&mut self);
+
+    /// Returns a cloneable [`StopHandle`] that can end this response from
+    /// another thread without requiring access to the response itself.
+    fn stop_handle(&self) -> Option<StopHandle> {
+        None
+    }
 }
 
 /// Asynchronous response from a subscribe operation, providing a stream of sequenced events
 #[async_trait]
 pub trait DcbSubscriptionAsync: Stream<Item = DcbResult<DcbSequencedEvent>> + Send + Unpin {
     async fn next_batch(&mut self) -> DcbResult<Vec<DcbSequencedEvent>>;
+
+    /// Ends this individual streaming subscription.
+    ///
+    /// After calling `stop()`, the stream/`next_batch()` will stop yielding new
+    /// events. Unlike the global stop signal, this only affects this particular
+    /// subscription. The default implementation is a no-op for backends that do
+    /// not support per-stream stopping.
+    fn stop(&mut self) {}
+
+    /// Returns a cloneable [`StopHandle`] that can end this subscription from
+    /// another thread without requiring access to the subscription itself.
+    fn stop_handle(&self) -> Option<StopHandle> {
+        None
+    }
 }
 
 /// Represents a query item for filtering events

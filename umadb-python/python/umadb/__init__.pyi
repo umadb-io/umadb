@@ -172,6 +172,15 @@ class ReadResponse:
         r"""
         Returns the next batch of events for this read. If there are no more events, returns an empty list.
         """
+    def stop(self) -> None:
+        r"""
+        Ends this individual read response stream.
+        
+        After calling `stop()`, iterating over this response (or calling
+        `next_batch()`) will stop yielding new events. Unlike
+        `stop_all_stream_responses()`, this only affects this particular
+        `ReadResponse`.
+        """
 
 @typing.final
 class SequencedEvent:
@@ -197,6 +206,15 @@ class Subscription:
     def next_batch(self) -> builtins.list[SequencedEvent]:
         r"""
         Returns the next batch of events for this read. If there are no more events, returns an empty list.
+        """
+    def stop(self) -> None:
+        r"""
+        Ends this individual subscription stream.
+        
+        After calling `stop()`, iterating over this subscription (or calling
+        `next_batch()`) will stop yielding new events. Unlike
+        `stop_all_stream_responses()`, this only affects this particular
+        `Subscription`.
         """
 
 @typing.final
