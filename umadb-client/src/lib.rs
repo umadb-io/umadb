@@ -40,6 +40,25 @@ pub fn trigger_cancel() {
     }
 }
 
+/// A global watch channel for stop signals.
+static STOP_SENDER: OnceLock<watch::Sender<()>> = OnceLock::new();
+
+/// Returns a receiver subscribed to the global stop signal.
+fn stop_receiver() -> watch::Receiver<()> {
+    let sender = STOP_SENDER.get_or_init(|| {
+        let (tx, _rx) = watch::channel::<()>(());
+        tx
+    });
+    sender.subscribe()
+}
+
+/// Sends the stop signal to all receivers (e.g., on Ctrl-C).
+pub fn trigger_stop() {
+    if let Some(sender) = STOP_SENDER.get() {
+        let _ = sender.send(()); // ignore error if already closed
+    }
+}
+
 static REGISTER_SIGINT: Once = Once::new();
 
 pub fn register_cancel_sigint_handler() {
@@ -553,6 +572,7 @@ pub struct AsyncClientReadResponse {
     last_head: Option<Option<u64>>, // None = unknown yet; Some(x) = known
     ended: bool,
     cancel: watch::Receiver<()>,
+    stop: watch::Receiver<()>,
 }
 
 impl AsyncClientReadResponse {
@@ -563,6 +583,7 @@ impl AsyncClientReadResponse {
             last_head: None,
             ended: false,
             cancel: cancel_receiver(),
+            stop: stop_receiver(),
         }
     }
 
@@ -577,6 +598,11 @@ impl AsyncClientReadResponse {
                 self.ended = true;
                 // return Ok(());
                 return Err(DcbError::CancelledByUser());
+            }
+            _ = self.stop.changed() => {
+                self.ended = true;
+                // return Ok(());
+                return Err(DcbError::StoppedByUser());
             }
             msg = self.stream.message() => {
                 match msg {
@@ -694,6 +720,7 @@ pub struct AsyncClientSubscribeResponse {
     buffered: VecDeque<DcbSequencedEvent>,
     ended: bool,
     cancel: watch::Receiver<()>,
+    stop: watch::Receiver<()>,
 }
 
 impl AsyncClientSubscribeResponse {
@@ -703,6 +730,7 @@ impl AsyncClientSubscribeResponse {
             buffered: VecDeque::new(),
             ended: false,
             cancel: cancel_receiver(),
+            stop: stop_receiver(),
         }
     }
 
@@ -715,6 +743,10 @@ impl AsyncClientSubscribeResponse {
             _ = self.cancel.changed() => {
                 self.ended = true;
                 return Err(DcbError::CancelledByUser());
+            }
+            _ = self.stop.changed() => {
+                self.ended = true;
+                return Err(DcbError::StoppedByUser());
             }
             msg = self.stream.message() => {
                 match msg {

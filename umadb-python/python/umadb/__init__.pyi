@@ -19,7 +19,9 @@ __all__ = [
     "Subscription",
     "TrackingInfo",
     "TransportError",
+    "cancel_all_stream_responses",
     "run_server_from_args",
+    "stop_all_stream_responses",
 ]
 
 @typing.final
@@ -209,5 +211,31 @@ class TrackingInfo:
 class TransportError(builtins.RuntimeError):
     ...
 
+def cancel_all_stream_responses() -> None:
+    r"""
+    Client-side cancellation of all active read and subscription response streams.
+    
+    This only affects streams opened by this Python client process, such as
+    `ReadResponse` values returned by `Client.read()` and `Subscription`
+    values returned by `Client.subscribe()`. It does not stop, shut down,
+    or otherwise affect the UmaDB server.
+    
+    Useful when handling SIGINT in Python code and manually notifying the
+    Rust client to stop waiting for stream responses.
+    """
+
 def run_server_from_args(args: typing.Sequence[builtins.str]) -> None: ...
+
+def stop_all_stream_responses() -> None:
+    r"""
+    Client-side stopping of all active read and subscription response streams.
+    
+    This only affects streams opened by this Python client process, such as
+    `ReadResponse` values returned by `Client.read()` and `Subscription`
+    values returned by `Client.subscribe()`. It does not stop, shut down,
+    or otherwise affect the UmaDB server.
+    
+    Useful when handling SIGINT in Python code and manually notifying the
+    Rust client to stop waiting for stream responses.
+    """
 

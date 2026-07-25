@@ -1,6 +1,4 @@
-use pyo3::exceptions::{
-    PyException, PyKeyboardInterrupt, PyPermissionError, PyRuntimeError, PyValueError,
-};
+use pyo3::exceptions::{PyException, PyKeyboardInterrupt, PyPermissionError, PyRuntimeError, PyStopIteration, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::PyBytes;
 use pyo3::wrap_pyfunction;
@@ -26,6 +24,7 @@ fn dcb_error_to_py_err(err: umadb_dcb::DcbError) -> PyErr {
         umadb_dcb::DcbError::TransportError(msg) => TransportError::new_err(msg),
         umadb_dcb::DcbError::Corruption(msg) => CorruptionError::new_err(msg),
         umadb_dcb::DcbError::CancelledByUser() => PyKeyboardInterrupt::new_err(()),
+        umadb_dcb::DcbError::StoppedByUser() => PyStopIteration::new_err(()),
         umadb_dcb::DcbError::AuthenticationError(msg) => AuthenticationError::new_err(msg),
         other => PyException::new_err(format!("{}", other)),
     }
@@ -538,22 +537,36 @@ impl Client {
     }
 }
 
+#[gen_stub_pyfunction]
 #[pyfunction]
 #[pyo3(text_signature = "()")]
-/// Triggers cancellation of all UmaDB subscriptions from Python.
-/// Useful if you want to handle SIGINT in Python code and manually
-/// notify the Rust client to stop reading.
-fn trigger_cancel_from_python() {
+/// Client-side cancellation of all active read and subscription response streams.
+///
+/// This only affects streams opened by this Python client process, such as
+/// `ReadResponse` values returned by `Client.read()` and `Subscription`
+/// values returned by `Client.subscribe()`. It does not stop, shut down,
+/// or otherwise affect the UmaDB server.
+///
+/// Useful when handling SIGINT in Python code and manually notifying the
+/// Rust client to stop waiting for stream responses.
+fn cancel_all_stream_responses() {
     umadb_client::trigger_cancel();
 }
 
+#[gen_stub_pyfunction]
 #[pyfunction]
 #[pyo3(text_signature = "()")]
-/// Triggers cancellation of all UmaDB subscriptions from Python.
-/// Useful if you want to handle SIGINT in Python code and manually
-/// notify the Rust client to stop reading.
-fn trigger_cancel_from_python2() {
-    println!("In stub info");
+/// Client-side stopping of all active read and subscription response streams.
+///
+/// This only affects streams opened by this Python client process, such as
+/// `ReadResponse` values returned by `Client.read()` and `Subscription`
+/// values returned by `Client.subscribe()`. It does not stop, shut down,
+/// or otherwise affect the UmaDB server.
+///
+/// Useful when handling SIGINT in Python code and manually notifying the
+/// Rust client to stop waiting for stream responses.
+fn stop_all_stream_responses() {
+    umadb_client::trigger_stop();
 }
 
 #[cfg(not(windows))]
@@ -599,8 +612,8 @@ fn umadb(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<AppendCondition>()?;
     m.add_class::<TrackingInfo>()?;
     m.add_function(wrap_pyfunction!(run_server_from_args, m)?)?;
-    m.add_function(wrap_pyfunction!(trigger_cancel_from_python, m)?)?;
-    m.add_function(wrap_pyfunction!(trigger_cancel_from_python2, m)?)?;
+    m.add_function(wrap_pyfunction!(cancel_all_stream_responses, m)?)?;
+    m.add_function(wrap_pyfunction!(stop_all_stream_responses, m)?)?;
     m.add("IntegrityError", py.get_type::<IntegrityError>())?;
     m.add("TransportError", py.get_type::<TransportError>())?;
     m.add("CorruptionError", py.get_type::<CorruptionError>())?;
