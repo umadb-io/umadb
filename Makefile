@@ -12,6 +12,8 @@ UVX ?= uvx@$(UV_VERSION)
 .PHONY: build-workspace-exclude-python
 .PHONY: test
 .PHONY: test-workspace-exclude-python
+.PHONY: test-umadb-python-unittests
+.PHONY: test-umadb-python-examples-basic-usage
 .PHONY: bench-append bench-append-sustained bench-append-1 bench-append-10 bench-append-100 bench-append-1000 bench-append-all
 .PHONY: bench-append-cond bench-append-cond-1 bench-append-cond-10 bench-append-cond-100 bench-append-cond-all
 .PHONY: bench-append-with-readers
@@ -68,7 +70,8 @@ build-umadb-bin-release:
 
 test:
 	$(MAKE) test-workspace-exclude-python
-	$(MAKE) test-umadb-python
+	$(MAKE) test-umadb-python-unittests
+	$(MAKE) test-umadb-python-examples-basic-usage
 
 test-compare-actual-vs-approx-memory-per-page:
 	cargo test -p umadb-benches compare_actual_vs_approx_memory_per_page_type -- --nocapture
@@ -406,7 +409,7 @@ maturin-python-build:
 maturin-python-build-release:
 	PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1 $(UV) run maturin build --release -m umadb-python/Cargo.toml
 
-test-umadb-python:
+test-umadb-python-examples-basic-usage:
 	$(MAKE) self-signed-cert
 	{ \
 	  set -e; \
@@ -420,7 +423,19 @@ test-umadb-python:
 	  echo 'PID:' $$pid; \
 	  sleep 1; \
 	  $(UV) run python ./umadb-python/examples/basic_usage.py; \
-	  echo 'Python succeeded'; \
+	  echo 'Python basic usage examples succeeded'; \
+	}
+
+test-umadb-python-unittests:
+	{ \
+	  set -e; \
+	  cargo build --bin umadb; \
+	  cargo run --bin umadb -- --db-path=./uma-tmp.db & \
+	  pid=$$!; \
+	  trap "echo 'Cleaning up…'; kill -SIGINT $$pid 2>/dev/null || true; rm -f ./uma-tmp.db" EXIT; \
+	  echo 'PID:' $$pid; \
+	  sleep 1; \
+	  $(UV) run python -m unittest discover -v ./umadb-python/tests; \
 	}
 
 self-signed-cert:
