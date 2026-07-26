@@ -4,6 +4,7 @@ import select
 import signal
 import threading
 import unittest
+from typing import Any
 from uuid import uuid4
 
 import time
@@ -37,7 +38,7 @@ class TestUmaDbClient(unittest.TestCase):
         client = Client("http://127.0.0.1:50051")
         subscription = client.subscribe(query=Query([QueryItem(tags=[str(uuid4())])]))
 
-        def send_sigint_after_one_second():
+        def send_sigint_after_one_second() -> None:
             time.sleep(1)
             os.kill(os.getpid(), signal.SIGINT)
 
@@ -51,7 +52,7 @@ class TestUmaDbClient(unittest.TestCase):
         client = Client("http://127.0.0.1:50051")
         subscription = client.subscribe(query=Query([QueryItem(tags=[str(uuid4())])]))
 
-        def send_sigint_after_one_second():
+        def send_sigint_after_one_second() -> None:
             time.sleep(1)
             os.kill(os.getpid(), signal.SIGINT)
 
@@ -65,7 +66,7 @@ class TestUmaDbClient(unittest.TestCase):
         client = Client("http://127.0.0.1:50051")
         subscription = client.subscribe(query=Query([QueryItem(tags=[str(uuid4())])]))
 
-        def cancel_after_one_second():
+        def cancel_after_one_second() -> None:
             time.sleep(1)
             interrupt_all_stream_responses()
 
@@ -79,7 +80,7 @@ class TestUmaDbClient(unittest.TestCase):
         client = Client("http://127.0.0.1:50051")
         subscription = client.subscribe(query=Query([QueryItem(tags=[str(uuid4())])]))
 
-        def stop_after_one_second():
+        def stop_after_one_second() -> None:
             time.sleep(1)
             stop_all_stream_responses()
 
@@ -95,11 +96,11 @@ class TestUmaDbClient(unittest.TestCase):
 
         subscription_thread_errors = []
 
-        def stop_after_one_second():
+        def stop_after_one_second() -> None:
             time.sleep(1)
             stop_all_stream_responses()
 
-        def block_on_subscription():
+        def block_on_subscription() -> None:
             subscription2 = client.subscribe(
                 query=Query([QueryItem(tags=[str(uuid4())])])
             )
@@ -129,14 +130,14 @@ class TestUmaDbClient(unittest.TestCase):
 
         subscription_thread_errors = []
 
-        def stop_after_one_second():
+        def stop_after_one_second() -> None:
             time.sleep(1)
             interrupt_all_stream_responses()
 
         stopper_thread = threading.Thread(target=stop_after_one_second)
         stopper_thread.start()
 
-        def block_on_subscription():
+        def block_on_subscription() -> None:
             subscription2 = client.subscribe(
                 query=Query([QueryItem(tags=[str(uuid4())])])
             )
@@ -161,7 +162,7 @@ class TestUmaDbClient(unittest.TestCase):
         client = Client("http://127.0.0.1:50051")
         subscription = client.subscribe(query=Query([QueryItem(tags=[str(uuid4())])]))
 
-        def stop_after_one_second():
+        def stop_after_one_second() -> None:
             time.sleep(1)
             subscription.stop()
 
@@ -175,15 +176,15 @@ class TestUmaDbClient(unittest.TestCase):
         client = Client("http://127.0.0.1:50051")
         subscription = client.subscribe(query=Query([QueryItem(tags=[str(uuid4())])]))
 
-        def sigint_handler(*args):
-            print("Handling sigint")
+        def sigint_handler(*args: Any) -> None:
+            # print("Handling sigint")
             interrupt_all_stream_responses()
 
         original_handler = signal.signal(signal.SIGINT, sigint_handler)
 
-        def send_sigint_after_one_second():
+        def send_sigint_after_one_second() -> None:
             time.sleep(1)
-            print("Sending sigint")
+#             print("Sending sigint")
             os.kill(os.getpid(), signal.SIGINT)
 
         sigint_thread = threading.Thread(target=send_sigint_after_one_second)
@@ -200,16 +201,16 @@ class TestUmaDbClient(unittest.TestCase):
         client = Client("http://127.0.0.1:50051")
         subscription = client.subscribe(query=Query([QueryItem(tags=[str(uuid4())])]))
 
-        def sigint_handler(*args):
-            print("Handling sigint")
+        def sigint_handler(*args: Any) -> None:
+#             print("Handling sigint")
             stop_all_stream_responses()
             # raise KeyboardInterrupt
 
         original_handler = signal.signal(signal.SIGINT, sigint_handler)
 
-        def send_sigint_after_one_second():
+        def send_sigint_after_one_second() -> None:
             time.sleep(1)
-            print("Sending sigint")
+#             print("Sending sigint")
             os.kill(os.getpid(), signal.SIGINT)
 
         sigint_thread = threading.Thread(target=send_sigint_after_one_second)
@@ -226,16 +227,16 @@ class TestUmaDbClient(unittest.TestCase):
         client = Client("http://127.0.0.1:50051")
         subscription = client.subscribe(query=Query([QueryItem(tags=[str(uuid4())])]))
 
-        def sigint_handler(*args):
-            print("Handling sigint")
+        def sigint_handler(*args: Any) -> None:
+#             print("Handling sigint")
             stop_all_stream_responses()
             raise KeyboardInterrupt
 
         original_handler = signal.signal(signal.SIGINT, sigint_handler)
 
-        def send_sigint_after_one_second():
+        def send_sigint_after_one_second() -> None:
             time.sleep(1)
-            print("Sending sigint")
+#             print("Sending sigint")
             os.kill(os.getpid(), signal.SIGINT)
 
         sigint_thread = threading.Thread(target=send_sigint_after_one_second)
@@ -252,13 +253,13 @@ class TestUmaDbClient(unittest.TestCase):
         client = Client("http://127.0.0.1:50051")
         subscription = client.subscribe(query=Query([QueryItem(tags=[str(uuid4())])]))
 
-        def kill_after_one_second():
+        def kill_after_one_second() -> None:
             time.sleep(1)
             os.kill(os.getpid(), signal.SIGINT)
 
         subscription_errors = []
 
-        def block_on_subscription():
+        def block_on_subscription() -> None:
             subscription2 = client.subscribe(
                 query=Query([QueryItem(tags=[str(uuid4())])])
             )
@@ -374,6 +375,7 @@ class TestBasicUsage(unittest.TestCase):
         self.assertIsInstance(position, int)
         head = self.client.head()
         self.assertIsNotNone(head)
+        assert head is not None
         self.assertGreaterEqual(head, position)
 
     def test_append_and_read_all_for_run(self) -> None:
