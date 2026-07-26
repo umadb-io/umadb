@@ -19,6 +19,7 @@ use umadb_dcb::{
 };
 
 use std::sync::{Arc, Once, OnceLock};
+use std::time::Duration;
 use tokio::sync::watch;
 
 /// A global watch channel for shutdown/cancel signals.
@@ -274,6 +275,13 @@ impl DcbEventStoreSync for SyncUmaDbClient {
     }
 }
 
+pub trait IteratorWithTimeout {
+    type Item;
+
+    /// Pulls the next item, returning an explicit Timeout error if the window expires.
+    fn next_timeout(&mut self, timeout: std::time::Duration) -> Option<Self::Item>;
+}
+
 pub struct SyncClientReadResponse {
     rt: Handle,
     async_resp: Box<dyn DcbReadResponseAsync + Send + 'static>,
@@ -369,6 +377,19 @@ impl SyncClientSubscription {
         }
         Ok(())
     }
+
+    fn fetch_next_batch_timeout(&mut self, timeout: Duration) -> DcbResult<()> {
+        if self.finished {
+            return Ok(());
+        }
+        let batch = self.rt.block_on(self.async_resp.next_batch_timeout(timeout))?;
+        if batch.is_empty() {
+            self.finished = true;
+        } else {
+            self.buffer = batch.into();
+        }
+        Ok(())
+    }
 }
 
 impl Iterator for SyncClientSubscription {
@@ -386,6 +407,28 @@ impl Iterator for SyncClientSubscription {
     }
 }
 
+impl IteratorWithTimeout for SyncClientSubscription {
+    type Item = DcbResult<DcbSequencedEvent>;
+
+    fn next_timeout(&mut self, timeout: Duration) -> Option<Self::Item> {
+        // 1. If we have buffered elements from a previous batch fetch, yield immediately
+        if let Some(ev) = self.buffer.pop_front() {
+            return Some(Ok(ev));
+        }
+
+        if self.finished {
+            return None;
+        }
+
+        if let Err(e) = self.fetch_next_batch_timeout(timeout) {
+            return Some(Err(e));
+        }
+
+        // 3. Populate and pop from the newly loaded batch
+        self.buffer.pop_front().map(Ok)
+    }
+}
+
 impl DcbSubscriptionSync for SyncClientSubscription {
     fn next_batch(&mut self) -> DcbResult<Vec<DcbSequencedEvent>> {
         // If there are remaining events in the buffer, drain them
@@ -398,6 +441,17 @@ impl DcbSubscriptionSync for SyncClientSubscription {
         Ok(self.buffer.drain(..).collect())
     }
 
+    fn next_batch_timeout(&mut self, timeout: Duration) -> DcbResult<Vec<DcbSequencedEvent>> {
+        // If there are remaining events in the buffer, drain them
+        if !self.buffer.is_empty() {
+            return Ok(self.buffer.drain(..).collect());
+        }
+
+        // Otherwise fetch a new batch
+        self.fetch_next_batch_timeout(timeout)?;
+        Ok(self.buffer.drain(..).collect())
+    }
+
     fn stop(&mut self) {
         self.finished = true;
         self.async_resp.stop();
@@ -405,6 +459,10 @@ impl DcbSubscriptionSync for SyncClientSubscription {
 
     fn stop_handle(&self) -> Option<StopHandle> {
         self.async_resp.stop_handle()
+    }
+
+    fn next_timeout(&mut self, timeout: Duration) -> Option<DcbResult<DcbSequencedEvent>> {
+        <Self as IteratorWithTimeout>::next_timeout(self, timeout)
     }
 }
 
@@ -782,7 +840,7 @@ impl AsyncClientSubscribeResponse {
         }
     }
 
-    async fn fetch_next_if_needed(&mut self) -> DcbResult<()> {
+    async fn fetch_next_if_needed(&mut self, timeout: Duration) -> DcbResult<()> {
         if !self.buffered.is_empty() || self.ended {
             return Ok(());
         }
@@ -798,6 +856,9 @@ impl AsyncClientSubscribeResponse {
             _ = self.local_stop.changed() => {
                 self.ended = true;
                 println!("Rust async subscription received stop");
+            }
+            _ = tokio::time::sleep(timeout) => {
+                return Err(DcbError::Timeout());
             }
             msg = self.stream.message() => {
                 match msg {
@@ -826,7 +887,18 @@ impl DcbSubscriptionAsync for AsyncClientSubscribeResponse {
         if !self.buffered.is_empty() {
             return Ok(self.buffered.drain(..).collect());
         }
-        self.fetch_next_if_needed().await?;
+        self.fetch_next_if_needed(Duration::from_secs(u64::MAX)).await?;
+        if !self.buffered.is_empty() {
+            return Ok(self.buffered.drain(..).collect());
+        }
+        Ok(Vec::new())
+    }
+
+    async fn next_batch_timeout(&mut self, timeout: Duration) -> DcbResult<Vec<DcbSequencedEvent>> {
+        if !self.buffered.is_empty() {
+            return Ok(self.buffered.drain(..).collect());
+        }
+        self.fetch_next_if_needed(timeout).await?;
         if !self.buffered.is_empty() {
             return Ok(self.buffered.drain(..).collect());
         }

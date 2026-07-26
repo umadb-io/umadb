@@ -19,7 +19,7 @@ __all__ = [
     "Subscription",
     "TrackingInfo",
     "TransportError",
-    "cancel_all_stream_responses",
+    "interrupt_all_stream_responses",
     "run_server_from_args",
     "stop_all_stream_responses",
 ]
@@ -229,7 +229,7 @@ class TrackingInfo:
 class TransportError(builtins.RuntimeError):
     ...
 
-def cancel_all_stream_responses() -> None:
+def interrupt_all_stream_responses() -> None:
     r"""
     Client-side cancellation of all active read and subscription response streams.
     

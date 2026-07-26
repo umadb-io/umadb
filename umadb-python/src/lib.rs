@@ -5,9 +5,10 @@ use pyo3::wrap_pyfunction;
 use pyo3_stub_gen::{create_exception, define_stub_info_gatherer, derive::*};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 use umadb_client;
 use umadb_dcb;
-use umadb_dcb::DcbEventStoreSync;
+use umadb_dcb::{DcbError, DcbEventStoreSync};
 use uuid::Uuid;
 
 create_exception!(umadb, IntegrityError, PyValueError);
@@ -366,14 +367,27 @@ impl Subscription {
         // Clone the Arc and drop the PyRefMut before releasing the GIL so the closure doesn't capture non-Send data
         let inner = slf.inner.clone();
         drop(slf);
-        let result = py.detach(move || {
-            // Release the GIL while we potentially block waiting for the next batch/event
-            inner.lock().unwrap().next()
-        });
-        match result {
-            Some(Ok(event)) => Some(Ok(SequencedEvent { inner: event })),
-            Some(Err(err)) => Some(Err(dcb_error_to_py_err(err))),
-            None => None,
+
+        loop {
+            let result = py.detach({
+                let inner = inner.clone();
+                move || {
+                    inner.lock().unwrap().next_timeout(Duration::from_millis(100))
+                }
+            });
+
+            // Check Python signals.
+            if let Err(e) = py.check_signals() {
+                return Some(Err(e));
+            }
+
+            match result {
+                Some(Ok(event)) => return Some(Ok(SequencedEvent { inner: event })),
+                Some(Err(DcbError::Timeout())) => continue,
+                Some(Err(err)) => return Some(Err(dcb_error_to_py_err(err))),
+                None => return None,
+            }
+
         }
     }
 
@@ -381,13 +395,26 @@ impl Subscription {
     fn next_batch(slf: PyRefMut<Self>, py: Python<'_>) -> PyResult<Vec<SequencedEvent>> {
         let inner = slf.inner.clone();
         drop(slf);
-        let result = py.detach(move || inner.lock().unwrap().next_batch());
-        match result {
-            Ok(batch) => Ok(batch
-                .into_iter()
-                .map(|e| SequencedEvent { inner: e })
-                .collect()),
-            Err(err) => Err(dcb_error_to_py_err(err)),
+        loop {
+            let result = py.detach({
+                let inner = inner.clone();
+                move || inner.lock().unwrap().next_batch_timeout(Duration::from_millis(100))
+            });
+
+            // Check Python signals.
+            if let Err(e) = py.check_signals() {
+                return Err(e);
+            }
+
+            match result {
+                Ok(batch) => return Ok(batch
+                    .into_iter()
+                    .map(|e| SequencedEvent { inner: e })
+                    .collect()),
+                Err(DcbError::Timeout()) => continue,
+                Err(err) => return Err(dcb_error_to_py_err(err)),
+            }
+
         }
     }
 
@@ -439,7 +466,7 @@ impl Client {
         batch_size: Option<u32>,
         api_key: Option<String>,
     ) -> PyResult<Self> {
-        let client = umadb_client::UmaDbClient::new(url);
+        let client = umadb_client::UmaDbClient::new(url).without_sigint_handler();
         let client = if let Some(ca) = ca_path {
             client.ca_path(ca)
         } else {
@@ -593,7 +620,7 @@ impl Client {
 ///
 /// Useful when handling SIGINT in Python code and manually notifying the
 /// Rust client to stop waiting for stream responses.
-fn cancel_all_stream_responses() {
+fn interrupt_all_stream_responses() {
     umadb_client::trigger_cancel();
 }
 
@@ -656,7 +683,7 @@ fn umadb(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<AppendCondition>()?;
     m.add_class::<TrackingInfo>()?;
     m.add_function(wrap_pyfunction!(run_server_from_args, m)?)?;
-    m.add_function(wrap_pyfunction!(cancel_all_stream_responses, m)?)?;
+    m.add_function(wrap_pyfunction!(interrupt_all_stream_responses, m)?)?;
     m.add_function(wrap_pyfunction!(stop_all_stream_responses, m)?)?;
     m.add("IntegrityError", py.get_type::<IntegrityError>())?;
     m.add("TransportError", py.get_type::<TransportError>())?;
