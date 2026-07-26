@@ -1061,6 +1061,7 @@ pub fn clone_dcb_error(src: &DcbError) -> DcbError {
         DcbError::PageAlreadyDirty(id) => DcbError::PageAlreadyDirty(*id),
         DcbError::TransportError(err) => DcbError::TransportError(err.clone()),
         DcbError::CancelledByUser() => DcbError::CancelledByUser(),
+        DcbError::Timeout() => DcbError::Timeout(),
     }
 }
 
@@ -1085,6 +1086,7 @@ pub fn shadow_for_batch_abort(src: &DcbError) -> DcbError {
         DcbError::PageAlreadyFreed(id) => DcbError::PageAlreadyFreed(*id),
         DcbError::PageAlreadyDirty(id) => DcbError::PageAlreadyDirty(*id),
         DcbError::CancelledByUser() => DcbError::CancelledByUser(),
+        DcbError::Timeout() => DcbError::Timeout(),
     }
 }
 
