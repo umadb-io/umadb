@@ -1,4 +1,6 @@
-use pyo3::exceptions::{PyException, PyKeyboardInterrupt, PyPermissionError, PyRuntimeError, PyValueError};
+use pyo3::exceptions::{
+    PyException, PyKeyboardInterrupt, PyPermissionError, PyRuntimeError, PyValueError,
+};
 use pyo3::prelude::*;
 use pyo3::types::PyBytes;
 use pyo3::wrap_pyfunction;
@@ -372,7 +374,10 @@ impl Subscription {
             let result = py.detach({
                 let inner = inner.clone();
                 move || {
-                    inner.lock().unwrap().next_timeout(Duration::from_millis(100))
+                    inner
+                        .lock()
+                        .unwrap()
+                        .next_timeout(Duration::from_millis(100))
                 }
             });
 
@@ -387,7 +392,6 @@ impl Subscription {
                 Some(Err(err)) => return Some(Err(dcb_error_to_py_err(err))),
                 None => return None,
             }
-
         }
     }
 
@@ -398,7 +402,12 @@ impl Subscription {
         loop {
             let result = py.detach({
                 let inner = inner.clone();
-                move || inner.lock().unwrap().next_batch_timeout(Duration::from_millis(100))
+                move || {
+                    inner
+                        .lock()
+                        .unwrap()
+                        .next_batch_timeout(Duration::from_millis(100))
+                }
             });
 
             // Check Python signals.
@@ -407,14 +416,15 @@ impl Subscription {
             }
 
             match result {
-                Ok(batch) => return Ok(batch
-                    .into_iter()
-                    .map(|e| SequencedEvent { inner: e })
-                    .collect()),
+                Ok(batch) => {
+                    return Ok(batch
+                        .into_iter()
+                        .map(|e| SequencedEvent { inner: e })
+                        .collect());
+                }
                 Err(DcbError::Timeout()) => continue,
                 Err(err) => return Err(dcb_error_to_py_err(err)),
             }
-
         }
     }
 

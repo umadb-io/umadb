@@ -8,6 +8,7 @@ use futures_core::Stream;
 use futures_util::StreamExt;
 use std::iter::Iterator;
 use std::sync::Arc;
+use std::time::Duration;
 use thiserror::Error;
 use uuid::Uuid;
 
@@ -127,7 +128,7 @@ pub trait DcbSubscriptionSync: Iterator<Item = DcbResult<DcbSequencedEvent>> + S
     /// events per underlying transport message ("batch"). If there are no more
     /// events available, returns an empty Vec.
     fn next_batch(&mut self) -> DcbResult<Vec<DcbSequencedEvent>>;
-    fn next_batch_timeout(&mut self, timeout: std::time::Duration) -> DcbResult<Vec<DcbSequencedEvent>>;
+    fn next_batch_timeout(&mut self, timeout: Duration) -> DcbResult<Vec<DcbSequencedEvent>>;
 
     /// Ends this individual streaming subscription.
     ///
@@ -146,7 +147,7 @@ pub trait DcbSubscriptionSync: Iterator<Item = DcbResult<DcbSequencedEvent>> + S
     }
 
     /// Default implementation that falls back to blocking if not overridden.
-    fn next_timeout(&mut self, _timeout: std::time::Duration) -> Option<DcbResult<DcbSequencedEvent>> {
+    fn next_timeout(&mut self, _timeout: Duration) -> Option<DcbResult<DcbSequencedEvent>> {
         // Fallback default behaviour: just call normal blocking next()
         self.next()
     }
@@ -237,7 +238,7 @@ pub trait DcbReadResponseAsync: Stream<Item = DcbResult<DcbSequencedEvent>> + Se
 #[async_trait]
 pub trait DcbSubscriptionAsync: Stream<Item = DcbResult<DcbSequencedEvent>> + Send + Unpin {
     async fn next_batch(&mut self) -> DcbResult<Vec<DcbSequencedEvent>>;
-    async fn next_batch_timeout(&mut self, timeout: std::time::Duration) -> DcbResult<Vec<DcbSequencedEvent>>;
+    async fn next_batch_timeout(&mut self, timeout: Duration) -> DcbResult<Vec<DcbSequencedEvent>>;
     /// Ends this individual streaming subscription.
     ///
     /// After calling `stop()`, the stream/`next_batch()` will stop yielding new

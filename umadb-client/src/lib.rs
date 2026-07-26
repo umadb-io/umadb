@@ -382,7 +382,9 @@ impl SyncClientSubscription {
         if self.finished {
             return Ok(());
         }
-        let batch = self.rt.block_on(self.async_resp.next_batch_timeout(timeout))?;
+        let batch = self
+            .rt
+            .block_on(self.async_resp.next_batch_timeout(timeout))?;
         if batch.is_empty() {
             self.finished = true;
         } else {
@@ -887,7 +889,8 @@ impl DcbSubscriptionAsync for AsyncClientSubscribeResponse {
         if !self.buffered.is_empty() {
             return Ok(self.buffered.drain(..).collect());
         }
-        self.fetch_next_if_needed(Duration::from_secs(u64::MAX)).await?;
+        self.fetch_next_if_needed(Duration::from_secs(u64::MAX))
+            .await?;
         if !self.buffered.is_empty() {
             return Ok(self.buffered.drain(..).collect());
         }
