@@ -122,7 +122,7 @@ class Client:
         """
     def close(self) -> None:
         r"""
-        Stops all active streaming responses.
+        Stops all active streaming responses opened by this client.
         """
 
 class CorruptionError(builtins.RuntimeError):

@@ -1,11 +1,12 @@
 use async_trait::async_trait;
 use futures::Stream;
 use futures::ready;
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::fs;
 use std::path::PathBuf;
 use std::pin::Pin;
 use std::str::FromStr;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::task::{Context, Poll};
 use tonic::Request;
 use tonic::metadata::MetadataValue;
@@ -20,7 +21,7 @@ use umadb_dcb::{
 
 use futures::FutureExt;
 use futures::future::BoxFuture;
-use std::sync::{Arc, Once, OnceLock};
+use std::sync::{Arc, Mutex, Once, OnceLock};
 use std::time::Duration;
 use tokio::sync::watch;
 
@@ -861,6 +862,135 @@ impl DcbSubscriptionSync for SyncClientSubscription {
     }
 }
 
+/// Tracks the streaming responses opened by a single client so they can all be
+/// stopped together (e.g. when the client is closed or dropped).
+///
+/// Cloneable and shared: the client holds one, and every stream it opens holds a
+/// [`StreamGuard`] that deregisters the stream when the response is dropped.
+#[derive(Clone, Default)]
+struct StreamRegistry {
+    next_id: Arc<AtomicU64>,
+    active: Arc<Mutex<HashMap<u64, StopHandle>>>,
+}
+
+impl StreamRegistry {
+    /// Registers a stream's stop handle (if any) and returns a guard that
+    /// deregisters it on drop.
+    fn register(&self, handle: Option<StopHandle>) -> StreamGuard {
+        let id = self.next_id.fetch_add(1, Ordering::Relaxed);
+        if let Some(handle) = handle {
+            self.active.lock().unwrap().insert(id, handle);
+        }
+        StreamGuard {
+            active: self.active.clone(),
+            id,
+        }
+    }
+
+    /// Stops every currently-active stream and clears the registry.
+    fn stop_all(&self) {
+        let mut lock = self.active.lock().unwrap();
+        for (_id, handle) in lock.drain() {
+            handle.stop();
+        }
+    }
+}
+
+/// Deregisters a single stream from its [`StreamRegistry`] when dropped.
+struct StreamGuard {
+    active: Arc<Mutex<HashMap<u64, StopHandle>>>,
+    id: u64,
+}
+
+impl Drop for StreamGuard {
+    fn drop(&mut self) {
+        if let Ok(mut lock) = self.active.lock() {
+            lock.remove(&self.id);
+        }
+    }
+}
+
+/// Wraps a read response so it deregisters from the client's [`StreamRegistry`]
+/// when dropped. All behaviour is delegated to the inner response.
+struct RegisteredReadResponse {
+    inner: Box<dyn DcbReadResponseAsync + Send + 'static>,
+    _guard: StreamGuard,
+}
+
+impl Stream for RegisteredReadResponse {
+    type Item = DcbResult<DcbSequencedEvent>;
+
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        // `Box<dyn ... + Unpin>` is `Unpin`, so it is safe to reborrow the inner box.
+        Pin::new(&mut self.get_mut().inner).poll_next(cx)
+    }
+}
+
+#[async_trait]
+impl DcbReadResponseAsync for RegisteredReadResponse {
+    async fn head(&mut self) -> DcbResult<Option<u64>> {
+        self.inner.head().await
+    }
+
+    async fn next_batch(&mut self) -> DcbResult<Vec<DcbSequencedEvent>> {
+        self.inner.next_batch().await
+    }
+
+    async fn next_batch_timeout(&mut self, timeout: Duration) -> DcbResult<Vec<DcbSequencedEvent>> {
+        self.inner.next_batch_timeout(timeout).await
+    }
+
+    fn stop(&mut self) {
+        self.inner.stop();
+    }
+
+    fn stop_handle(&self) -> Option<StopHandle> {
+        self.inner.stop_handle()
+    }
+
+    fn check_shutdown_status(&self) -> ShutdownStatus {
+        self.inner.check_shutdown_status()
+    }
+}
+
+/// Wraps a subscription so it deregisters from the client's [`StreamRegistry`]
+/// when dropped. All behaviour is delegated to the inner subscription.
+struct RegisteredSubscription {
+    inner: Box<dyn DcbSubscriptionAsync + Send + 'static>,
+    _guard: StreamGuard,
+}
+
+impl Stream for RegisteredSubscription {
+    type Item = DcbResult<DcbSequencedEvent>;
+
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        Pin::new(&mut self.get_mut().inner).poll_next(cx)
+    }
+}
+
+#[async_trait]
+impl DcbSubscriptionAsync for RegisteredSubscription {
+    async fn next_batch(&mut self) -> DcbResult<Vec<DcbSequencedEvent>> {
+        self.inner.next_batch().await
+    }
+
+    async fn next_batch_timeout(&mut self, timeout: Duration) -> DcbResult<Vec<DcbSequencedEvent>> {
+        self.inner.next_batch_timeout(timeout).await
+    }
+
+    fn stop(&mut self) {
+        self.inner.stop();
+    }
+
+    fn stop_handle(&self) -> Option<StopHandle> {
+        self.inner.stop_handle()
+    }
+
+    fn check_shutdown_status(&self) -> ShutdownStatus {
+        self.inner.check_shutdown_status()
+    }
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct ClientTlsOptions {
     pub domain: Option<String>,
@@ -914,6 +1044,8 @@ pub struct AsyncUmaDbClient {
     batch_size: Option<u32>,
     tls_enabled: bool,
     api_key: Option<String>,
+    // Tracks streams opened by this client so they can all be stopped on close/drop.
+    registry: StreamRegistry,
 }
 
 impl AsyncUmaDbClient {
@@ -962,7 +1094,22 @@ impl AsyncUmaDbClient {
             .await
             .map_err(umadb_proto::dcb_error_from_status)?;
         let stream = response.into_inner();
-        Ok(Box::new(AsyncClientSubscription::new(stream)))
+        let inner: Box<dyn DcbSubscriptionAsync + Send + 'static> =
+            Box::new(AsyncClientSubscription::new(stream));
+        let guard = self.registry.register(inner.stop_handle());
+        Ok(Box::new(RegisteredSubscription {
+            inner,
+            _guard: guard,
+        }))
+    }
+
+    /// Stops all streaming responses opened by this client.
+    ///
+    /// This affects only streams opened via this client instance's `read()` and
+    /// `subscribe()` methods; it does not stop or otherwise affect the server, nor
+    /// streams opened by other clients.
+    pub fn close(&self) {
+        self.registry.stop_all();
     }
 
     pub async fn connect_with_tls_options(
@@ -978,6 +1125,7 @@ impl AsyncUmaDbClient {
                 batch_size,
                 tls_enabled,
                 api_key,
+                registry: StreamRegistry::default(),
             }),
             Err(err) => Err(DcbError::TransportError(format!("{err}"))),
         }
@@ -1029,7 +1177,13 @@ impl DcbEventStoreAsync for AsyncUmaDbClient {
             .await
             .map_err(umadb_proto::dcb_error_from_status)?;
         let stream = response.into_inner();
-        Ok(Box::new(AsyncClientReadResponse::new(stream)))
+        let inner: Box<dyn DcbReadResponseAsync + Send + 'static> =
+            Box::new(AsyncClientReadResponse::new(stream));
+        let guard = self.registry.register(inner.stop_handle());
+        Ok(Box::new(RegisteredReadResponse {
+            inner,
+            _guard: guard,
+        }))
     }
 
     async fn head(&self) -> DcbResult<Option<u64>> {
@@ -1084,6 +1238,14 @@ impl DcbEventStoreAsync for AsyncUmaDbClient {
     }
 }
 
+impl Drop for AsyncUmaDbClient {
+    fn drop(&mut self) {
+        // Signal all still-active streams to stop before the underlying channel
+        // is torn down. This mirrors closing the client as a context manager.
+        self.registry.stop_all();
+    }
+}
+
 // --- Sync wrapper around the async client ---
 pub struct SyncUmaDbClient {
     async_client: AsyncUmaDbClient,
@@ -1125,6 +1287,14 @@ impl SyncUmaDbClient {
             self.handle.clone(),
             async_subscription,
         )))
+    }
+
+    /// Stops all streaming responses opened by this client.
+    ///
+    /// Delegates to the underlying [`AsyncUmaDbClient`]; see its `close()` for
+    /// details. Affects only streams opened by this client instance.
+    pub fn close(&self) {
+        self.async_client.close();
     }
 
     // pub fn connect_with_tls_options(
