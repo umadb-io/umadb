@@ -1,6 +1,5 @@
 import datetime
 import os
-import select
 import signal
 import threading
 import unittest
@@ -249,9 +248,8 @@ class TestUmaDbClient(unittest.TestCase):
             sigint_thread.join()
             signal.signal(signal.SIGINT, original_handler)
 
-    def test_kill_does_not_stop_auto_stop_threaded_stream_responses(self) -> None:
+    def test_auto_interrupt_threaded_stream_responses(self) -> None:
         client = Client("http://127.0.0.1:50051")
-        subscription = client.subscribe(query=Query([QueryItem(tags=[str(uuid4())])]))
 
         def kill_after_one_second() -> None:
             time.sleep(1)
@@ -277,19 +275,143 @@ class TestUmaDbClient(unittest.TestCase):
         try:
             with self.assertRaises(KeyboardInterrupt):
                 try:
-                    with self.assertRaises(StopIteration):
-                        next(subscription)
+                    while True:
+                        time.sleep(0.05)
                 finally:
                     killer_thread.join()
-                    subscription_thread.join(timeout=1)
-                    self.assertTrue(subscription_thread.is_alive())
-                    stop_all_stream_responses()
         finally:
             subscription_thread.join(timeout=1)
-        self.assertFalse(subscription_thread.is_alive())
-        self.assertTrue(len(subscription_errors), 1)
-        self.assertIsInstance(subscription_errors[0], StopIteration)
+            self.assertFalse(subscription_thread.is_alive())
+            self.assertTrue(len(subscription_errors), 1)
+            self.assertIsInstance(subscription_errors[0], KeyboardInterrupt)
 
+    def test_client_context_manager_auto_stops_threaded_stream_responses_subscription(self) -> None:
+        with Client("http://127.0.0.1:50051") as client:
+
+            def block_on_subscription() -> None:
+                subscription = client.subscribe(
+                    query=Query([QueryItem(tags=[str(uuid4())])])
+                )
+                print("Calling next(subscription)")
+                try:
+                    next(subscription)
+                except StopIteration:
+                    pass
+                finally:
+                    print("Exited")
+
+            subscription_thread = threading.Thread(target=block_on_subscription)
+            subscription_thread.start()
+
+            # All subscription to start, and register etc.
+            time.sleep(1)
+
+        try:
+            subscription_thread.join(timeout=1)
+            self.assertFalse(subscription_thread.is_alive())
+        finally:
+            stop_all_stream_responses()
+            subscription_thread.join(timeout=1)
+            self.assertFalse(subscription_thread.is_alive())
+
+    def test_client_context_manager_auto_stops_threaded_stream_responses_read_response_before(self) -> None:
+        with Client("http://127.0.0.1:50051") as client:
+
+            tag1 = self._generate_tag()
+            client.append(
+                events=[
+                    self._generate_tagged_event(tag1),
+                    self._generate_tagged_event(tag1),
+                ],
+                condition=AppendCondition(
+                    fail_if_events_match=Query(
+                        items=[
+                            QueryItem(
+                                tags=[tag1],
+                                types=["OrderCreated"],
+                            )
+                        ]
+                    ),
+                    after=0,
+                ),
+            )
+
+            # Just check we have something to read.
+            read_response = client.read(
+                query=Query([QueryItem(tags=[tag1])])
+            )
+            next(read_response)
+
+            del(read_response)
+
+            read_response = client.read(
+                query=Query([QueryItem(tags=[tag1])])
+            )
+
+        # After exiting, check the read response just stops.
+        with self.assertRaises(StopIteration):
+            next(read_response)
+
+    def test_client_context_manager_auto_stops_threaded_stream_responses_read_response_after(self) -> None:
+        with Client("http://127.0.0.1:50051") as client:
+
+            tag1 = self._generate_tag()
+            client.append(
+                events=[
+                    self._generate_tagged_event(tag1),
+                    self._generate_tagged_event(tag1),
+                ],
+                condition=AppendCondition(
+                    fail_if_events_match=Query(
+                        items=[
+                            QueryItem(
+                                tags=[tag1],
+                                types=["OrderCreated"],
+                            )
+                        ]
+                    ),
+                    after=0,
+                ),
+            )
+
+            read_response = client.read(
+                query=Query([QueryItem(tags=[tag1])])
+            )
+            # This loads a batch.
+            next(read_response)
+
+
+        # After exiting, check the read response just stops.
+        with self.assertRaises(StopIteration):
+            next(read_response)
+
+    def test_client_del_auto_stops_threaded_stream_responses(self) -> None:
+        client = Client("http://127.0.0.1:50051")
+
+        def block_on_subscription() -> None:
+            subscription = client.subscribe(
+                query=Query([QueryItem(tags=[str(uuid4())])])
+            )
+            try:
+                next(subscription)
+            except StopIteration:
+                pass
+
+        subscription_thread = threading.Thread(target=block_on_subscription)
+        subscription_thread.start()
+
+        # All subscription to start, and register etc.
+        time.sleep(1)
+
+        del client
+
+        try:
+            subscription_thread.join(timeout=1)
+            self.assertFalse(subscription_thread.is_alive())
+        finally:
+            stop_all_stream_responses()
+            subscription_thread.join(timeout=1)
+            self.assertFalse(subscription_thread.is_alive())
 
     # @skipIf("TEST_BENCHMARK_NUM_ITERS" not in os.environ, "Don't mess up the tags")
     def test_benchmark_dcb_append(self) -> None:

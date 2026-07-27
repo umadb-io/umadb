@@ -3,7 +3,7 @@ use pyo3::exceptions::{
 };
 use pyo3::prelude::*;
 use pyo3::types::PyBytes;
-use pyo3::wrap_pyfunction;
+use pyo3::{IntoPyObjectExt, wrap_pyfunction};
 use pyo3_stub_gen::{create_exception, define_stub_info_gatherer, derive::*};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -253,6 +253,22 @@ impl AppendCondition {
     }
 }
 
+// Deferred stream registration removal
+struct UnwindGuard {
+    stream_id: u64,
+    active_streams: Arc<Mutex<HashMap<u64, umadb_dcb::StopHandle>>>,
+    active: bool,
+}
+
+impl Drop for UnwindGuard {
+    fn drop(&mut self) {
+        if self.active {
+            let mut lock = self.active_streams.lock().unwrap();
+            lock.remove(&self.stream_id);
+        }
+    }
+}
+
 /// Python iterator over sequenced events
 #[gen_stub_pyclass]
 #[pyclass]
@@ -261,6 +277,8 @@ pub struct ReadResponse {
     // Cloneable handle used to stop the stream without acquiring `inner`'s lock,
     // which is held while blocking on the next batch of events.
     stop_handle: Option<umadb_dcb::StopHandle>,
+    active_streams: Arc<Mutex<HashMap<u64, umadb_dcb::StopHandle>>>,
+    stream_id: u64,
 }
 
 #[gen_stub_pymethods()]
@@ -272,6 +290,14 @@ impl ReadResponse {
 
     #[gen_stub(override_return_type(type_repr = "SequencedEvent"))]
     fn __next__(slf: PyRefMut<Self>, py: Python<'_>) -> Option<PyResult<SequencedEvent>> {
+        println!("Called __next__");
+        // Construct guard in case we need to deregister.
+        let mut guard = UnwindGuard {
+            stream_id: slf.stream_id,
+            active_streams: slf.active_streams.clone(),
+            active: true,
+        };
+
         // Clone the Arc and drop the PyRefMut before releasing the GIL so the closure doesn't capture non-Send data
         let inner = slf.inner.clone();
         drop(slf);
@@ -280,7 +306,10 @@ impl ReadResponse {
             inner.lock().unwrap().next()
         });
         match result {
-            Some(Ok(event)) => Some(Ok(SequencedEvent { inner: event })),
+            Some(Ok(event)) => {
+                guard.active = false;
+                Some(Ok(SequencedEvent { inner: event }))
+            }
             Some(Err(err)) => Some(Err(dcb_error_to_py_err(err))),
             None => None,
         }
@@ -347,6 +376,13 @@ impl ReadResponse {
     }
 }
 
+impl Drop for ReadResponse {
+    fn drop(&mut self) {
+        let mut lock = self.active_streams.lock().unwrap();
+        lock.remove(&self.stream_id);
+    }
+}
+
 /// Python iterator over sequenced events
 #[gen_stub_pyclass]
 #[pyclass]
@@ -355,6 +391,8 @@ pub struct Subscription {
     // Cloneable handle used to stop the stream without acquiring `inner`'s lock,
     // which is held while blocking on the next batch of events.
     stop_handle: Option<umadb_dcb::StopHandle>,
+    active_streams: Arc<Mutex<HashMap<u64, umadb_dcb::StopHandle>>>,
+    stream_id: u64,
 }
 
 #[gen_stub_pymethods()]
@@ -366,6 +404,14 @@ impl Subscription {
 
     #[gen_stub(override_return_type(type_repr = "SequencedEvent"))]
     fn __next__(slf: PyRefMut<Self>, py: Python<'_>) -> Option<PyResult<SequencedEvent>> {
+        println!("Called __next__");
+        // Construct guard in case we need to deregister.
+        let mut guard = UnwindGuard {
+            stream_id: slf.stream_id,
+            active_streams: slf.active_streams.clone(),
+            active: true,
+        };
+
         // Clone the Arc and drop the PyRefMut before releasing the GIL so the closure doesn't capture non-Send data
         let inner = slf.inner.clone();
         drop(slf);
@@ -383,11 +429,17 @@ impl Subscription {
 
             // Check Python signals.
             if let Err(e) = py.check_signals() {
+                println!("Got signals...");
                 return Some(Err(e));
             }
 
             match result {
-                Some(Ok(event)) => return Some(Ok(SequencedEvent { inner: event })),
+                Some(Ok(event)) => {
+                    return {
+                        guard.active = false;
+                        Some(Ok(SequencedEvent { inner: event }))
+                    };
+                }
                 Some(Err(DcbError::Timeout())) => continue,
                 Some(Err(err)) => return Some(Err(dcb_error_to_py_err(err))),
                 None => return None,
@@ -446,11 +498,22 @@ impl Subscription {
     }
 }
 
+impl Drop for Subscription {
+    fn drop(&mut self) {
+        let mut lock = self.active_streams.lock().unwrap();
+        lock.remove(&self.stream_id);
+    }
+}
+
 /// Python wrapper for the synchronous UmaDB client
 #[gen_stub_pyclass]
 #[pyclass]
 pub struct Client {
     inner: Arc<umadb_client::SyncUmaDbClient>,
+    // Shared cancellation token or list of active stream stop handles
+    active_streams: Arc<Mutex<HashMap<u64, umadb_dcb::StopHandle>>>,
+    // Monotonically increasing counter to issue unique stream IDs
+    next_stream_id: Arc<Mutex<u64>>,
 }
 
 #[gen_stub_pymethods]
@@ -499,6 +562,8 @@ impl Client {
 
         Ok(Client {
             inner: Arc::new(sync_client),
+            active_streams: Arc::new(Mutex::new(HashMap::new())),
+            next_stream_id: Arc::new(Mutex::new(0)),
         })
     }
 
@@ -528,9 +593,21 @@ impl Client {
             .map_err(dcb_error_to_py_err)?;
 
         let stop_handle = response_iter.stop_handle();
+
+        // Register the new stream
+        let mut id_lock = self.next_stream_id.lock().unwrap();
+        let stream_id = *id_lock;
+        *id_lock += 1;
+        if let Some(ref handle) = stop_handle {
+            let mut streams_lock = self.active_streams.lock().unwrap();
+            streams_lock.insert(stream_id, handle.clone());
+        }
+
         Ok(ReadResponse {
             inner: Arc::new(Mutex::new(response_iter)),
             stop_handle,
+            active_streams: self.active_streams.clone(),
+            stream_id,
         })
     }
 
@@ -559,10 +636,21 @@ impl Client {
             .detach(move || inner.subscribe(query_inner, after))
             .map_err(dcb_error_to_py_err)?;
 
+        // Register the new stream
+        let mut id_lock = self.next_stream_id.lock().unwrap();
+        let stream_id = *id_lock;
+        *id_lock += 1;
         let stop_handle = response_iter.stop_handle();
+        if let Some(ref handle) = stop_handle {
+            let mut streams_lock = self.active_streams.lock().unwrap();
+            streams_lock.insert(stream_id, handle.clone());
+        }
+
         Ok(Subscription {
             inner: Arc::new(Mutex::new(response_iter)),
             stop_handle,
+            active_streams: self.active_streams.clone(),
+            stream_id,
         })
     }
 
@@ -615,6 +703,55 @@ impl Client {
 
     fn __repr__(&self) -> String {
         "Client(connected)".to_string()
+    }
+
+    // --- CONTEXT MANAGER IMPLEMENTATION ---
+
+    /// Context manager enter - will call close on exit.
+    fn __enter__<'py>(slf: PyRef<'py, Self>, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        // Convert the structural reference into a generic, un-borrowed Bound Python pointer.
+        // This drops the exclusive Rust borrow lock immediately, allowing thread sharing!
+        slf.into_bound_py_any(py)
+    }
+
+    /// Context manager exit - calls close.
+    #[pyo3(signature = (exc_type, exc_val, exc_tb, /))]
+    #[allow(unused_variables)]
+    fn __exit__(
+        &mut self,
+        exc_type: &Bound<'_, PyAny>,
+        exc_val: &Bound<'_, PyAny>,
+        exc_tb: &Bound<'_, PyAny>,
+    ) -> PyResult<bool> {
+        // Close the streams.
+        self.close()?;
+
+        // Return false to ensure any internal exceptions are propagated up to Python normally
+        Ok(false)
+    }
+
+    /// Stops all active streaming responses.
+    fn close(&self) -> PyResult<()> {
+        // Call your global cleanups or clear local streams
+        let mut streams = self.active_streams.lock().unwrap();
+        for (_stream_id, handle) in streams.drain() {
+            handle.stop();
+        }
+        Ok(())
+    }
+}
+
+impl Drop for Client {
+    fn drop(&mut self) {
+        // Forcefully, but gracefully, signal all background streams
+        // to shut down before the core network channel is destroyed.
+        if let Ok(streams) = self.active_streams.lock() {
+            // We use a manual loop here instead of drain() since we can't
+            // easily mutate the map inside a standard drop wrapper
+            for (_stream_id, handle) in streams.iter() {
+                handle.stop();
+            }
+        }
     }
 }
 

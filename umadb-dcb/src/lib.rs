@@ -202,6 +202,13 @@ pub trait DcbEventStoreAsync: Send + Sync {
     ) -> DcbResult<u64>;
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ShutdownStatus {
+    NotStopped,
+    StoppedGracefully,
+    CancelledByUser,
+}
+
 /// Asynchronous response from a read operation, providing a stream of sequenced events
 #[async_trait]
 pub trait DcbReadResponseAsync: Stream<Item = DcbResult<DcbSequencedEvent>> + Send + Unpin {
@@ -232,6 +239,8 @@ pub trait DcbReadResponseAsync: Stream<Item = DcbResult<DcbSequencedEvent>> + Se
     fn stop_handle(&self) -> Option<StopHandle> {
         None
     }
+
+    fn check_shutdown_status(&self) -> ShutdownStatus;
 }
 
 /// Asynchronous response from a subscribe operation, providing a stream of sequenced events
@@ -252,6 +261,7 @@ pub trait DcbSubscriptionAsync: Stream<Item = DcbResult<DcbSequencedEvent>> + Se
     fn stop_handle(&self) -> Option<StopHandle> {
         None
     }
+    fn check_shutdown_status(&self) -> ShutdownStatus;
 }
 
 /// Represents a query item for filtering events

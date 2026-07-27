@@ -112,6 +112,18 @@ class Client:
             Optional position last recorded for this source (None if not set)
         """
     def __repr__(self) -> builtins.str: ...
+    def __enter__(self) -> typing.Any:
+        r"""
+        Context manager enter - will call close on exit.
+        """
+    def __exit__(self, exc_type: typing.Any, exc_val: typing.Any, exc_tb: typing.Any, /) -> builtins.bool:
+        r"""
+        Context manager exit - calls close.
+        """
+    def close(self) -> None:
+        r"""
+        Stops all active streaming responses.
+        """
 
 class CorruptionError(builtins.RuntimeError):
     ...
