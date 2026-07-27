@@ -290,7 +290,6 @@ impl ReadResponse {
 
     #[gen_stub(override_return_type(type_repr = "SequencedEvent"))]
     fn __next__(slf: PyRefMut<Self>, py: Python<'_>) -> Option<PyResult<SequencedEvent>> {
-        println!("Called __next__");
         // Construct guard in case we need to deregister.
         let mut guard = UnwindGuard {
             stream_id: slf.stream_id,
@@ -301,17 +300,37 @@ impl ReadResponse {
         // Clone the Arc and drop the PyRefMut before releasing the GIL so the closure doesn't capture non-Send data
         let inner = slf.inner.clone();
         drop(slf);
-        let result = py.detach(move || {
-            // Release the GIL while we potentially block waiting for the next batch/event
-            inner.lock().unwrap().next()
-        });
-        match result {
-            Some(Ok(event)) => {
-                guard.active = false;
-                Some(Ok(SequencedEvent { inner: event }))
+
+        loop {
+            let result = py.detach({
+                let inner = inner.clone();
+                move || {
+                    // Call the new timeout method we just exposed on DcbReadResponseSync
+                    inner
+                        .lock()
+                        .unwrap()
+                        .next_timeout(Duration::from_millis(100))
+                }
+            });
+
+            // Check Python signals every 100ms.
+            if let Err(e) = py.check_signals() {
+                println!("ReadResponse got signals...");
+                return Some(Err(e));
             }
-            Some(Err(err)) => Some(Err(dcb_error_to_py_err(err))),
-            None => None,
+
+            match result {
+                Some(Ok(event)) => {
+                    return {
+                        guard.active = false;
+                        Some(Ok(SequencedEvent { inner: event }))
+                    };
+                }
+                // If it's a non-fatal timeout, skip the match and cycle the loop to keep waiting
+                Some(Err(DcbError::Timeout())) => continue,
+                Some(Err(err)) => return Some(Err(dcb_error_to_py_err(err))),
+                None => return None,
+            }
         }
     }
 
@@ -404,7 +423,6 @@ impl Subscription {
 
     #[gen_stub(override_return_type(type_repr = "SequencedEvent"))]
     fn __next__(slf: PyRefMut<Self>, py: Python<'_>) -> Option<PyResult<SequencedEvent>> {
-        println!("Called __next__");
         // Construct guard in case we need to deregister.
         let mut guard = UnwindGuard {
             stream_id: slf.stream_id,

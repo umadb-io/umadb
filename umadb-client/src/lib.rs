@@ -78,7 +78,6 @@ pub fn register_cancel_sigint_handler() {
     });
 }
 
-
 pub trait ShutdownEvaluator {
     // These methods act as "getters" for the underlying watch channels
     fn cancel_channel(&self) -> &watch::Receiver<()>;
@@ -110,7 +109,6 @@ pub trait IteratorWithTimeout {
     /// Pulls the next item, returning an explicit Timeout error if the window expires.
     fn next_timeout(&mut self, timeout: Duration) -> Option<Self::Item>;
 }
-
 
 /// Async read response wrapper that provides batched access and head metadata
 pub struct AsyncClientReadResponse {
@@ -165,14 +163,58 @@ impl AsyncClientReadResponse {
                 match msg {
                     Ok(Some(resp)) => {
                         self.last_head = Some(resp.head);
-                        let mut buffered = VecDeque::with_capacity(resp.events.len());
+                        let mut buffer = VecDeque::with_capacity(resp.events.len());
                         for e in resp.events {
                             if let Some(ev) = e.event {
                                 let event = DcbEvent::try_from(ev)?;
-                                buffered.push_back(DcbSequencedEvent { position: e.position, event });
+                                buffer.push_back(DcbSequencedEvent { position: e.position, event });
                             }
                         }
-                        self.buffer = buffered;
+                        self.buffer = buffer;
+                    }
+                    Ok(None) => self.ended = true,
+                    Err(status) => return Err(umadb_proto::dcb_error_from_status(status)),
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    async fn fetch_next_if_needed_timeout(&mut self, timeout: Duration) -> DcbResult<()> {
+        if !self.buffer.is_empty() || self.ended {
+            return Ok(());
+        }
+
+        tokio::select! {
+            biased;
+            _ = self.cancel.changed() => {
+                self.ended = true;
+                return Err(DcbError::CancelledByUser());
+            }
+            _ = self.stop.changed() => {
+                self.ended = true;
+                return Ok(());
+            }
+            _ = self.local_stop.changed() => {
+                self.ended = true;
+                return Ok(());
+            }
+            _ = tokio::time::sleep(timeout) => {
+                return Err(DcbError::Timeout());
+            }
+            msg = self.stream.message() => {
+                match msg {
+                    Ok(Some(resp)) => {
+                        self.last_head = Some(resp.head);
+                        let mut buffer = VecDeque::with_capacity(resp.events.len());
+                        for e in resp.events {
+                            if let Some(ev) = e.event {
+                                let event = DcbEvent::try_from(ev)?;
+                                buffer.push_back(DcbSequencedEvent { position: e.position, event });
+                            }
+                        }
+                        self.buffer = buffer;
                     }
                     Ok(None) => self.ended = true,
                     Err(status) => return Err(umadb_proto::dcb_error_from_status(status)),
@@ -216,6 +258,21 @@ impl DcbReadResponseAsync for AsyncClientReadResponse {
         }
 
         self.fetch_next_if_needed().await?;
+
+        if !self.buffer.is_empty() {
+            return Ok(self.buffer.drain(..).collect());
+        }
+
+        Ok(Vec::new())
+    }
+
+    async fn next_batch_timeout(&mut self, timeout: Duration) -> DcbResult<Vec<DcbSequencedEvent>> {
+        if !self.buffer.is_empty() {
+            return Ok(self.buffer.drain(..).collect());
+        }
+
+        // Invoke the updated timeout select loop
+        self.fetch_next_if_needed_timeout(timeout).await?;
 
         if !self.buffer.is_empty() {
             return Ok(self.buffer.drain(..).collect());
@@ -359,14 +416,14 @@ impl AsyncClientSubscription {
             msg = self.stream.message() => {
                 match msg {
                     Ok(Some(resp)) => {
-                        let mut buffered = VecDeque::with_capacity(resp.events.len());
+                        let mut buffer = VecDeque::with_capacity(resp.events.len());
                         for e in resp.events {
                             if let Some(ev) = e.event {
                                 let event = DcbEvent::try_from(ev)?;
-                                buffered.push_back(DcbSequencedEvent { position: e.position, event });
+                                buffer.push_back(DcbSequencedEvent { position: e.position, event });
                             }
                         }
-                        self.buffer = buffered;
+                        self.buffer = buffer;
                     }
                     Ok(None) => self.ended = true,
                     Err(status) => return Err(umadb_proto::dcb_error_from_status(status)),
@@ -512,10 +569,9 @@ impl AsyncStreamBackend for dyn DcbReadResponseAsync + Send + 'static {
     }
     fn next_batch_timeout_box(
         &mut self,
-        _timeout: Duration,
+        timeout: Duration,
     ) -> BoxFuture<'_, DcbResult<Vec<DcbSequencedEvent>>> {
-        // Read response does not have a timeout method, default to standard batch retrieval
-        self.next_batch().boxed()
+        self.next_batch_timeout(timeout).boxed()
     }
     fn stop(&mut self) {
         self.stop();
@@ -716,6 +772,15 @@ impl Iterator for SyncClientReadResponse {
     }
 }
 
+impl IteratorWithTimeout for SyncClientReadResponse {
+    type Item = DcbResult<DcbSequencedEvent>;
+
+    fn next_timeout(&mut self, timeout: Duration) -> Option<Self::Item> {
+        // Delegates directly to the generic engine, identical to the subscription!
+        self.engine.next_item_timeout(timeout)
+    }
+}
+
 impl DcbReadResponseSync for SyncClientReadResponse {
     fn head(&mut self) -> DcbResult<Option<u64>> {
         self.engine.rt.block_on(self.engine.async_resp.head())
@@ -739,6 +804,10 @@ impl DcbReadResponseSync for SyncClientReadResponse {
 
     fn stop_handle(&self) -> Option<StopHandle> {
         self.engine.async_resp.stop_handle()
+    }
+
+    fn next_timeout(&mut self, timeout: Duration) -> Option<DcbResult<DcbSequencedEvent>> {
+        <Self as IteratorWithTimeout>::next_timeout(self, timeout)
     }
 }
 

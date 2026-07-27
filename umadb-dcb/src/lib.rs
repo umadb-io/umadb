@@ -120,6 +120,11 @@ pub trait DcbReadResponseSync: Iterator<Item = DcbResult<DcbSequencedEvent>> + S
     fn stop_handle(&self) -> Option<StopHandle> {
         None
     }
+
+    fn next_timeout(&mut self, _timeout: Duration) -> Option<DcbResult<DcbSequencedEvent>> {
+        // Fallback default behaviour: just call normal blocking next()
+        self.next()
+    }
 }
 
 /// Response from a subscribe operation, providing an iterator over sequenced events
@@ -225,6 +230,7 @@ pub trait DcbReadResponseAsync: Stream<Item = DcbResult<DcbSequencedEvent>> + Se
     }
 
     async fn next_batch(&mut self) -> DcbResult<Vec<DcbSequencedEvent>>;
+    async fn next_batch_timeout(&mut self, timeout: Duration) -> DcbResult<Vec<DcbSequencedEvent>>;
 
     /// Ends this individual streaming response.
     ///
