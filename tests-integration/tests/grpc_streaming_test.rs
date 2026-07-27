@@ -1,5 +1,6 @@
 use std::net::TcpListener;
-use umadb_client::{AsyncUmaDbClient, UmaDbClient};
+use futures::StreamExt;
+use umadb_client::{trigger_cancel, AsyncUmaDbClient, UmaDbClient};
 use umadb_core::mvcc::DEFAULT_PAGE_SIZE;
 use umadb_dcb::{DcbError, DcbEvent, DcbEventStoreAsync};
 use umadb_server::start_server;
@@ -143,6 +144,30 @@ async fn grpc_async_does_not_stream_past_starting_head() {
 
     assert_eq!(300, total, "should read exactly initial 300 events");
 
+    // Start and stop a read request
+    let mut resp = client
+        .read(None, None, false, None)
+        .await
+        .expect("read response stream");
+
+    resp.stop();
+    let next_result = resp.next().await;
+    assert!(next_result.is_none());
+
+    // Start and cancel a read request
+    let mut resp = client
+        .read(None, None, false, None)
+        .await
+        .expect("read response stream");
+
+    trigger_cancel();
+    match resp.next().await {
+        Some(Err(DcbError::CancelledByUser())) => {}
+        other => panic!("Expected CancelledByUser, got {other:?}"),
+    }
+
+
+
     let _ = shutdown_tx.send(());
     let _ = server_task.await;
 }
@@ -233,6 +258,28 @@ async fn grpc_async_subscription_catch_up_and_continue() {
         }
     }
 
+    // Start and stop a subscription
+    let mut resp = client
+        .subscribe(None, None)
+        .await
+        .expect("subscription stream");
+
+    resp.stop();
+    let next_result = resp.next().await;
+    assert!(next_result.is_none());
+
+    // Start and cancel a subscription
+    let mut resp = client
+        .subscribe(None, None)
+        .await
+        .expect("subscription stream");
+
+    trigger_cancel();
+    match resp.next().await {
+        Some(Err(DcbError::CancelledByUser())) => {}
+        other => panic!("Expected CancelledByUser, got {other:?}"),
+    }
+
     let _ = shutdown_tx.send(());
     let _ = server_task.await;
 }
@@ -266,7 +313,7 @@ async fn grpc_async_stream_catch_up_and_continue() {
         .await
         .expect("append initial events");
 
-    let mut resp = client.subscribe(None, None).await.expect("read_stream");
+    let mut resp = client.subscribe(None, None).await.expect("subscribe");
 
     let mut received = 0usize;
     while received < initial_count {
