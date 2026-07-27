@@ -16,3 +16,15 @@
 /.python-version
 /uma.db
 /umadb-python/python/umadb/umadb.abi3.so
+
+# Python bytecode/cache files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Python test/cache tooling
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
