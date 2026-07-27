@@ -13,7 +13,7 @@ import signal
 def _handle_sigint_globally(signum, frame):
     """Triggered if the main thread catches Ctrl-C while idling."""
     try:
-        interrupt_all_stream_responses()  # Causes KeyboardInterrupt in streaming responses.
+        cancel_all_stream_responses()  # Causes KeyboardInterrupt in streaming responses.
     except Exception:
         pass
     # Propagate the standard KeyboardInterrupt exception to the main thread

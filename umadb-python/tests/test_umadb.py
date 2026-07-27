@@ -16,8 +16,8 @@ from umadb import (
     QueryItem,
     SequencedEvent,
     TrackingInfo,
-    interrupt_all_stream_responses,
-    stop_all_stream_responses,
+    cancel_all_stream_responses,
+    CancelledByUserError,
 )
 
 
@@ -61,123 +61,75 @@ class TestUmaDbClient(unittest.TestCase):
         with self.assertRaises(KeyboardInterrupt):
             subscription.next_batch()
 
-    def test_cancel_all_stream_responses_after_one_second(self) -> None:
+    def test_cancel_all_stream_responses_after_one_second_with_subscription_next_on_main_thread(self) -> None:
+        client = Client("http://127.0.0.1:50051")
+        subscription = client.subscribe(query=Query([QueryItem(tags=[str(uuid4())])]))
+
+        def cancel_all_after_one_second() -> None:
+            time.sleep(1)
+            cancel_all_stream_responses()
+
+        thread = threading.Thread(target=cancel_all_after_one_second)
+        thread.start()
+
+        with self.assertRaises(CancelledByUserError):
+            next(subscription)
+
+    def test_cancel_all_stream_responses_after_one_second_with_subscription_next_on_daemon_thread(self) -> None:
+        client = Client("http://127.0.0.1:50051")
+        subscription1 = client.subscribe(query=Query([QueryItem(tags=[str(uuid4())])]))
+
+        subscription_thread_errors = []
+
+        def cancel_all_after_one_second() -> None:
+            time.sleep(1)
+            cancel_all_stream_responses()
+
+        def block_on_subscription() -> None:
+            subscription2 = client.subscribe(
+                query=Query([QueryItem(tags=[str(uuid4())])])
+            )
+            try:
+                next(subscription2)
+            except BaseException as e:
+                subscription_thread_errors.append(e)
+
+        stopper_thread = threading.Thread(target=cancel_all_after_one_second)
+        stopper_thread.start()
+
+        subscription_thread = threading.Thread(target=block_on_subscription)
+        subscription_thread.start()
+
+        with self.assertRaises(CancelledByUserError):
+            next(subscription1)
+
+        subscription_thread.join(timeout=3)
+        self.assertFalse(subscription_thread.is_alive())
+
+        self.assertEqual(len(subscription_thread_errors), 1)
+        self.assertIsInstance(subscription_thread_errors[0], CancelledByUserError)
+
+    def test_cancel_subscription_after_one_second(self) -> None:
         client = Client("http://127.0.0.1:50051")
         subscription = client.subscribe(query=Query([QueryItem(tags=[str(uuid4())])]))
 
         def cancel_after_one_second() -> None:
             time.sleep(1)
-            interrupt_all_stream_responses()
+            subscription.cancel()
 
         thread = threading.Thread(target=cancel_after_one_second)
         thread.start()
 
-        with self.assertRaises(KeyboardInterrupt):
+        with self.assertRaises(CancelledByUserError):
             next(subscription)
 
-    def test_stop_all_stream_responses_after_one_second(self) -> None:
-        client = Client("http://127.0.0.1:50051")
-        subscription = client.subscribe(query=Query([QueryItem(tags=[str(uuid4())])]))
-
-        def stop_after_one_second() -> None:
-            time.sleep(1)
-            stop_all_stream_responses()
-
-        stopper_thread = threading.Thread(target=stop_after_one_second)
-        stopper_thread.start()
-
-        with self.assertRaises(StopIteration):
-            next(subscription)
-
-    def test_stop_subscription_thread(self) -> None:
-        client = Client("http://127.0.0.1:50051")
-        subscription1 = client.subscribe(query=Query([QueryItem(tags=[str(uuid4())])]))
-
-        subscription_thread_errors = []
-
-        def stop_after_one_second() -> None:
-            time.sleep(1)
-            stop_all_stream_responses()
-
-        def block_on_subscription() -> None:
-            subscription2 = client.subscribe(
-                query=Query([QueryItem(tags=[str(uuid4())])])
-            )
-            try:
-                next(subscription2)
-            except BaseException as e:
-                subscription_thread_errors.append(e)
-
-        stopper_thread = threading.Thread(target=stop_after_one_second)
-        stopper_thread.start()
-
-        subscription_thread = threading.Thread(target=block_on_subscription)
-        subscription_thread.start()
-
-        with self.assertRaises(StopIteration):
-            next(subscription1)
-
-        subscription_thread.join(timeout=3)
-        self.assertFalse(subscription_thread.is_alive())
-
-        self.assertEqual(len(subscription_thread_errors), 1)
-        self.assertIsInstance(subscription_thread_errors[0], StopIteration)
-
-    def test_interrupt_subscription_thread(self) -> None:
-        client = Client("http://127.0.0.1:50051")
-        subscription1 = client.subscribe(query=Query([QueryItem(tags=[str(uuid4())])]))
-
-        subscription_thread_errors = []
-
-        def stop_after_one_second() -> None:
-            time.sleep(1)
-            interrupt_all_stream_responses()
-
-        stopper_thread = threading.Thread(target=stop_after_one_second)
-        stopper_thread.start()
-
-        def block_on_subscription() -> None:
-            subscription2 = client.subscribe(
-                query=Query([QueryItem(tags=[str(uuid4())])])
-            )
-            try:
-                next(subscription2)
-            except BaseException as e:
-                subscription_thread_errors.append(e)
-
-        subscription_thread = threading.Thread(target=block_on_subscription)
-        subscription_thread.start()
-
-        with self.assertRaises(KeyboardInterrupt):
-            next(subscription1)
-
-        subscription_thread.join(timeout=3)
-        self.assertFalse(subscription_thread.is_alive())
-
-        self.assertEqual(len(subscription_thread_errors), 1)
-        self.assertIsInstance(subscription_thread_errors[0], KeyboardInterrupt)
-
-    def test_stop_subscription_after_one_second(self) -> None:
-        client = Client("http://127.0.0.1:50051")
-        subscription = client.subscribe(query=Query([QueryItem(tags=[str(uuid4())])]))
-
-        def stop_after_one_second() -> None:
-            time.sleep(1)
-            subscription.stop()
-
-        thread = threading.Thread(target=stop_after_one_second)
-        thread.start()
-
-        with self.assertRaises(StopIteration):
-            next(subscription)
-
-    def test_sigint_handler_cancels_all_stream_responses(self) -> None:
+    def test_sigint_handler_cancels_all_stream_responses_does_not_raise_keyboard_interrupt(self) -> None:
         client = Client("http://127.0.0.1:50051")
         subscription = client.subscribe(query=Query([QueryItem(tags=[str(uuid4())])]))
 
         def sigint_handler(*args: Any) -> None:
             # print("Handling sigint")
-            interrupt_all_stream_responses()
+            cancel_all_stream_responses()
 
         original_handler = signal.signal(signal.SIGINT, sigint_handler)
 
@@ -190,45 +142,19 @@ class TestUmaDbClient(unittest.TestCase):
         sigint_thread.start()
 
         try:
-            with self.assertRaises(KeyboardInterrupt):
+            with self.assertRaises(CancelledByUserError):
                 next(subscription)
         finally:
             sigint_thread.join()
             signal.signal(signal.SIGINT, original_handler)
 
-    def test_sigint_handler_stops_all_stream_responses(self) -> None:
+    def test_sigint_handler_cancels_all_stream_responses_does_raise_keyboard_interrupt(self) -> None:
         client = Client("http://127.0.0.1:50051")
         subscription = client.subscribe(query=Query([QueryItem(tags=[str(uuid4())])]))
 
         def sigint_handler(*args: Any) -> None:
-#             print("Handling sigint")
-            stop_all_stream_responses()
-            # raise KeyboardInterrupt
-
-        original_handler = signal.signal(signal.SIGINT, sigint_handler)
-
-        def send_sigint_after_one_second() -> None:
-            time.sleep(1)
-#             print("Sending sigint")
-            os.kill(os.getpid(), signal.SIGINT)
-
-        sigint_thread = threading.Thread(target=send_sigint_after_one_second)
-        sigint_thread.start()
-
-        try:
-            with self.assertRaises(StopIteration):
-                next(subscription)
-        finally:
-            sigint_thread.join()
-            signal.signal(signal.SIGINT, original_handler)
-
-    def test_sigint_handler_stops_all_stream_responses_then_raises(self) -> None:
-        client = Client("http://127.0.0.1:50051")
-        subscription = client.subscribe(query=Query([QueryItem(tags=[str(uuid4())])]))
-
-        def sigint_handler(*args: Any) -> None:
-#             print("Handling sigint")
-            stop_all_stream_responses()
+            # print("Handling sigint")
+            cancel_all_stream_responses()
             raise KeyboardInterrupt
 
         original_handler = signal.signal(signal.SIGINT, sigint_handler)
@@ -248,7 +174,7 @@ class TestUmaDbClient(unittest.TestCase):
             sigint_thread.join()
             signal.signal(signal.SIGINT, original_handler)
 
-    def test_auto_interrupt_threaded_stream_responses(self) -> None:
+    def test_default_python_sigint_handler_with_threaded_stream_responses(self) -> None:
         client = Client("http://127.0.0.1:50051")
 
         def kill_after_one_second() -> None:
@@ -283,9 +209,11 @@ class TestUmaDbClient(unittest.TestCase):
             subscription_thread.join(timeout=1)
             self.assertFalse(subscription_thread.is_alive())
             self.assertTrue(len(subscription_errors), 1)
-            self.assertIsInstance(subscription_errors[0], KeyboardInterrupt)
+            self.assertIsInstance(subscription_errors[0], CancelledByUserError)
 
-    def test_client_context_manager_auto_stops_threaded_stream_responses_subscription(self) -> None:
+    def test_client_context_manager_auto_cancels_threaded_stream_response(self) -> None:
+        subscription_errors = []
+
         with Client("http://127.0.0.1:50051") as client:
 
             def block_on_subscription() -> None:
@@ -295,10 +223,8 @@ class TestUmaDbClient(unittest.TestCase):
                 print("Calling next(subscription)")
                 try:
                     next(subscription)
-                except StopIteration:
-                    pass
-                finally:
-                    print("Exited")
+                except BaseException as e:
+                    subscription_errors.append(e)
 
             subscription_thread = threading.Thread(target=block_on_subscription)
             subscription_thread.start()
@@ -309,12 +235,14 @@ class TestUmaDbClient(unittest.TestCase):
         try:
             subscription_thread.join(timeout=1)
             self.assertFalse(subscription_thread.is_alive())
+            self.assertEqual(len(subscription_errors), 1)
+            self.assertIsInstance(subscription_errors[0], CancelledByUserError)
         finally:
-            stop_all_stream_responses()
+            cancel_all_stream_responses()
             subscription_thread.join(timeout=1)
             self.assertFalse(subscription_thread.is_alive())
 
-    def test_client_context_manager_auto_stops_threaded_stream_responses_read_response_before(self) -> None:
+    def test_client_context_manager_auto_stops_threaded_read_response_before_fetch_batch(self) -> None:
         with Client("http://127.0.0.1:50051") as client:
 
             tag1 = self._generate_tag()
@@ -349,10 +277,10 @@ class TestUmaDbClient(unittest.TestCase):
             )
 
         # After exiting, check the read response just stops.
-        with self.assertRaises(StopIteration):
+        with self.assertRaises(CancelledByUserError):
             next(read_response)
 
-    def test_client_context_manager_auto_stops_threaded_stream_responses_read_response_after(self) -> None:
+    def test_client_context_manager_auto_stops_threaded_read_response_after_fetch_batch(self) -> None:
         with Client("http://127.0.0.1:50051") as client:
 
             tag1 = self._generate_tag()
@@ -382,11 +310,13 @@ class TestUmaDbClient(unittest.TestCase):
 
 
         # After exiting, check the read response just stops.
-        with self.assertRaises(StopIteration):
+        with self.assertRaises(CancelledByUserError):
             next(read_response)
 
     def test_client_del_auto_stops_threaded_stream_responses(self) -> None:
         client = Client("http://127.0.0.1:50051")
+
+        subscription_errors = []
 
         def block_on_subscription() -> None:
             subscription = client.subscribe(
@@ -394,8 +324,8 @@ class TestUmaDbClient(unittest.TestCase):
             )
             try:
                 next(subscription)
-            except StopIteration:
-                pass
+            except BaseException as e:
+                subscription_errors.append(e)
 
         subscription_thread = threading.Thread(target=block_on_subscription)
         subscription_thread.start()
@@ -408,8 +338,10 @@ class TestUmaDbClient(unittest.TestCase):
         try:
             subscription_thread.join(timeout=1)
             self.assertFalse(subscription_thread.is_alive())
+            self.assertEqual(len(subscription_errors), 1)
+            self.assertIsInstance(subscription_errors[0], CancelledByUserError)
         finally:
-            stop_all_stream_responses()
+            cancel_all_stream_responses()
             subscription_thread.join(timeout=1)
             self.assertFalse(subscription_thread.is_alive())
 

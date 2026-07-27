@@ -16,7 +16,7 @@ use tokio::runtime::{Handle, Runtime};
 use umadb_dcb::{
     DcbAppendCondition, DcbError, DcbEvent, DcbEventStoreAsync, DcbEventStoreSync, DcbQuery,
     DcbReadResponseAsync, DcbReadResponseSync, DcbResult, DcbSequencedEvent, DcbSubscriptionAsync,
-    DcbSubscriptionSync, ShutdownStatus, StopHandle, TrackingInfo,
+    DcbSubscriptionSync, ShutdownStatus, StreamCancelHandle, TrackingInfo,
 };
 
 use futures::FutureExt;
@@ -38,27 +38,8 @@ fn cancel_receiver() -> watch::Receiver<()> {
 }
 
 /// Sends the cancel signal to all receivers (e.g., on Ctrl-C).
-pub fn trigger_cancel() {
+pub fn cancel_all_stream_responses() {
     if let Some(sender) = CANCEL_SENDER.get() {
-        let _ = sender.send(()); // ignore error if already closed
-    }
-}
-
-/// A global watch channel for stop signals.
-static STOP_SENDER: OnceLock<watch::Sender<()>> = OnceLock::new();
-
-/// Returns a receiver subscribed to the global stop signal.
-fn stop_receiver() -> watch::Receiver<()> {
-    let sender = STOP_SENDER.get_or_init(|| {
-        let (tx, _rx) = watch::channel::<()>(());
-        tx
-    });
-    sender.subscribe()
-}
-
-/// Sends the stop signal to all receivers (e.g., on Ctrl-C).
-pub fn trigger_stop() {
-    if let Some(sender) = STOP_SENDER.get() {
         let _ = sender.send(()); // ignore error if already closed
     }
 }
@@ -73,7 +54,7 @@ pub fn register_cancel_sigint_handler() {
         // Spawn a detached task on that runtime
         handle.spawn(async {
             if tokio::signal::ctrl_c().await.is_ok() {
-                trigger_cancel();
+                cancel_all_stream_responses();
             }
         });
     });
@@ -82,21 +63,19 @@ pub fn register_cancel_sigint_handler() {
 pub trait ShutdownEvaluator {
     // These methods act as "getters" for the underlying watch channels
     fn cancel_channel(&self) -> &watch::Receiver<()>;
-    fn stop_channel(&self) -> &watch::Receiver<()>;
-    fn local_stop_channel(&self) -> &watch::Receiver<()>;
+    fn local_cancel_channel(&self) -> &watch::Receiver<()>;
     fn is_ended(&self) -> bool;
 
     fn evaluate_shutdown(&self) -> ShutdownStatus {
         // 1. Prioritize user cancellations (Ctrl-C / interrupt triggers)
-        if self.cancel_channel().has_changed().unwrap_or(false) {
+        if self.cancel_channel().has_changed().unwrap_or(false)
+            || self.local_cancel_channel().has_changed().unwrap_or(false)
+        {
             return ShutdownStatus::CancelledByUser;
         }
 
         // 2. Fall back to graceful stop paths
-        if self.is_ended()
-            || self.local_stop_channel().has_changed().unwrap_or(false)
-            || self.stop_channel().has_changed().unwrap_or(false)
-        {
+        if self.is_ended() {
             return ShutdownStatus::StoppedGracefully;
         }
 
@@ -118,25 +97,23 @@ pub struct AsyncClientReadResponse {
     last_head: Option<Option<u64>>, // None = unknown yet; Some(x) = known
     ended: bool,
     cancel: watch::Receiver<()>,
-    stop: watch::Receiver<()>,
     // Per-stream stop signal, affecting only this individual response.
-    local_stop_tx: Arc<watch::Sender<()>>,
-    local_stop: watch::Receiver<()>,
+    local_cancel_tx: Arc<watch::Sender<()>>,
+    local_cancel: watch::Receiver<()>,
 }
 
 impl AsyncClientReadResponse {
     pub fn new(stream: tonic::Streaming<umadb_proto::v1::ReadResponse>) -> Self {
-        let (local_stop_tx, local_stop) = watch::channel(());
-        let local_stop_tx = Arc::new(local_stop_tx);
+        let (local_cancel_tx, local_cancel) = watch::channel(());
+        let local_cancel_tx = Arc::new(local_cancel_tx);
         Self {
             stream,
             buffer: VecDeque::new(),
             last_head: None,
             ended: false,
             cancel: cancel_receiver(),
-            stop: stop_receiver(),
-            local_stop_tx,
-            local_stop,
+            local_cancel_tx,
+            local_cancel,
         }
     }
 
@@ -152,13 +129,9 @@ impl AsyncClientReadResponse {
                 self.ended = true;
                 return Err(DcbError::CancelledByUser());
             }
-            _ = self.stop.changed() => {
+            _ = self.local_cancel.changed() => {
                 self.ended = true;
-                return Ok(());
-            }
-            _ = self.local_stop.changed() => {
-                self.ended = true;
-                return Ok(());
+                return Err(DcbError::CancelledByUser());
             }
             msg = self.stream.message() => {
                 match msg {
@@ -193,13 +166,9 @@ impl AsyncClientReadResponse {
                 self.ended = true;
                 return Err(DcbError::CancelledByUser());
             }
-            _ = self.stop.changed() => {
+            _ = self.local_cancel.changed() => {
                 self.ended = true;
-                return Ok(());
-            }
-            _ = self.local_stop.changed() => {
-                self.ended = true;
-                return Ok(());
+                return Err(DcbError::CancelledByUser());
             }
             _ = tokio::time::sleep(timeout) => {
                 return Err(DcbError::Timeout());
@@ -231,11 +200,8 @@ impl ShutdownEvaluator for AsyncClientReadResponse {
     fn cancel_channel(&self) -> &watch::Receiver<()> {
         &self.cancel
     }
-    fn stop_channel(&self) -> &watch::Receiver<()> {
-        &self.stop
-    }
-    fn local_stop_channel(&self) -> &watch::Receiver<()> {
-        &self.local_stop
+    fn local_cancel_channel(&self) -> &watch::Receiver<()> {
+        &self.local_cancel
     }
     fn is_ended(&self) -> bool {
         self.ended
@@ -282,13 +248,13 @@ impl DcbReadResponseAsync for AsyncClientReadResponse {
         Ok(Vec::new())
     }
 
-    fn stop(&mut self) {
-        let _ = self.local_stop_tx.send(());
+    fn cancel(&mut self) {
+        let _ = self.local_cancel_tx.send(());
     }
 
-    fn stop_handle(&self) -> Option<StopHandle> {
-        let tx = self.local_stop_tx.clone();
-        Some(StopHandle::new(move || {
+    fn cancel_handle(&self) -> Option<StreamCancelHandle> {
+        let tx = self.local_cancel_tx.clone();
+        Some(StreamCancelHandle::new(move || {
             let _ = tx.send(());
         }))
     }
@@ -373,24 +339,22 @@ pub struct AsyncClientSubscription {
     buffer: VecDeque<DcbSequencedEvent>,
     ended: bool,
     cancel: watch::Receiver<()>,
-    stop: watch::Receiver<()>,
-    // Per-stream stop signal, affecting only this individual subscription.
-    local_stop_tx: Arc<watch::Sender<()>>,
-    local_stop: watch::Receiver<()>,
+    // Per-stream cancel signal, affecting only this individual subscription.
+    local_cancel_tx: Arc<watch::Sender<()>>,
+    local_cancel: watch::Receiver<()>,
 }
 
 impl AsyncClientSubscription {
     pub fn new(stream: tonic::Streaming<umadb_proto::v1::SubscribeResponse>) -> Self {
-        let (local_stop_tx, local_stop) = watch::channel(());
-        let local_stop_tx = Arc::new(local_stop_tx);
+        let (local_stop_tx, local_cancel) = watch::channel(());
+        let local_cancel_tx = Arc::new(local_stop_tx);
         Self {
             stream,
             buffer: VecDeque::new(),
             ended: false,
             cancel: cancel_receiver(),
-            stop: stop_receiver(),
-            local_stop_tx,
-            local_stop,
+            local_cancel_tx,
+            local_cancel,
         }
     }
 
@@ -405,11 +369,9 @@ impl AsyncClientSubscription {
                 self.ended = true;
                 return Err(DcbError::CancelledByUser());
             }
-            _ = self.stop.changed() => {
+            _ = self.local_cancel.changed() => {
                 self.ended = true;
-            }
-            _ = self.local_stop.changed() => {
-                self.ended = true;
+                return Err(DcbError::CancelledByUser());
             }
             _ = tokio::time::sleep(timeout) => {
                 return Err(DcbError::Timeout());
@@ -439,11 +401,8 @@ impl ShutdownEvaluator for AsyncClientSubscription {
     fn cancel_channel(&self) -> &watch::Receiver<()> {
         &self.cancel
     }
-    fn stop_channel(&self) -> &watch::Receiver<()> {
-        &self.stop
-    }
-    fn local_stop_channel(&self) -> &watch::Receiver<()> {
-        &self.local_stop
+    fn local_cancel_channel(&self) -> &watch::Receiver<()> {
+        &self.local_cancel
     }
     fn is_ended(&self) -> bool {
         self.ended
@@ -475,13 +434,13 @@ impl DcbSubscriptionAsync for AsyncClientSubscription {
         Ok(Vec::new())
     }
 
-    fn stop(&mut self) {
-        let _ = self.local_stop_tx.send(());
+    fn cancel(&mut self) {
+        let _ = self.local_cancel_tx.send(());
     }
 
-    fn stop_handle(&self) -> Option<StopHandle> {
-        let tx = self.local_stop_tx.clone();
-        Some(StopHandle::new(move || {
+    fn cancel_handle(&self) -> Option<StreamCancelHandle> {
+        let tx = self.local_cancel_tx.clone();
+        Some(StreamCancelHandle::new(move || {
             let _ = tx.send(());
         }))
     }
@@ -558,8 +517,7 @@ pub trait AsyncStreamBackend: Send + Unpin {
         &mut self,
         timeout: Duration,
     ) -> BoxFuture<'_, DcbResult<Vec<DcbSequencedEvent>>>;
-    fn stop(&mut self);
-    fn stop_handle(&self) -> Option<StopHandle>;
+    fn cancel(&mut self);
     fn check_shutdown_status(&self) -> ShutdownStatus;
 }
 
@@ -574,11 +532,8 @@ impl AsyncStreamBackend for dyn DcbReadResponseAsync + Send + 'static {
     ) -> BoxFuture<'_, DcbResult<Vec<DcbSequencedEvent>>> {
         self.next_batch_timeout(timeout).boxed()
     }
-    fn stop(&mut self) {
-        self.stop();
-    }
-    fn stop_handle(&self) -> Option<StopHandle> {
-        self.stop_handle()
+    fn cancel(&mut self) {
+        self.cancel();
     }
 
     fn check_shutdown_status(&self) -> ShutdownStatus {
@@ -597,11 +552,8 @@ impl AsyncStreamBackend for dyn DcbSubscriptionAsync + Send + 'static {
     ) -> BoxFuture<'_, DcbResult<Vec<DcbSequencedEvent>>> {
         self.next_batch_timeout(timeout).boxed()
     }
-    fn stop(&mut self) {
-        self.stop();
-    }
-    fn stop_handle(&self) -> Option<StopHandle> {
-        self.stop_handle()
+    fn cancel(&mut self) {
+        self.cancel();
     }
     fn check_shutdown_status(&self) -> ShutdownStatus {
         self.check_shutdown_status()
@@ -744,12 +696,7 @@ impl<A: AsyncStreamBackend + ?Sized> SyncStreamEngine<A> {
     /// Centralized stop routine
     pub fn engine_stop(&mut self) {
         self.finished = true;
-        self.async_resp.stop();
-    }
-
-    /// Centralized stop handle retrieval
-    pub fn engine_stop_handle(&self) -> Option<StopHandle> {
-        self.async_resp.stop_handle()
+        self.async_resp.cancel();
     }
 }
 
@@ -799,12 +746,8 @@ impl DcbReadResponseSync for SyncClientReadResponse {
         self.engine.engine_next_batch()
     }
 
-    fn stop(&mut self) {
+    fn cancel(&mut self) {
         self.engine.engine_stop();
-    }
-
-    fn stop_handle(&self) -> Option<StopHandle> {
-        self.engine.async_resp.stop_handle()
     }
 
     fn next_timeout(&mut self, timeout: Duration) -> Option<DcbResult<DcbSequencedEvent>> {
@@ -849,12 +792,8 @@ impl DcbSubscriptionSync for SyncClientSubscription {
         self.engine.engine_next_batch_timeout(timeout)
     }
 
-    fn stop(&mut self) {
-        self.engine.async_resp.stop();
-    }
-
-    fn stop_handle(&self) -> Option<StopHandle> {
-        self.engine.async_resp.stop_handle()
+    fn cancel(&mut self) {
+        self.engine.async_resp.cancel();
     }
 
     fn next_timeout(&mut self, timeout: Duration) -> Option<DcbResult<DcbSequencedEvent>> {
@@ -870,13 +809,13 @@ impl DcbSubscriptionSync for SyncClientSubscription {
 #[derive(Clone, Default)]
 struct StreamRegistry {
     next_id: Arc<AtomicU64>,
-    active: Arc<Mutex<HashMap<u64, StopHandle>>>,
+    active: Arc<Mutex<HashMap<u64, StreamCancelHandle>>>,
 }
 
 impl StreamRegistry {
     /// Registers a stream's stop handle (if any) and returns a guard that
     /// deregisters it on drop.
-    fn register(&self, handle: Option<StopHandle>) -> StreamGuard {
+    fn register(&self, handle: Option<StreamCancelHandle>) -> StreamGuard {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         if let Some(handle) = handle {
             self.active.lock().unwrap().insert(id, handle);
@@ -887,18 +826,18 @@ impl StreamRegistry {
         }
     }
 
-    /// Stops every currently-active stream and clears the registry.
-    fn stop_all(&self) {
+    /// Cancels every currently-active stream and clears the registry.
+    fn cancel_all(&self) {
         let mut lock = self.active.lock().unwrap();
         for (_id, handle) in lock.drain() {
-            handle.stop();
+            handle.cancel();
         }
     }
 }
 
 /// Deregisters a single stream from its [`StreamRegistry`] when dropped.
 struct StreamGuard {
-    active: Arc<Mutex<HashMap<u64, StopHandle>>>,
+    active: Arc<Mutex<HashMap<u64, StreamCancelHandle>>>,
     id: u64,
 }
 
@@ -940,12 +879,12 @@ impl DcbReadResponseAsync for RegisteredReadResponse {
         self.inner.next_batch_timeout(timeout).await
     }
 
-    fn stop(&mut self) {
-        self.inner.stop();
+    fn cancel(&mut self) {
+        self.inner.cancel();
     }
 
-    fn stop_handle(&self) -> Option<StopHandle> {
-        self.inner.stop_handle()
+    fn cancel_handle(&self) -> Option<StreamCancelHandle> {
+        self.inner.cancel_handle()
     }
 
     fn check_shutdown_status(&self) -> ShutdownStatus {
@@ -978,12 +917,12 @@ impl DcbSubscriptionAsync for RegisteredSubscription {
         self.inner.next_batch_timeout(timeout).await
     }
 
-    fn stop(&mut self) {
-        self.inner.stop();
+    fn cancel(&mut self) {
+        self.inner.cancel();
     }
 
-    fn stop_handle(&self) -> Option<StopHandle> {
-        self.inner.stop_handle()
+    fn cancel_handle(&self) -> Option<StreamCancelHandle> {
+        self.inner.cancel_handle()
     }
 
     fn check_shutdown_status(&self) -> ShutdownStatus {
@@ -1096,7 +1035,7 @@ impl AsyncUmaDbClient {
         let stream = response.into_inner();
         let inner: Box<dyn DcbSubscriptionAsync + Send + 'static> =
             Box::new(AsyncClientSubscription::new(stream));
-        let guard = self.registry.register(inner.stop_handle());
+        let guard = self.registry.register(inner.cancel_handle());
         Ok(Box::new(RegisteredSubscription {
             inner,
             _guard: guard,
@@ -1109,7 +1048,7 @@ impl AsyncUmaDbClient {
     /// `subscribe()` methods; it does not stop or otherwise affect the server, nor
     /// streams opened by other clients.
     pub fn close(&self) {
-        self.registry.stop_all();
+        self.registry.cancel_all();
     }
 
     pub async fn connect_with_tls_options(
@@ -1179,7 +1118,7 @@ impl DcbEventStoreAsync for AsyncUmaDbClient {
         let stream = response.into_inner();
         let inner: Box<dyn DcbReadResponseAsync + Send + 'static> =
             Box::new(AsyncClientReadResponse::new(stream));
-        let guard = self.registry.register(inner.stop_handle());
+        let guard = self.registry.register(inner.cancel_handle());
         Ok(Box::new(RegisteredReadResponse {
             inner,
             _guard: guard,
@@ -1242,7 +1181,7 @@ impl Drop for AsyncUmaDbClient {
     fn drop(&mut self) {
         // Signal all still-active streams to stop before the underlying channel
         // is torn down. This mirrors closing the client as a context manager.
-        self.registry.stop_all();
+        self.registry.cancel_all();
     }
 }
 

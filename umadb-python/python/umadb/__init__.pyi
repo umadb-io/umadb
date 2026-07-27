@@ -7,6 +7,7 @@ import typing
 __all__ = [
     "AppendCondition",
     "AuthenticationError",
+    "CancelledByUserError",
     "Client",
     "CorruptionError",
     "Event",
@@ -19,9 +20,8 @@ __all__ = [
     "Subscription",
     "TrackingInfo",
     "TransportError",
-    "interrupt_all_stream_responses",
+    "cancel_all_stream_responses",
     "run_server_from_args",
-    "stop_all_stream_responses",
 ]
 
 @typing.final
@@ -33,6 +33,9 @@ class AppendCondition:
     def __repr__(self) -> builtins.str: ...
 
 class AuthenticationError(builtins.PermissionError):
+    ...
+
+class CancelledByUserError(builtins.Exception):
     ...
 
 @typing.final
@@ -184,13 +187,13 @@ class ReadResponse:
         r"""
         Returns the next batch of events for this read. If there are no more events, returns an empty list.
         """
-    def stop(self) -> None:
+    def cancel(self) -> None:
         r"""
         Ends this individual read response stream.
         
-        After calling `stop()`, iterating over this response (or calling
-        `next_batch()`) will stop yielding new events. Unlike
-        `stop_all_stream_responses()`, this only affects this particular
+        After calling `cancel()`, iterating over this response (or calling
+        `next_batch()`) will raise a `CancelledByUserError`. Unlike
+        `cancel_all_stream_responses()`, this only affects this particular
         `ReadResponse`.
         """
 
@@ -219,13 +222,13 @@ class Subscription:
         r"""
         Returns the next batch of events for this read. If there are no more events, returns an empty list.
         """
-    def stop(self) -> None:
+    def cancel(self) -> None:
         r"""
         Ends this individual subscription stream.
         
-        After calling `stop()`, iterating over this subscription (or calling
-        `next_batch()`) will stop yielding new events. Unlike
-        `stop_all_stream_responses()`, this only affects this particular
+        After calling `cancel()`, iterating over this subscription (or calling
+        `next_batch()`) will raise a CancelledByUserError. Unlike
+        `cancel_all_stream_responses()`, this only affects this particular
         `Subscription`.
         """
 
@@ -241,7 +244,7 @@ class TrackingInfo:
 class TransportError(builtins.RuntimeError):
     ...
 
-def interrupt_all_stream_responses() -> None:
+def cancel_all_stream_responses() -> None:
     r"""
     Client-side cancellation of all active read and subscription response streams.
     
@@ -249,23 +252,7 @@ def interrupt_all_stream_responses() -> None:
     `ReadResponse` values returned by `Client.read()` and `Subscription`
     values returned by `Client.subscribe()`. It does not stop, shut down,
     or otherwise affect the UmaDB server.
-    
-    Useful when handling SIGINT in Python code and manually notifying the
-    Rust client to stop waiting for stream responses.
     """
 
 def run_server_from_args(args: typing.Sequence[builtins.str]) -> None: ...
-
-def stop_all_stream_responses() -> None:
-    r"""
-    Client-side stopping of all active read and subscription response streams.
-    
-    This only affects streams opened by this Python client process, such as
-    `ReadResponse` values returned by `Client.read()` and `Subscription`
-    values returned by `Client.subscribe()`. It does not stop, shut down,
-    or otherwise affect the UmaDB server.
-    
-    Useful when handling SIGINT in Python code and manually notifying the
-    Rust client to stop waiting for stream responses.
-    """
 

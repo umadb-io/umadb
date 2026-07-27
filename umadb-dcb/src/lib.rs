@@ -19,29 +19,29 @@ use uuid::Uuid;
 /// This is important because the Python bindings guard the response behind a
 /// `Mutex` that is held while blocking on the next batch of events. Calling
 /// `stop()` on the response directly would require acquiring that same `Mutex`,
-/// which is impossible while a read/next call is blocked. A `StopHandle` can be
+/// which is impossible while a read/next call is blocked. A `StreamCancelHandle` can be
 /// obtained up front and used from another thread to signal the stream to end.
 #[derive(Clone)]
-pub struct StopHandle(Arc<dyn Fn() + Send + Sync>);
+pub struct StreamCancelHandle(Arc<dyn Fn() + Send + Sync>);
 
-impl StopHandle {
-    /// Creates a new `StopHandle` from the given closure.
+impl StreamCancelHandle {
+    /// Creates a new `StreamCancelHandle` from the given closure.
     pub fn new<F>(f: F) -> Self
     where
         F: Fn() + Send + Sync + 'static,
     {
-        StopHandle(Arc::new(f))
+        StreamCancelHandle(Arc::new(f))
     }
 
-    /// Signals the associated stream to stop.
-    pub fn stop(&self) {
+    /// Signals the associated stream.
+    pub fn cancel(&self) {
         (self.0)()
     }
 }
 
-impl std::fmt::Debug for StopHandle {
+impl std::fmt::Debug for StreamCancelHandle {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("StopHandle")
+        f.write_str("StreamCancelHandle")
     }
 }
 
@@ -111,13 +111,13 @@ pub trait DcbReadResponseSync: Iterator<Item = DcbResult<DcbSequencedEvent>> + S
     /// events (returning `None`/an empty `Vec`). Unlike the global stop signal,
     /// this only affects this particular response. The default implementation is
     /// a no-op for backends that do not support per-stream stopping.
-    fn stop(&mut self) {}
+    fn cancel(&mut self) {}
 
-    /// Returns a cloneable [`StopHandle`] that can end this response from
+    /// Returns a cloneable [`StreamCancelHandle`] that can end this response from
     /// another thread without requiring access to the response itself.
     ///
     /// Returns `None` for backends that do not support per-stream stopping.
-    fn stop_handle(&self) -> Option<StopHandle> {
+    fn cancel_handle(&self) -> Option<StreamCancelHandle> {
         None
     }
 
@@ -137,19 +137,11 @@ pub trait DcbSubscriptionSync: Iterator<Item = DcbResult<DcbSequencedEvent>> + S
 
     /// Ends this individual streaming subscription.
     ///
-    /// After calling `stop()`, the iterator/`next_batch()` will stop yielding new
-    /// events (returning `None`/an empty `Vec`). Unlike the global stop signal,
+    /// After calling `cancel()`, the iterator/`next_batch()` will return
+    /// `Err(DcbError:CancelledByUser)`. Unlike the global cancel signal,
     /// this only affects this particular subscription. The default implementation
-    /// is a no-op for backends that do not support per-stream stopping.
-    fn stop(&mut self);
-
-    /// Returns a cloneable [`StopHandle`] that can end this subscription from
-    /// another thread without requiring access to the subscription itself.
-    ///
-    /// Returns `None` for backends that do not support per-stream stopping.
-    fn stop_handle(&self) -> Option<StopHandle> {
-        None
-    }
+    /// is a no-op for backends that do not support per-stream cancel.
+    fn cancel(&mut self);
 
     /// Default implementation that falls back to blocking if not overridden.
     fn next_timeout(&mut self, _timeout: Duration) -> Option<DcbResult<DcbSequencedEvent>> {
@@ -238,11 +230,11 @@ pub trait DcbReadResponseAsync: Stream<Item = DcbResult<DcbSequencedEvent>> + Se
     /// events. Unlike the global stop signal, this only affects this particular
     /// response. The default implementation is a no-op for backends that do not
     /// support per-stream stopping.
-    fn stop(&mut self);
+    fn cancel(&mut self);
 
-    /// Returns a cloneable [`StopHandle`] that can end this response from
+    /// Returns a cloneable [`StreamCancelHandle`] that can end this response from
     /// another thread without requiring access to the response itself.
-    fn stop_handle(&self) -> Option<StopHandle> {
+    fn cancel_handle(&self) -> Option<StreamCancelHandle> {
         None
     }
 
@@ -260,11 +252,11 @@ pub trait DcbSubscriptionAsync: Stream<Item = DcbResult<DcbSequencedEvent>> + Se
     /// events. Unlike the global stop signal, this only affects this particular
     /// subscription. The default implementation is a no-op for backends that do
     /// not support per-stream stopping.
-    fn stop(&mut self) {}
+    fn cancel(&mut self) {}
 
-    /// Returns a cloneable [`StopHandle`] that can end this subscription from
+    /// Returns a cloneable [`StreamCancelHandle`] that can end this subscription from
     /// another thread without requiring access to the subscription itself.
-    fn stop_handle(&self) -> Option<StopHandle> {
+    fn cancel_handle(&self) -> Option<StreamCancelHandle> {
         None
     }
     fn check_shutdown_status(&self) -> ShutdownStatus;

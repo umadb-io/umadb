@@ -1,6 +1,4 @@
-use pyo3::exceptions::{
-    PyException, PyKeyboardInterrupt, PyPermissionError, PyRuntimeError, PyValueError,
-};
+use pyo3::exceptions::{PyException, PyPermissionError, PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::PyBytes;
 use pyo3::{IntoPyObjectExt, wrap_pyfunction};
@@ -18,6 +16,7 @@ create_exception!(umadb, TransportError, PyRuntimeError);
 create_exception!(umadb, CorruptionError, PyRuntimeError);
 create_exception!(umadb, AuthenticationError, PyPermissionError);
 create_exception!(umadb, ServerStartError, PyRuntimeError);
+create_exception!(umadb, CancelledByUserError, PyException);
 
 /// Convert `umadb_dcb::DcbError` to Python exception
 fn dcb_error_to_py_err(err: umadb_dcb::DcbError) -> PyErr {
@@ -26,7 +25,7 @@ fn dcb_error_to_py_err(err: umadb_dcb::DcbError) -> PyErr {
         umadb_dcb::DcbError::IntegrityError(msg) => IntegrityError::new_err(msg),
         umadb_dcb::DcbError::TransportError(msg) => TransportError::new_err(msg),
         umadb_dcb::DcbError::Corruption(msg) => CorruptionError::new_err(msg),
-        umadb_dcb::DcbError::CancelledByUser() => PyKeyboardInterrupt::new_err(()),
+        umadb_dcb::DcbError::CancelledByUser() => CancelledByUserError::new_err(()),
         umadb_dcb::DcbError::AuthenticationError(msg) => AuthenticationError::new_err(msg),
         other => PyException::new_err(format!("{}", other)),
     }
@@ -344,18 +343,18 @@ impl ReadResponse {
 
     /// Ends this individual read response stream.
     ///
-    /// After calling `stop()`, iterating over this response (or calling
-    /// `next_batch()`) will stop yielding new events. Unlike
-    /// `stop_all_stream_responses()`, this only affects this particular
+    /// After calling `cancel()`, iterating over this response (or calling
+    /// `next_batch()`) will raise a `CancelledByUserError`. Unlike
+    /// `cancel_all_stream_responses()`, this only affects this particular
     /// `ReadResponse`.
-    fn stop(slf: PyRefMut<Self>, py: Python<'_>) {
-        // Delegate to the inner sync response's stop(), which in turn signals the
-        // async response to stop. `__next__` polls with a short timeout and only
+    fn cancel(slf: PyRefMut<Self>, py: Python<'_>) {
+        // Delegate to the inner sync response's cancel(), which in turn signals the
+        // async response to cancel. `__next__` polls with a short timeout and only
         // holds `inner`'s Mutex for that window, so acquiring the lock here does
         // not block on an in-progress read.
         let inner = slf.inner.clone();
         drop(slf);
-        py.detach(move || inner.lock().unwrap().stop());
+        py.detach(move || inner.lock().unwrap().cancel());
     }
 }
 
@@ -439,18 +438,18 @@ impl Subscription {
 
     /// Ends this individual subscription stream.
     ///
-    /// After calling `stop()`, iterating over this subscription (or calling
-    /// `next_batch()`) will stop yielding new events. Unlike
-    /// `stop_all_stream_responses()`, this only affects this particular
+    /// After calling `cancel()`, iterating over this subscription (or calling
+    /// `next_batch()`) will raise a CancelledByUserError. Unlike
+    /// `cancel_all_stream_responses()`, this only affects this particular
     /// `Subscription`.
-    fn stop(slf: PyRefMut<Self>, py: Python<'_>) {
-        // Delegate to the inner sync subscription's stop(), which in turn signals
-        // the async subscription to stop. `__next__` polls with a short timeout and
-        // only holds `inner`'s Mutex for that window, so acquiring the lock here
-        // does not block on an in-progress read.
+    fn cancel(slf: PyRefMut<Self>, py: Python<'_>) {
+        // Delegate to the inner sync response's cancel(), which in turn signals the
+        // async response to cancel. `__next__` polls with a short timeout and only
+        // holds `inner`'s Mutex for that window, so acquiring the lock here does
+        // not block on an in-progress read.
         let inner = slf.inner.clone();
         drop(slf);
-        py.detach(move || inner.lock().unwrap().stop());
+        py.detach(move || inner.lock().unwrap().cancel());
     }
 }
 
@@ -535,8 +534,6 @@ impl Client {
             .detach(move || inner.read(query_inner, start, backwards, limit))
             .map_err(dcb_error_to_py_err)?;
 
-        // Stream lifecycle (registration, stop-all, deregistration) lives in the
-        // Rust client; per-stream `stop()` delegates through `inner`.
         Ok(ReadResponse {
             inner: Arc::new(Mutex::new(response_iter)),
         })
@@ -567,8 +564,6 @@ impl Client {
             .detach(move || inner.subscribe(query_inner, after))
             .map_err(dcb_error_to_py_err)?;
 
-        // Stream lifecycle (registration, stop-all, deregistration) lives in the
-        // Rust client; per-stream `stop()` delegates through `inner`.
         Ok(Subscription {
             inner: Arc::new(Mutex::new(response_iter)),
         })
@@ -660,10 +655,9 @@ impl Client {
 
 impl Drop for Client {
     fn drop(&mut self) {
-        // Gracefully signal all background streams to shut down before the core
-        // network channel is destroyed. (Also covered by the Rust client's own
-        // Drop, but this stops streams promptly even if the client Arc outlives
-        // this wrapper.)
+        // Cancel all background streams before the core network channel is destroyed.
+        // (Also covered by the Rust client's own Drop, but this cancels streams promptly
+        // even if the client Arc outlives this wrapper.)
         self.inner.close();
     }
 }
@@ -677,27 +671,8 @@ impl Drop for Client {
 /// `ReadResponse` values returned by `Client.read()` and `Subscription`
 /// values returned by `Client.subscribe()`. It does not stop, shut down,
 /// or otherwise affect the UmaDB server.
-///
-/// Useful when handling SIGINT in Python code and manually notifying the
-/// Rust client to stop waiting for stream responses.
-fn interrupt_all_stream_responses() {
-    umadb_client::trigger_cancel();
-}
-
-#[gen_stub_pyfunction]
-#[pyfunction]
-#[pyo3(text_signature = "()")]
-/// Client-side stopping of all active read and subscription response streams.
-///
-/// This only affects streams opened by this Python client process, such as
-/// `ReadResponse` values returned by `Client.read()` and `Subscription`
-/// values returned by `Client.subscribe()`. It does not stop, shut down,
-/// or otherwise affect the UmaDB server.
-///
-/// Useful when handling SIGINT in Python code and manually notifying the
-/// Rust client to stop waiting for stream responses.
-fn stop_all_stream_responses() {
-    umadb_client::trigger_stop();
+fn cancel_all_stream_responses() {
+    umadb_client::cancel_all_stream_responses();
 }
 
 #[cfg(not(windows))]
@@ -743,12 +718,15 @@ fn umadb(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<AppendCondition>()?;
     m.add_class::<TrackingInfo>()?;
     m.add_function(wrap_pyfunction!(run_server_from_args, m)?)?;
-    m.add_function(wrap_pyfunction!(interrupt_all_stream_responses, m)?)?;
-    m.add_function(wrap_pyfunction!(stop_all_stream_responses, m)?)?;
+    m.add_function(wrap_pyfunction!(cancel_all_stream_responses, m)?)?;
     m.add("IntegrityError", py.get_type::<IntegrityError>())?;
     m.add("TransportError", py.get_type::<TransportError>())?;
     m.add("CorruptionError", py.get_type::<CorruptionError>())?;
     m.add("AuthenticationError", py.get_type::<AuthenticationError>())?;
     m.add("ServerStartError", py.get_type::<ServerStartError>())?;
+    m.add(
+        "CancelledByUserError",
+        py.get_type::<CancelledByUserError>(),
+    )?;
     Ok(())
 }
