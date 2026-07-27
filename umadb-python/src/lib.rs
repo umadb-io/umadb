@@ -483,7 +483,7 @@ impl Client {
         batch_size: Option<u32>,
         api_key: Option<String>,
     ) -> PyResult<Self> {
-        let client = umadb_client::UmaDbClient::new(url).without_sigint_handler();
+        let client = umadb_client::UmaDbClient::new(url);
         let client = if let Some(ca) = ca_path {
             client.ca_path(ca)
         } else {

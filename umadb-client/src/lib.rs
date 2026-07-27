@@ -1083,10 +1083,6 @@ impl AsyncUmaDbClient {
         }
         Ok(req)
     }
-
-    pub async fn register_cancel_sigint_handler(&self) {
-        register_cancel_sigint_handler();
-    }
 }
 
 #[async_trait]
@@ -1269,11 +1265,6 @@ impl SyncUmaDbClient {
         };
         (rt, handle)
     }
-
-    pub fn register_cancel_sigint_handler(&self) {
-        self.handle
-            .block_on(self.async_client.register_cancel_sigint_handler());
-    }
 }
 
 impl DcbEventStoreSync for SyncUmaDbClient {
@@ -1319,7 +1310,6 @@ pub struct UmaDbClient {
     url: String,
     ca_path: Option<String>,
     batch_size: Option<u32>,
-    without_sigint_handler: bool,
     api_key: Option<String>,
 }
 
@@ -1329,7 +1319,6 @@ impl UmaDbClient {
             url,
             ca_path: None,
             batch_size: None,
-            without_sigint_handler: false,
             api_key: None,
         }
     }
@@ -1355,13 +1344,6 @@ impl UmaDbClient {
         }
     }
 
-    pub fn without_sigint_handler(self) -> Self {
-        Self {
-            without_sigint_handler: true,
-            ..self
-        }
-    }
-
     pub fn connect(&self) -> DcbResult<SyncUmaDbClient> {
         let client = SyncUmaDbClient::connect(
             self.url.clone(),
@@ -1369,11 +1351,6 @@ impl UmaDbClient {
             self.batch_size,
             self.api_key.clone(),
         );
-        if !self.without_sigint_handler
-            && let Ok(client) = &client
-        {
-            client.register_cancel_sigint_handler();
-        }
         client
     }
     pub async fn connect_async(&self) -> DcbResult<AsyncUmaDbClient> {
@@ -1384,11 +1361,6 @@ impl UmaDbClient {
             self.api_key.clone(),
         )
         .await;
-        if !self.without_sigint_handler
-            && let Ok(client) = &client
-        {
-            client.register_cancel_sigint_handler().await;
-        }
         client
     }
 }
