@@ -579,28 +579,38 @@ impl Mvcc {
     }
 
     pub fn reader(&self) -> DcbResult<Reader> {
-        let header_page = self.get_latest_header_page()?;
-        let header_node = page_as_header_node(&header_page)?;
-
+        // Need to be careful here about time-of-check to time-of-use (TOCTOU).
         // Generate a unique ID for this reader using the counter (lock-free)
         let reader_id = self.reader_id_counter.fetch_add(1, Ordering::Relaxed) + 1;
+        loop {
+            // Observe latest, publish our guard, then re-observe.
+            let header_page = self.get_latest_header_page()?;
+            let header_node = page_as_header_node(&header_page)?;
 
-        // Register the reader TSN (lock-free concurrent insert)
-        self.reader_tsns.insert(reader_id, header_node.tsn);
+            // Register the reader TSN (lock-free concurrent insert)
+            let tsn = header_node.tsn;
+            self.reader_tsns.insert(reader_id, tsn);
 
-        // Create the reader with the unique ID
-        let reader = Reader {
-            header_page_id: header_page.page_id,
-            tsn: header_node.tsn,
-            events_tree_root_id: header_node.events_tree_root_id,
-            tags_tree_root_id: header_node.tags_tree_root_id,
-            next_position: header_node.next_position,
-            tracking_tree_root_id: header_node.tracking_root_page_id,
-            reader_id,
-            reader_tsns: Arc::clone(&self.reader_tsns),
-        };
-
-        Ok(reader)
+            // Re-read: if latest is still tsn, no writer has committed past our
+            // snapshot since we published, so its pages cannot have been reused.
+            let recheck = self.get_latest_header_page()?;
+            let recheck_node = page_as_header_node(&recheck)?;
+            if recheck_node.tsn == tsn {
+                // Create and return reader with the unique ID
+                return Ok(Reader {
+                    header_page_id: header_page.page_id,
+                    tsn: header_node.tsn,
+                    events_tree_root_id: header_node.events_tree_root_id,
+                    tags_tree_root_id: header_node.tags_tree_root_id,
+                    next_position: header_node.next_position,
+                    tracking_tree_root_id: header_node.tracking_root_page_id,
+                    reader_id,
+                    reader_tsns: Arc::clone(&self.reader_tsns),
+                });
+            }
+            // Snapshot advanced during registration; our guard may be stale.
+            // Re-loop and re-register against the newer snapshot.
+        }
     }
 
     pub fn writer(&self) -> DcbResult<Writer> {
