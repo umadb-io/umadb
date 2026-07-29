@@ -801,8 +801,14 @@ impl umadb_proto::v1::dcb_server::Dcb for DcbServer {
     ) -> Result<Response<umadb_proto::v1::HeadResponse>, Status> {
         // Enforce API key if configured
         self.enforce_api_key(request.metadata())?;
-        // Call the event store head method
-        match self.request_handler.head() {
+        // `head()` reads a single header page (O(1)), but it is still blocking storage
+        // I/O and must not run on a reactor thread, or it steals time from HTTP/2
+        // keepalive under high concurrency. It is cheap enough not to need a permit.
+        let request_handler = self.request_handler.clone();
+        let res = tokio::task::spawn_blocking(move || request_handler.head())
+            .await
+            .map_err(|e| status_from_dcb_error(DcbError::InternalError(e.to_string())))?;
+        match res {
             Ok(position) => {
                 // Return the position as a response
                 Ok(Response::new(umadb_proto::v1::HeadResponse { position }))
@@ -818,7 +824,25 @@ impl umadb_proto::v1::dcb_server::Dcb for DcbServer {
         // Enforce API key if configured
         self.enforce_api_key(request.metadata())?;
         let req = request.into_inner();
-        match self.request_handler.get_tracking_info(req.source) {
+        // This does a tracking-tree descent (bounded, but real file I/O), so run it off
+        // the reactor and gate it with the same semaphore as read scans to bound
+        // concurrent blocking storage work. The permit is released as soon as it returns.
+        let permit = match self.read_scan_semaphore.clone().acquire_owned().await {
+            Ok(permit) => permit,
+            Err(_) => {
+                return Err(status_from_dcb_error(DcbError::InternalError(
+                    "read-scan semaphore closed".to_string(),
+                )));
+            }
+        };
+        let request_handler = self.request_handler.clone();
+        let res = tokio::task::spawn_blocking(move || {
+            let _permit = permit;
+            request_handler.get_tracking_info(req.source)
+        })
+        .await
+        .map_err(|e| status_from_dcb_error(DcbError::InternalError(e.to_string())))?;
+        match res {
             Ok(position) => Ok(Response::new(umadb_proto::v1::TrackingResponse {
                 position,
             })),
