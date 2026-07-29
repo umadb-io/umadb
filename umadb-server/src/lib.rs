@@ -6,14 +6,14 @@ use std::sync::Arc;
 use std::sync::LazyLock;
 use std::thread;
 use std::time::Instant;
-use tokio::sync::{mpsc, oneshot, watch};
+use tokio::sync::{Semaphore, mpsc, oneshot, watch};
 
 use tokio_stream::wrappers::ReceiverStream;
 use tonic::transport::{Identity, ServerTlsConfig};
 use tonic::{Request, Response, Status, transport::Server};
 use umadb_core::db::{
-    UmaDb, clone_dcb_error, is_integrity_error, is_invalid_argument_error, is_request_idempotent,
-    read_conditional, shadow_for_batch_abort,
+    UmaDb, clone_dcb_error, is_integrity_error, is_invalid_argument_error, read_conditional,
+    shadow_for_batch_abort,
 };
 pub use umadb_core::mvcc::{
     DEFAULT_DB_FILENAME, DEFAULT_PAGE_SIZE, Mvcc, ReadMethod, StorageOptions,
@@ -310,11 +310,40 @@ pub async fn start_server_with_options(
     Ok(())
 }
 
+/// Maximum number of blocking read/subscribe batch-scans allowed to execute
+/// concurrently on the blocking thread pool.
+///
+/// This bounds CPU oversubscription so that the (small, fixed) Tokio reactor
+/// threads always have CPU to service HTTP/2 keepalive frames. Permits are
+/// acquired per batch and released between batches, so this does NOT limit the
+/// number of live (mostly-parked) reads or subscriptions — only how many are
+/// actively scanning storage at any instant.
+///
+/// Defaults to `available_parallelism() * PER_CORE`; overridable via the
+/// `UMADB_READ_SCAN_CONCURRENCY` environment variable.
+fn read_scan_concurrency_limit() -> usize {
+    const PER_CORE: usize = 4;
+    if let Some(n) = std::env::var("UMADB_READ_SCAN_CONCURRENCY")
+        .ok()
+        .and_then(|s| s.parse::<usize>().ok())
+        .filter(|n| *n > 0)
+    {
+        return n;
+    }
+    std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(4)
+        .saturating_mul(PER_CORE)
+        .max(PER_CORE)
+}
+
 // gRPC server implementation
 pub struct DcbServer {
     pub(crate) request_handler: RequestHandler,
     shutdown_watch_rx: watch::Receiver<bool>,
     api_key: Option<String>,
+    // Limits concurrent blocking read/subscribe batch-scans (see `read_scan_concurrency_limit`).
+    read_scan_semaphore: Arc<Semaphore>,
 }
 
 impl DcbServer {
@@ -328,6 +357,7 @@ impl DcbServer {
             request_handler: command_handler,
             shutdown_watch_rx: shutdown_rx,
             api_key,
+            read_scan_semaphore: Arc::new(Semaphore::new(read_scan_concurrency_limit())),
         })
     }
 
@@ -399,6 +429,7 @@ impl umadb_proto::v1::dcb_server::Dcb for DcbServer {
 
         let cancel_signal = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let cancel_signal_for_task = cancel_signal.clone();
+        let read_scan_semaphore = self.read_scan_semaphore.clone();
 
         // Spawn a task to handle the read operation and stream multiple batches
         tokio::spawn(async move {
@@ -423,11 +454,19 @@ impl umadb_proto::v1::dcb_server::Dcb for DcbServer {
                 if limit.is_some() && remaining_limit == 0 {
                     break;
                 }
+                // Throttle concurrent blocking scans so reactor threads stay free to
+                // service HTTP/2 keepalive. The permit is held only for this batch scan
+                // (moved into the closure), and released before we send the batch below.
+                let permit = match read_scan_semaphore.clone().acquire_owned().await {
+                    Ok(permit) => permit,
+                    Err(_) => break,
+                };
                 let handler = request_handler.clone();
                 let query_val = query_clone.clone();
                 let limit_val = Some(read_limit);
                 let cancel_for_blocking = cancel_signal_for_task.clone();
                 let mut blocking_handle = tokio::task::spawn_blocking(move || {
+                    let _permit = permit;
                     handler.read(
                         query_val,
                         next_start,
@@ -590,6 +629,7 @@ impl umadb_proto::v1::dcb_server::Dcb for DcbServer {
 
         let cancel_signal = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let cancel_signal_for_task = cancel_signal.clone();
+        let read_scan_semaphore = self.read_scan_semaphore.clone();
 
         // Spawn a task to handle the subscribe operation and stream multiple batches
         tokio::spawn(async move {
@@ -609,11 +649,20 @@ impl umadb_proto::v1::dcb_server::Dcb for DcbServer {
                     break;
                 }
 
+                // Throttle concurrent blocking scans so reactor threads stay free to
+                // service HTTP/2 keepalive. The permit is held only for this batch scan
+                // (moved into the closure), and released before we send the batch or wait
+                // for new events below — so long-lived subscriptions do not tie up a permit.
+                let permit = match read_scan_semaphore.clone().acquire_owned().await {
+                    Ok(permit) => permit,
+                    Err(_) => break,
+                };
                 let handler = request_handler.clone();
                 let query_val = query_clone.clone();
                 let batch_size_val = Some(batch_size);
                 let cancel_for_blocking = cancel_signal_for_task.clone();
                 let mut blocking_handle = tokio::task::spawn_blocking(move || {
+                    let _permit = permit;
                     handler.read(
                         query_val,
                         next_after,
@@ -1072,107 +1121,39 @@ impl RequestHandler {
         tracking_info: Option<TrackingInfo>,
         cancel: Option<Arc<std::sync::atomic::AtomicBool>>,
     ) -> DcbResult<u64> {
-        // Concurrent pre-check of the given condition using a reader in a blocking thread.
-        let pre_append_decision = if let Some(mut given_condition) = condition {
-            let reader = self.mvcc.reader()?;
-            let current_head = {
-                let last = reader.next_position.0.saturating_sub(1);
-                if last == 0 { None } else { Some(last) }
-            };
+        // The writer thread is the authoritative enforcer of the append condition and
+        // idempotency (see `UmaDb::process_append_request`), which evaluates the condition
+        // against the writer's snapshot — including events appended earlier in the same
+        // uncommitted batch (`writer.dirty`), which a reader snapshot cannot see.
+        //
+        // We deliberately do NOT pre-check the condition here. The former pre-check ran
+        // blocking storage I/O directly on a Tokio reactor thread, which under high
+        // concurrency starved HTTP/2 keepalive handling (PING/PONG) and caused
+        // `KeepAliveTimedOut` disconnects. It also duplicated work the writer must redo
+        // anyway; its only benefit was advancing the condition's `after` to shorten the
+        // writer's scan, which is negligible when `after` is already near the head.
+        let (response_tx, response_rx) = oneshot::channel();
 
-            // Perform conditional read on the snapshot (limit 1) starting after the given position
-            let from = given_condition.after.map(|after| Position(after + 1));
-            let empty_dirty = std::collections::HashMap::new();
-            let found = read_conditional(
-                &self.mvcc,
-                &empty_dirty,
-                reader.events_tree_root_id,
-                reader.tags_tree_root_id,
-                given_condition.fail_if_events_match.clone(),
-                from,
-                false,
-                Some(1),
-                false,
-                None,
-            )?;
+        self.writer_request_tx
+            .send(WriterRequest::Append {
+                events,
+                condition,
+                tracking_info,
+                response_tx,
+                cancel,
+            })
+            .await
+            .map_err(|_| {
+                DcbError::Io(std::io::Error::other(
+                    "failed to send append request to EventStore thread",
+                ))
+            })?;
 
-            if let Some(matched) = found.first() {
-                // Found one event — consider if the request is idempotent...
-                match is_request_idempotent(
-                    &self.mvcc,
-                    &empty_dirty,
-                    reader.events_tree_root_id,
-                    reader.tags_tree_root_id,
-                    &events,
-                    given_condition.fail_if_events_match.clone(),
-                    from,
-                    cancel.clone(),
-                ) {
-                    Ok(Some(last_recorded_position)) => {
-                        // Request is idempotent; skip actual append
-                        PreAppendDecision::AlreadyAppended(last_recorded_position)
-                    }
-                    Ok(None) => {
-                        // Integrity violation
-                        let msg = format!(
-                            "condition: {:?} matched: {:?}",
-                            given_condition.clone(),
-                            matched,
-                        );
-                        return Err(DcbError::IntegrityError(msg));
-                    }
-                    Err(err) => {
-                        // Propagate underlying read error
-                        return Err(err);
-                    }
-                }
-            } else {
-                // No match found: we can advance 'after' to the current head observed by this reader
-                let new_after = std::cmp::max(
-                    given_condition.after.unwrap_or(0),
-                    current_head.unwrap_or(0),
-                );
-                given_condition.after = Some(new_after);
-
-                PreAppendDecision::UseCondition(Some(given_condition))
-            }
-        } else {
-            // No condition provided at all
-            PreAppendDecision::UseCondition(None)
-        };
-
-        // Handle the pre-check decision
-        match pre_append_decision {
-            PreAppendDecision::AlreadyAppended(last_found_position) => {
-                // Request was idempotent — just return the existing position.
-                Ok(last_found_position)
-            }
-            PreAppendDecision::UseCondition(adjusted_condition) => {
-                // Proceed with append operation on the writer thread.
-                let (response_tx, response_rx) = oneshot::channel();
-
-                self.writer_request_tx
-                    .send(WriterRequest::Append {
-                        events,
-                        condition: adjusted_condition,
-                        tracking_info,
-                        response_tx,
-                        cancel,
-                    })
-                    .await
-                    .map_err(|_| {
-                        DcbError::Io(std::io::Error::other(
-                            "failed to send append request to EventStore thread",
-                        ))
-                    })?;
-
-                response_rx.await.map_err(|_| {
-                    DcbError::Io(std::io::Error::other(
-                        "failed to receive append response from EventStore thread",
-                    ))
-                })?
-            }
-        }
+        response_rx.await.map_err(|_| {
+            DcbError::Io(std::io::Error::other(
+                "failed to receive append response from EventStore thread",
+            ))
+        })?
     }
 
     fn watch_head(&self) -> watch::Receiver<Option<u64>> {
@@ -1194,12 +1175,4 @@ impl Clone for RequestHandler {
             writer_request_tx: self.writer_request_tx.clone(),
         }
     }
-}
-
-#[derive(Debug)]
-enum PreAppendDecision {
-    /// Proceed with this (possibly adjusted) condition
-    UseCondition(Option<DcbAppendCondition>),
-    /// Skip append operation because the request was idempotent; return last recorded position
-    AlreadyAppended(u64),
 }
