@@ -2976,7 +2976,7 @@ checksum = "e421abadd41a4225275504ea4d6566923418b7f05506fbc9c0fe86ba7396114b"
 
 [[package]]
 name = "umadb"
-version = "0.6.12"
+version = "0.6.13"
 dependencies = [
  "clap",
  "tokio",
@@ -2985,7 +2985,7 @@ dependencies = [
 
 [[package]]
 name = "umadb-benches"
-version = "0.6.12"
+version = "0.6.13"
 dependencies = [
  "ahash",
  "clap",
@@ -3010,7 +3010,7 @@ dependencies = [
 
 [[package]]
 name = "umadb-client"
-version = "0.6.12"
+version = "0.6.13"
 dependencies = [
  "async-trait",
  "futures",
@@ -3023,7 +3023,7 @@ dependencies = [
 
 [[package]]
 name = "umadb-core"
-version = "0.6.12"
+version = "0.6.13"
 dependencies = [
  "bitflags 2.13.1",
  "byteorder",
@@ -3045,7 +3045,7 @@ dependencies = [
 
 [[package]]
 name = "umadb-dcb"
-version = "0.6.12"
+version = "0.6.13"
 dependencies = [
  "async-trait",
  "futures-core",
@@ -3057,7 +3057,7 @@ dependencies = [
 
 [[package]]
 name = "umadb-proto"
-version = "0.6.12"
+version = "0.6.13"
 dependencies = [
  "prost",
  "tonic",
@@ -3069,7 +3069,7 @@ dependencies = [
 
 [[package]]
 name = "umadb-python"
-version = "0.6.12"
+version = "0.6.13"
 dependencies = [
  "pyo3",
  "pyo3-stub-gen",
@@ -3081,7 +3081,7 @@ dependencies = [
 
 [[package]]
 name = "umadb-server"
-version = "0.6.12"
+version = "0.6.13"
 dependencies = [
  "async-trait",
  "futures",
@@ -3097,7 +3097,7 @@ dependencies = [
 
 [[package]]
 name = "umadb-tools"
-version = "0.6.12"
+version = "0.6.13"
 dependencies = [
  "umadb-core",
  "umadb-dcb",
