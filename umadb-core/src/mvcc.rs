@@ -14,13 +14,12 @@ use crate::page::{
 use crate::pager::Pager;
 use crate::tags_tree_nodes::TagsLeafNode;
 use crate::tags_tree_nodes::set_tag_key_width;
-use dashmap::DashMap;
 use moka::sync::Cache;
+use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::sleep;
 use std::time::Duration;
@@ -121,10 +120,79 @@ impl StorageOptions {
     }
 }
 
+/// Tracks the snapshot TSN held by every live reader, as a counting multiset keyed
+/// by TSN (value = number of live readers currently holding that TSN).
+///
+/// The writer needs the lowest live reader TSN to decide which freed pages are safe
+/// to reuse. Keys are removed the moment their count reaches zero, so the smallest
+/// present key is always exactly the lowest live reader TSN — obtained via
+/// `min()` in `O(log n)` (the leftmost key) instead of scanning every reader.
+///
+/// Readers commonly share a TSN (they register against the same latest snapshot
+/// between commits), so distinct keys are typically far fewer than live readers.
+#[derive(Debug, Default)]
+pub struct ReaderTsnRegistry {
+    counts: Mutex<BTreeMap<Tsn, usize>>,
+}
+
+impl ReaderTsnRegistry {
+    /// Publish a live reader holding snapshot `tsn` (called from `Mvcc::reader`).
+    pub fn register(&self, tsn: Tsn) {
+        let mut counts = self.counts.lock().unwrap();
+        *counts.entry(tsn).or_insert(0) += 1;
+    }
+
+    /// Retire a live reader holding snapshot `tsn` (called from `Reader::drop`, and
+    /// to roll back a tentative registration in `reader`'s retry loop).
+    pub fn unregister(&self, tsn: Tsn) {
+        let mut counts = self.counts.lock().unwrap();
+        if let Some(count) = counts.get_mut(&tsn) {
+            *count -= 1;
+            if *count == 0 {
+                counts.remove(&tsn);
+            }
+        }
+    }
+
+    /// The lowest TSN held by any live reader, or `None` if there are none.
+    pub fn min(&self) -> Option<Tsn> {
+        self.counts
+            .lock()
+            .unwrap()
+            .first_key_value()
+            .map(|(&tsn, _)| tsn)
+    }
+
+    /// Total number of live readers (sum of counts).
+    #[cfg(test)]
+    pub fn live_reader_count(&self) -> usize {
+        self.counts.lock().unwrap().values().copied().sum()
+    }
+
+    /// Whether any live reader currently holds `tsn`.
+    #[cfg(test)]
+    pub fn contains_tsn(&self, tsn: Tsn) -> bool {
+        self.counts.lock().unwrap().contains_key(&tsn)
+    }
+
+    /// Live reader TSNs in ascending order, each repeated by its count.
+    #[cfg(test)]
+    pub fn live_tsns_sorted(&self) -> Vec<Tsn> {
+        let counts = self.counts.lock().unwrap();
+        let mut out = Vec::new();
+        for (&tsn, &count) in counts.iter() {
+            for _ in 0..count {
+                out.push(tsn);
+            }
+        }
+        out
+    }
+}
+
 // Main MVCC structure
 pub struct Mvcc {
     pub pager: Pager,
-    pub reader_tsns: Arc<DashMap<usize, Tsn>>,
+    pub reader_tsns: Arc<ReaderTsnRegistry>,
     pub writer_lock: Mutex<()>,
     pub page_size: usize,
     pub max_node_size: usize,
@@ -134,7 +202,6 @@ pub struct Mvcc {
     pub header_page_buf: Mutex<Vec<u8>>,
     // Reusable buffer for general page serialization
     pub page_buf: Mutex<Vec<u8>>,
-    reader_id_counter: AtomicUsize,
     pub verbose: bool,
     pub zero_fill_pages: bool,
     read_method: ReadMethod,
@@ -189,7 +256,7 @@ impl Mvcc {
 
         let mvcc = Self {
             pager,
-            reader_tsns: Arc::new(DashMap::new()),
+            reader_tsns: Arc::new(ReaderTsnRegistry::default()),
             writer_lock: Mutex::new(()),
             page_size: options.page_size,
             max_node_size: options.page_size - PAGE_HEADER_SIZE,
@@ -205,7 +272,6 @@ impl Mvcc {
             ]),
             header_page_buf: Mutex::new(vec![0u8; options.page_size]),
             page_buf: Mutex::new(vec![0u8; options.page_size]),
-            reader_id_counter: AtomicUsize::new(0),
             verbose,
             zero_fill_pages: options.zero_fill_pages,
             read_method: options.read_method,
@@ -580,23 +646,20 @@ impl Mvcc {
 
     pub fn reader(&self) -> DcbResult<Reader> {
         // Need to be careful here about time-of-check to time-of-use (TOCTOU).
-        // Generate a unique ID for this reader using the counter (lock-free)
-        let reader_id = self.reader_id_counter.fetch_add(1, Ordering::Relaxed) + 1;
         loop {
             // Observe latest, publish our guard, then re-observe.
             let header_page = self.get_latest_header_page()?;
             let header_node = page_as_header_node(&header_page)?;
 
-            // Register the reader TSN (lock-free concurrent insert)
+            // Publish our guard for this snapshot's TSN.
             let tsn = header_node.tsn;
-            self.reader_tsns.insert(reader_id, tsn);
+            self.reader_tsns.register(tsn);
 
             // Re-read: if latest is still tsn, no writer has committed past our
             // snapshot since we published, so its pages cannot have been reused.
             let recheck = self.get_latest_header_page()?;
             let recheck_node = page_as_header_node(&recheck)?;
             if recheck_node.tsn == tsn {
-                // Create and return reader with the unique ID
                 return Ok(Reader {
                     header_page_id: header_page.page_id,
                     tsn: header_node.tsn,
@@ -604,12 +667,14 @@ impl Mvcc {
                     tags_tree_root_id: header_node.tags_tree_root_id,
                     next_position: header_node.next_position,
                     tracking_tree_root_id: header_node.tracking_root_page_id,
-                    reader_id,
                     reader_tsns: Arc::clone(&self.reader_tsns),
                 });
             }
-            // Snapshot advanced during registration; our guard may be stale.
-            // Re-loop and re-register against the newer snapshot.
+            // Snapshot advanced during registration; our guard may be stale. Roll
+            // back the tentative registration (otherwise a phantom count leaks on
+            // the stale, lower TSN and pins reclamation forever) and re-register
+            // against the newer snapshot.
+            self.reader_tsns.unregister(tsn);
         }
     }
 
@@ -979,8 +1044,8 @@ impl Writer {
             println!("Finding reusable page IDs for TSN {:?}...", self.tsn);
         }
 
-        // Find the smallest reader TSN (lock-free iteration over concurrent map)
-        let smallest_reader_tsn = mvcc.reader_tsns.iter().map(|r| *r.value()).min();
+        // Find the smallest live reader TSN (O(log n): the leftmost key of the multiset)
+        let smallest_reader_tsn = mvcc.reader_tsns.min();
         if verbose {
             println!("Smallest reader TSN: {smallest_reader_tsn:?}");
         }
@@ -2146,14 +2211,13 @@ pub struct Reader {
     pub tags_tree_root_id: PageID,
     pub next_position: Position,
     pub tracking_tree_root_id: PageID,
-    reader_id: usize,
-    reader_tsns: Arc<DashMap<usize, Tsn>>,
+    reader_tsns: Arc<ReaderTsnRegistry>,
 }
 
 impl Drop for Reader {
     fn drop(&mut self) {
-        // Remove reader TSN from the concurrent map (lock-free)
-        self.reader_tsns.remove(&self.reader_id);
+        // Retire this reader's snapshot TSN from the registry.
+        self.reader_tsns.unregister(self.tsn);
     }
 }
 
@@ -2255,30 +2319,24 @@ mod tests {
 
         // Initial reader should see TSN 0
         {
-            assert_eq!(0, db.reader_tsns.len());
+            assert_eq!(0, db.reader_tsns.live_reader_count());
             let reader = db.reader().unwrap();
-            assert_eq!(1, db.reader_tsns.len());
+            assert_eq!(1, db.reader_tsns.live_reader_count());
             assert_eq!(
                 vec![Tsn(0)],
-                db.reader_tsns
-                    .iter()
-                    .map(|r| *r.value())
-                    .collect::<Vec<_>>()
+                db.reader_tsns.live_tsns_sorted()
             );
             assert_eq!(PageID(0), reader.header_page_id);
             assert_eq!(Tsn(0), reader.tsn);
         }
-        assert_eq!(0, db.reader_tsns.len());
+        assert_eq!(0, db.reader_tsns.live_reader_count());
 
         // Multiple nested readers
         {
             let reader1 = db.reader().unwrap();
             assert_eq!(
                 vec![Tsn(0)],
-                db.reader_tsns
-                    .iter()
-                    .map(|r| *r.value())
-                    .collect::<Vec<_>>()
+                db.reader_tsns.live_tsns_sorted()
             );
             assert_eq!(PageID(0), reader1.header_page_id);
             assert_eq!(Tsn(0), reader1.tsn);
@@ -2287,10 +2345,7 @@ mod tests {
                 let reader2 = db.reader().unwrap();
                 assert_eq!(
                     vec![Tsn(0), Tsn(0)],
-                    db.reader_tsns
-                        .iter()
-                        .map(|r| *r.value())
-                        .collect::<Vec<_>>()
+                    db.reader_tsns.live_tsns_sorted()
                 );
                 assert_eq!(PageID(0), reader2.header_page_id);
                 assert_eq!(Tsn(0), reader2.tsn);
@@ -2299,22 +2354,19 @@ mod tests {
                     let reader3 = db.reader().unwrap();
                     assert_eq!(
                         vec![Tsn(0), Tsn(0), Tsn(0)],
-                        db.reader_tsns
-                            .iter()
-                            .map(|r| *r.value())
-                            .collect::<Vec<_>>()
+                        db.reader_tsns.live_tsns_sorted()
                     );
                     assert_eq!(PageID(0), reader3.header_page_id);
                     assert_eq!(Tsn(0), reader3.tsn);
                 }
             }
         }
-        assert_eq!(0, db.reader_tsns.len());
+        assert_eq!(0, db.reader_tsns.live_reader_count());
 
         // Writer transaction
         {
             let mut writer = db.writer().unwrap();
-            assert_eq!(0, db.reader_tsns.len());
+            assert_eq!(0, db.reader_tsns.live_reader_count());
             assert_eq!(Tsn(1), writer.tsn);
             assert_eq!(PageID(0), writer.header_page_id);
             db.commit(&mut writer).unwrap();
@@ -2325,10 +2377,7 @@ mod tests {
             let reader = db.reader().unwrap();
             assert_eq!(
                 vec![Tsn(1)],
-                db.reader_tsns
-                    .iter()
-                    .map(|r| *r.value())
-                    .collect::<Vec<_>>()
+                db.reader_tsns.live_tsns_sorted()
             );
             assert_eq!(PageID(1), reader.header_page_id);
             assert_eq!(Tsn(1), reader.tsn);
@@ -3090,7 +3139,7 @@ mod tests {
 
             // Block inserted page IDs from being reused
             {
-                db.reader_tsns.insert(0, Tsn(0));
+                db.reader_tsns.register(Tsn(0));
             }
 
             // Start a new writer to remove inserted freed page ID
@@ -3270,7 +3319,7 @@ mod tests {
 
             // Block inserted page IDs from being reused
             {
-                db.reader_tsns.insert(0, Tsn(0));
+                db.reader_tsns.register(Tsn(0));
             }
 
             let mut has_split_leaf = false;
@@ -3955,12 +4004,12 @@ mod tests {
             }
 
             // Get all the free page IDs.
-            db.reader_tsns.remove(&0);
+            db.reader_tsns.unregister(Tsn(0));
             let writer = db.writer().unwrap();
             let reusable_page_ids = writer.reusable_page_ids.clone();
 
             // Block inserted page IDs from being reused
-            db.reader_tsns.insert(0, Tsn(0));
+            db.reader_tsns.register(Tsn(0));
 
             // Remove each free page ID.
             for (page_id, tsn) in reusable_page_ids {

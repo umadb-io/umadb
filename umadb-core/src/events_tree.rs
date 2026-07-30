@@ -1248,9 +1248,9 @@ mod tests {
 
         // Ensure the reader's tsn is registered while the iterator is alive
         {
-            // DashMap: direct access without intermediate variable
+            // Check registration state directly on the reader-TSN registry
             assert!(
-                db.reader_tsns.iter().any(|r| *r.value() == reader_tsn),
+                db.reader_tsns.contains_tsn(reader_tsn),
                 "TSN should remain registered until reader is dropped"
             );
         }
@@ -1265,9 +1265,9 @@ mod tests {
             scanned.extend(batch);
 
             // The reader should remain registered throughout iteration
-            // DashMap: direct access without intermediate variable
+            // Check registration state directly on the reader-TSN registry
             assert!(
-                db.reader_tsns.iter().any(|r| *r.value() == reader_tsn),
+                db.reader_tsns.contains_tsn(reader_tsn),
                 "TSN should remain registered until reader is dropped"
             );
         }
@@ -1293,9 +1293,9 @@ mod tests {
 
         // While iterator is still alive, the reader should still be registered
         {
-            // DashMap: direct access without intermediate variable
+            // Check registration state directly on the reader-TSN registry
             assert!(
-                db.reader_tsns.iter().any(|r| *r.value() == reader_tsn),
+                db.reader_tsns.contains_tsn(reader_tsn),
                 "TSN should remain registered until reader is dropped"
             );
         }
@@ -1303,12 +1303,12 @@ mod tests {
         // Drop the reader and ensure the reader tsn is removed
         drop(reader);
         {
-            // DashMap: direct access without intermediate variable
+            // Check registration state directly on the reader-TSN registry
             assert!(
-                db.reader_tsns.iter().all(|r| *r.value() != reader_tsn),
+                !db.reader_tsns.contains_tsn(reader_tsn),
                 "TSN should be removed after reader is dropped"
             );
-            assert_eq!(0, db.reader_tsns.len());
+            assert_eq!(0, db.reader_tsns.live_reader_count());
         }
     }
 
@@ -1379,9 +1379,9 @@ mod tests {
 
             // Ensure the reader's tsn is registered while the iterator is alive
             {
-                // DashMap: direct access without intermediate variable
+                // Check registration state directly on the reader-TSN registry
                 assert!(
-                    db.reader_tsns.iter().any(|r| *r.value() == reader_tsn),
+                    db.reader_tsns.contains_tsn(reader_tsn),
                     "TSN should remain registered until reader is dropped"
                 );
             }
@@ -1396,9 +1396,9 @@ mod tests {
                 scanned.extend(batch);
 
                 // The reader should remain registered throughout iteration
-                // DashMap: direct access without intermediate variable
+                // Check registration state directly on the reader-TSN registry
                 assert!(
-                    db.reader_tsns.iter().any(|r| *r.value() == reader_tsn),
+                    db.reader_tsns.contains_tsn(reader_tsn),
                     "TSN should remain registered until reader is dropped"
                 );
             }
@@ -1423,9 +1423,9 @@ mod tests {
             // Drop the reader and ensure the reader tsn is removed
             drop(reader);
             {
-                // DashMap: direct access without intermediate variable
+                // Check registration state directly on the reader-TSN registry
                 assert!(
-                    db.reader_tsns.iter().all(|r| *r.value() != reader_tsn),
+                    !db.reader_tsns.contains_tsn(reader_tsn),
                     "TSN should be removed after reader is dropped"
                 );
             }
@@ -1499,9 +1499,9 @@ mod tests {
 
             // Ensure the reader's tsn is registered while the iterator is alive
             {
-                // DashMap: direct access without intermediate variable
+                // Check registration state directly on the reader-TSN registry
                 assert!(
-                    db.reader_tsns.iter().any(|r| *r.value() == reader_tsn),
+                    db.reader_tsns.contains_tsn(reader_tsn),
                     "TSN should remain registered until reader is dropped"
                 );
             }
@@ -1516,9 +1516,9 @@ mod tests {
                 scanned.extend(batch);
 
                 // The reader should remain registered throughout iteration
-                // DashMap: direct access without intermediate variable
+                // Check registration state directly on the reader-TSN registry
                 assert!(
-                    db.reader_tsns.iter().any(|r| *r.value() == reader_tsn),
+                    db.reader_tsns.contains_tsn(reader_tsn),
                     "TSN should remain registered until reader is dropped"
                 );
             }
@@ -1543,9 +1543,9 @@ mod tests {
             // Drop the reader and ensure the reader tsn is removed
             drop(reader);
             {
-                // DashMap: direct access without intermediate variable
+                // Check registration state directly on the reader-TSN registry
                 assert!(
-                    db.reader_tsns.iter().all(|r| *r.value() != reader_tsn),
+                    !db.reader_tsns.contains_tsn(reader_tsn),
                     "TSN should be removed after reader is dropped"
                 );
             }
