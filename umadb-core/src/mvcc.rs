@@ -189,19 +189,24 @@ impl ReaderTsnRegistry {
     }
 }
 
+/// Mutable state owned by the single writer thread (and, during startup, the
+/// constructor). It is guarded by one `Mutex` purely to obtain interior mutability
+/// through `&self` on the shared `Arc<Mvcc>` — it is never contended, because only
+/// the one writer thread ever mutates it.
+struct WriterState {
+    /// On-disk header pages 0 and 1, double-buffered across commits.
+    headers: [Page; 2],
+    /// Reusable page-serialization buffer (avoids allocating on every page write).
+    scratch: Vec<u8>,
+}
+
 // Main MVCC structure
 pub struct Mvcc {
     pub pager: Pager,
     pub reader_tsns: Arc<ReaderTsnRegistry>,
-    pub writer_lock: Mutex<()>,
     pub page_size: usize,
     pub max_node_size: usize,
-    // Owned header node instances for pages 0 and 1
-    pub headers: Mutex<Vec<Page>>,
-    // Reusable buffer for header serialization
-    pub header_page_buf: Mutex<Vec<u8>>,
-    // Reusable buffer for general page serialization
-    pub page_buf: Mutex<Vec<u8>>,
+    writer_state: Mutex<WriterState>,
     pub verbose: bool,
     pub zero_fill_pages: bool,
     read_method: ReadMethod,
@@ -257,21 +262,21 @@ impl Mvcc {
         let mvcc = Self {
             pager,
             reader_tsns: Arc::new(ReaderTsnRegistry::default()),
-            writer_lock: Mutex::new(()),
             page_size: options.page_size,
             max_node_size: options.page_size - PAGE_HEADER_SIZE,
-            headers: Mutex::new(vec![
-                Page {
-                    page_id: PageID(0),
-                    node: Node::Header(HeaderNode::default()),
-                },
-                Page {
-                    page_id: PageID(1),
-                    node: Node::Header(HeaderNode::default()),
-                },
-            ]),
-            header_page_buf: Mutex::new(vec![0u8; options.page_size]),
-            page_buf: Mutex::new(vec![0u8; options.page_size]),
+            writer_state: Mutex::new(WriterState {
+                headers: [
+                    Page {
+                        page_id: PageID(0),
+                        node: Node::Header(HeaderNode::default()),
+                    },
+                    Page {
+                        page_id: PageID(1),
+                        node: Node::Header(HeaderNode::default()),
+                    },
+                ],
+                scratch: vec![0u8; options.page_size],
+            }),
             verbose,
             zero_fill_pages: options.zero_fill_pages,
             read_method: options.read_method,
@@ -362,12 +367,12 @@ impl Mvcc {
                 let h0 = mvcc.read_page(HEADER_PAGE_ID_0).ok();
                 let h1 = mvcc.read_page(HEADER_PAGE_ID_1).ok();
                 {
-                    let mut headers = mvcc.headers.lock().unwrap();
+                    let mut ws = mvcc.writer_state.lock().unwrap();
                     if let Some(p0) = h0 {
-                        headers[0] = (*p0).clone();
+                        ws.headers[0] = (*p0).clone();
                     }
                     if let Some(p1) = h1 {
-                        headers[1] = (*p1).clone();
+                        ws.headers[1] = (*p1).clone();
                     }
                 }
 
@@ -392,8 +397,10 @@ impl Mvcc {
                         if eight_ok {
                             // Downgrade: write schema_version=0 into both in-memory headers and write to disk
                             {
-                                let mut headers = mvcc.headers.lock().unwrap();
-                                for hp in headers.iter_mut() {
+                                let mut ws = mvcc.writer_state.lock().unwrap();
+                                // Cold one-time startup path: a local scratch buffer is fine.
+                                let mut buf = vec![0u8; mvcc.page_size];
+                                for hp in ws.headers.iter_mut() {
                                     let header_page_id = hp.page_id;
                                     if let Node::Header(ref mut hn) = hp.node {
                                         let schema_version = hn.schema_version;
@@ -405,7 +412,6 @@ impl Mvcc {
                                         hn.schema_version = 0;
                                     }
                                     // Re-write the header pages with identical fields but schema_version=0
-                                    let mut buf = mvcc.page_buf.lock().unwrap();
                                     serialize_page_into(&mut buf, &hp.node, mvcc.zero_fill_pages)?;
                                     mvcc.pager.write_page(hp.page_id, &buf)?;
                                 }
@@ -580,10 +586,9 @@ impl Mvcc {
         next_page_id: PageID,
         next_position: Position,
     ) -> DcbResult<()> {
-        let mut headers = self.headers.lock().unwrap();
-        let headers_idx = { if page_id == HEADER_PAGE_ID_0 { 0 } else { 1 } };
-        let header = &mut headers[headers_idx];
-        match &mut header.node {
+        let mut ws = self.writer_state.lock().unwrap();
+        let headers_idx = if page_id == HEADER_PAGE_ID_0 { 0 } else { 1 };
+        match &mut ws.headers[headers_idx].node {
             Node::Header(node) => {
                 // Update node values.
                 node.tsn = tsn;
@@ -593,15 +598,16 @@ impl Mvcc {
                 node.next_page_id = next_page_id;
                 node.next_position = next_position;
                 node.tracking_root_page_id = tracking_tree_root_id;
-
-                // Write node using pre-allocated buffer.
-                let mut buf = self.page_buf.lock().unwrap();
-                serialize_page_into(&mut buf, &header.node, self.zero_fill_pages)?;
-                self.pager.write_page(page_id, &buf)?;
-                Ok(())
             }
             _ => panic!("Shouldn't get here: header should be a header"),
         }
+
+        // Write the updated header using the reusable scratch buffer. Destructure to
+        // borrow `headers` and `scratch` disjointly.
+        let WriterState { headers, scratch } = &mut *ws;
+        serialize_page_into(scratch, &headers[headers_idx].node, self.zero_fill_pages)?;
+        self.pager.write_page(page_id, scratch)?;
+        Ok(())
     }
 
     pub fn read_page(&self, page_id: PageID) -> DcbResult<Arc<Page>> {
@@ -717,11 +723,12 @@ impl Mvcc {
     where
         I: IntoIterator<Item = &'a Page>,
     {
-        let mut buf = self.page_buf.lock().unwrap();
+        let mut ws = self.writer_state.lock().unwrap();
+        let buf = &mut ws.scratch;
         let mut count = 0usize;
         for page in pages {
-            page.serialize_into_with_zero_fill(&mut buf, self.zero_fill_pages)?;
-            self.pager.write_page(page.page_id, &buf)?;
+            page.serialize_into_with_zero_fill(buf, self.zero_fill_pages)?;
+            self.pager.write_page(page.page_id, buf)?;
             if self.verbose {
                 println!("Wrote {:?} to file", page.page_id);
             }
@@ -842,7 +849,7 @@ impl Mvcc {
         self.fsync()?;
 
         // Cache the header page.
-        let header_page = self.headers.lock().unwrap()[alternate_header_page_idx].clone();
+        let header_page = self.writer_state.lock().unwrap().headers[alternate_header_page_idx].clone();
         if let Some(ref page_cache) = self.page_cache {
             page_cache.insert(header_page.page_id, Arc::new(header_page));
         }
@@ -4607,11 +4614,11 @@ mod tests {
             // Recreate a Page with modified header and write it
             let page = Page::new(HEADER_PAGE_ID_0, Node::Header(h0));
             {
-                let mut buf = mvcc.page_buf.lock().unwrap();
-                serialize_page_into(&mut buf, &page.node, mvcc.zero_fill_pages)
+                let mut ws = mvcc.writer_state.lock().unwrap();
+                serialize_page_into(&mut ws.scratch, &page.node, mvcc.zero_fill_pages)
                     .expect("serialize header page");
                 mvcc.pager
-                    .write_page(page.page_id, &buf)
+                    .write_page(page.page_id, &ws.scratch)
                     .expect("write modified header 0");
             }
 
