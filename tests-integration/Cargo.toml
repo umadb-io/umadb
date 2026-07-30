@@ -30,6 +30,7 @@ zstd = "0.13"
 #pprof = { version = "0.15.0", features = ["criterion", "flamegraph"] }
 rcgen = "0.14"
 uuid = { workspace = true }
+serial_test = { workspace = true }
 #futures-util = "0.3.31"
 
 [features]

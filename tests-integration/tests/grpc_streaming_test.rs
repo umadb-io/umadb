@@ -4,6 +4,7 @@ use umadb_client::{AsyncUmaDbClient, UmaDbClient, cancel_all_stream_responses};
 use umadb_core::mvcc::DEFAULT_PAGE_SIZE;
 use umadb_dcb::{DcbError, DcbEvent, DcbEventStoreAsync};
 use umadb_server::start_server;
+use serial_test::serial;
 
 fn allocate_grpc_addr() -> (String, String) {
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind ephemeral port");
@@ -83,6 +84,7 @@ async fn grpc_async_streams_large_reads_total_count() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[serial]
 async fn grpc_async_does_not_stream_past_starting_head() {
     // Arrange
     let temp_dir = tempfile::tempdir().unwrap();
@@ -174,6 +176,7 @@ async fn grpc_async_does_not_stream_past_starting_head() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[serial]
 async fn grpc_async_subscription_catch_up_and_continue() {
     // Arrange
     let temp_dir = tempfile::tempdir().unwrap();
