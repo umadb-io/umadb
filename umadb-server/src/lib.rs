@@ -218,10 +218,94 @@ pub async fn start_server<P: AsRef<Path>>(
     start_server_with_options(options, shutdown_rx).await
 }
 
+/// Raise the process's open-file limit (`RLIMIT_NOFILE`) soft cap toward the hard
+/// cap, once per process.
+///
+/// Each client connection is a socket = one file descriptor. With the common
+/// default soft limit of 1024, ~1024 concurrent clients exhaust the descriptor
+/// table (after stdio, the listener, the DB file, epoll, etc.), which surfaces as
+/// connection/stream failures across every workload at ~1024 clients while lower
+/// concurrencies are fine. Raising the soft limit to the hard limit removes that
+/// wall without requiring operators to remember `ulimit -n`.
+pub fn raise_open_file_limit() {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(raise_open_file_limit_inner);
+}
+
+#[cfg(unix)]
+fn raise_open_file_limit_inner() {
+    // SAFETY: get/setrlimit are simple syscalls; we pass a valid, fully-initialized
+    // `rlimit` and only read the returned values.
+    unsafe {
+        let mut lim = libc::rlimit {
+            rlim_cur: 0,
+            rlim_max: 0,
+        };
+        if libc::getrlimit(libc::RLIMIT_NOFILE, &mut lim) != 0 {
+            eprintln!(
+                "UmaDB: could not read open-file limit (RLIMIT_NOFILE): {}",
+                std::io::Error::last_os_error()
+            );
+            return;
+        }
+        let previous = lim.rlim_cur;
+        if lim.rlim_max != libc::RLIM_INFINITY && previous >= lim.rlim_max {
+            println!(
+                "UmaDB open-file limit (RLIMIT_NOFILE): soft {previous} already at hard limit {}",
+                lim.rlim_max
+            );
+            return;
+        }
+        // Prefer the hard limit. When the hard limit is "unlimited" (common on
+        // macOS) some kernels reject an unlimited soft value, so try large concrete
+        // targets and fall back if the kernel rejects them.
+        let candidates: &[libc::rlim_t] = if lim.rlim_max == libc::RLIM_INFINITY {
+            &[1_048_576, 65_536]
+        } else {
+            &[lim.rlim_max]
+        };
+        let mut attempted = false;
+        for &target in candidates.iter() {
+            if target <= previous {
+                continue;
+            }
+            attempted = true;
+            let new = libc::rlimit {
+                rlim_cur: target,
+                rlim_max: lim.rlim_max,
+            };
+            if libc::setrlimit(libc::RLIMIT_NOFILE, &new) == 0 {
+                println!(
+                    "UmaDB raised open-file limit (RLIMIT_NOFILE): soft {previous} -> {target}"
+                );
+                return;
+            }
+        }
+        if !attempted {
+            // Soft limit is already at least as high as anything we'd set.
+            println!(
+                "UmaDB open-file limit (RLIMIT_NOFILE): soft {previous} is already sufficient"
+            );
+            return;
+        }
+        eprintln!(
+            "UmaDB: could not raise open-file limit (RLIMIT_NOFILE) from soft {previous}: {}. \
+             Consider raising it manually (e.g. `ulimit -n 262144`).",
+            std::io::Error::last_os_error()
+        );
+    }
+}
+
+#[cfg(not(unix))]
+fn raise_open_file_limit_inner() {}
+
 pub async fn start_server_with_options(
     options: ServerOptions,
     shutdown_rx: oneshot::Receiver<()>,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    // Ensure we can accept many concurrent client connections (one fd each).
+    raise_open_file_limit();
+
     let addr = options.listen_addr.parse()?;
     // ---- Bind incoming manually like tonic ----
     let incoming = match TcpIncoming::bind(addr) {

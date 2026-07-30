@@ -21,3 +21,6 @@ futures = { workspace = true }
 tokio-stream = "0.1.18"
 async-trait = { workspace = true }
 tower = "0.5.3"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
