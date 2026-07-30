@@ -200,7 +200,7 @@ struct WriterState {
     scratch: Vec<u8>,
 }
 
-pub trait MvccPageReader {
+pub trait MvccSnapshot {
     fn read_page(&self, page_id: PageID) -> DcbResult<Arc<Page>>;
 }
 
@@ -866,7 +866,7 @@ impl Mvcc {
     }
 }
 
-impl MvccPageReader for Mvcc {
+impl MvccSnapshot for Mvcc {
     fn read_page(&self, page_id: PageID) -> DcbResult<Arc<Page>> {
         self.read_page(page_id)
     }
@@ -944,7 +944,7 @@ impl Writer {
     /// # Returns
     ///
     /// A `DcbResult` containing a reference to the page if found, or an error if the page could not be found.
-    pub fn get_page_ref(&mut self, mvcc: &Mvcc, page_id: PageID) -> DcbResult<&Page> {
+    pub fn get_page_ref<T: MvccSnapshot>(&mut self, mvcc: &T, page_id: PageID) -> DcbResult<&Page> {
         // Check the dirty pages first
         if self.dirty.contains_key(&page_id) {
             return Ok(self.dirty.get(&page_id).unwrap());

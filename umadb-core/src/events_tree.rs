@@ -5,7 +5,7 @@ use crate::events_tree_nodes::{
     deserialize_metadata, metadata_serialized_size, serialize_metadata_into,
     validate_event_record_for_append,
 };
-use crate::mvcc::{Mvcc, MvccPageReader, Writer};
+use crate::mvcc::{Mvcc, MvccSnapshot, Writer};
 use crate::node::Node;
 use crate::page::{PAGE_HEADER_SIZE, Page};
 use std::collections::HashMap;
@@ -13,9 +13,9 @@ use std::sync::Arc;
 use umadb_dcb::{DcbError, DcbResult};
 
 // Helpers for storing large event data across overflow pages
-fn write_overflow_chain(mvcc: &Mvcc, writer: &mut Writer, data: &[u8]) -> DcbResult<PageID> {
+fn write_overflow_chain(writer: &mut Writer, data: &[u8], page_size: usize) -> DcbResult<PageID> {
     // Maximum payload per overflow page: page_size - header - next pointer (8 bytes)
-    let payload_cap = mvcc.page_size.saturating_sub(PAGE_HEADER_SIZE + 8);
+    let payload_cap = page_size.saturating_sub(PAGE_HEADER_SIZE + 8);
     if payload_cap == 0 {
         return Err(DcbError::DatabaseCorrupted(
             "Page size too small to store overflow data".to_string(),
@@ -55,7 +55,7 @@ fn write_overflow_chain(mvcc: &Mvcc, writer: &mut Writer, data: &[u8]) -> DcbRes
     Ok(next_id)
 }
 
-fn read_overflow_chain<T: MvccPageReader>(
+fn read_overflow_chain<T: MvccSnapshot>(
     mvcc: &T,
     dirty: &HashMap<PageID, Page>,
     mut page_id: PageID,
@@ -75,7 +75,7 @@ fn read_overflow_chain<T: MvccPageReader>(
     Ok(out)
 }
 
-fn with_page<T, F, M: MvccPageReader>(
+fn with_page<T, F, M: MvccSnapshot>(
     mvcc: &M,
     dirty: &HashMap<PageID, Page>,
     page_id: PageID,
@@ -97,10 +97,10 @@ where
 /// Metadata is placed first so that a future metadata-only read can stop after
 /// the leading page(s) without walking the potentially large event data.
 fn data_and_metadata_to_overflow_chain(
-    mvcc: &Mvcc,
     writer: &mut Writer,
     record_data: &Vec<u8>,
     metadata: &Vec<(String, String)>,
+    page_size: usize,
 ) -> DcbResult<(PageID, usize)> {
     let metadata_len = if metadata.is_empty() {
         0
@@ -119,11 +119,11 @@ fn data_and_metadata_to_overflow_chain(
     // 3. Overwrite the second part with record data (Fast memcpy)
     combined[metadata_len..].copy_from_slice(record_data);
 
-    let root_id = write_overflow_chain(mvcc, writer, &combined)?;
+    let root_id = write_overflow_chain(writer, &combined, page_size)?;
     Ok((root_id, metadata_len))
 }
 
-fn materialize_event_value<T: MvccPageReader>(
+fn materialize_event_value<T: MvccSnapshot>(
     mvcc: &T,
     dirty: &HashMap<PageID, Page>,
     value: &EventValue,
@@ -170,10 +170,11 @@ pub fn event_tree_append(
     writer: &mut Writer,
     event_record: EventRecord,
     position: Position,
+    page_size: usize,
 ) -> DcbResult<()> {
     let event_values_and_size_diffs =
         validate_event_record_for_append(mvcc.page_size, event_record)?;
-    event_tree_append_event_value(mvcc, writer, event_values_and_size_diffs, position)
+    event_tree_append_event_value(mvcc, writer, event_values_and_size_diffs, position, page_size)
 }
 
 /// Append an event to the root event leaf page.
@@ -181,13 +182,14 @@ pub fn event_tree_append(
 /// This function obtains a mutable reference to a dirty copy of the root event
 /// leaf page (using copy-on-write if necessary) and appends the provided
 /// Position to the keys and the EventRecord to the values.
-pub fn event_tree_append_event_value(
-    mvcc: &Mvcc,
+pub fn event_tree_append_event_value<T: MvccSnapshot>(
+    mvcc: &T,
     writer: &mut Writer,
     event_values_and_size_diffs: ((EventValue, usize), Option<(EventValue, usize)>),
     position: Position,
+    page_size: usize,
 ) -> DcbResult<()> {
-    let verbose = mvcc.verbose;
+    let verbose = false;
     // if verbose {
     //     println!("Appending event: {position:?} {inline_value:?}");
     //     println!("Root is {:?}", writer.events_tree_root_id);
@@ -255,7 +257,7 @@ pub fn event_tree_append_event_value(
     let (event_value, size_diff) = match event_values_and_size_diffs {
         ((EventValue::Inline(record), _), Some((mut overflow_value, overflow_size_diff))) => {
             let (overflow_root_id, overflow_metadata_len) =
-                data_and_metadata_to_overflow_chain(mvcc, writer, &record.data, &record.metadata)?;
+                data_and_metadata_to_overflow_chain(writer, &record.data, &record.metadata, page_size)?;
             if let EventValue::Overflow {
                 root_id,
                 metadata_len,
@@ -283,7 +285,7 @@ pub fn event_tree_append_event_value(
     // We may need to split the page.
     let mut popped: Option<EventValue> = None;
 
-    if serialized_size + size_diff <= mvcc.page_size {
+    if serialized_size + size_diff <= page_size {
         // Get a mutable leaf node and append the event value and position.
         let dirty_leaf_page = writer.get_mut_dirty(dirty_page_id)?;
         match &mut dirty_leaf_page.node {
@@ -400,7 +402,7 @@ pub fn event_tree_append_event_value(
 
         // Check if the internal page needs splitting
 
-        if dirty_internal_page.calc_serialized_size() > mvcc.page_size {
+        if dirty_internal_page.calc_serialized_size() > page_size {
             if let Node::EventInternal(dirty_internal_node) = &mut dirty_internal_page.node {
                 if verbose {
                     println!("Splitting internal {dirty_page_id:?}...");
@@ -491,7 +493,7 @@ pub fn event_tree_append_event_value(
     Ok(())
 }
 
-pub fn event_tree_lookup<T: MvccPageReader>(
+pub fn event_tree_lookup<T: MvccSnapshot>(
     mvcc: &T,
     dirty: &HashMap<PageID, Page>,
     events_tree_root_id: PageID,
@@ -540,7 +542,7 @@ pub fn event_tree_lookup<T: MvccPageReader>(
     }
 }
 
-pub struct EventIterator<'a, T: MvccPageReader> {
+pub struct EventIterator<'a, T: MvccSnapshot> {
     pub mvcc: &'a T,
     pub dirty: &'a HashMap<PageID, Page>,
     pub stack: Vec<(PageID, Option<usize>)>,
@@ -549,7 +551,7 @@ pub struct EventIterator<'a, T: MvccPageReader> {
     pub backwards: bool,
 }
 
-impl<'a, T: MvccPageReader> EventIterator<'a, T> {
+impl<'a, T: MvccSnapshot> EventIterator<'a, T> {
     pub fn new(
         mvcc: &'a T,
         dirty: &'a HashMap<PageID, Page>,
@@ -814,7 +816,7 @@ mod tests {
         };
 
         // Call append_event
-        event_tree_append(&db, &mut writer, record.clone(), position).unwrap();
+        event_tree_append(&db, &mut writer, record.clone(), position, db.page_size).unwrap();
 
         // Verify that the dirty root page contains the appended key/value
         let new_root_id = writer.events_tree_root_id;
@@ -876,7 +878,7 @@ mod tests {
             appended.push((position, record.clone()));
 
             // Append the event
-            event_tree_append(&db, &mut writer, record, position).unwrap();
+            event_tree_append(&db, &mut writer, record, position, db.page_size).unwrap();
 
             // Check if we've split the leaf
             let root_page = writer.dirty.get(&writer.events_tree_root_id).unwrap();
@@ -949,7 +951,7 @@ mod tests {
             appended.push((position, record.clone()));
 
             // Append the event
-            event_tree_append(&db, &mut writer, record, position).unwrap();
+            event_tree_append(&db, &mut writer, record, position, db.page_size).unwrap();
 
             // Check if we've split the leaf
             let root_page = writer.dirty.get(&writer.events_tree_root_id).unwrap();
@@ -1027,7 +1029,7 @@ mod tests {
             appended.push((position, record.clone()));
 
             // Append the event
-            event_tree_append(&db, &mut writer, record, position).unwrap();
+            event_tree_append(&db, &mut writer, record, position, db.page_size).unwrap();
 
             // Check if we've split an internal node
             let root_page = writer.dirty.get(&writer.events_tree_root_id).unwrap();
@@ -1116,7 +1118,7 @@ mod tests {
             appended.push((position, record.clone()));
 
             // Append the event
-            event_tree_append(&db, &mut writer, record, position).unwrap();
+            event_tree_append(&db, &mut writer, record, position, db.page_size).unwrap();
 
             // Check if the root is an internal node
             let root_page = writer.dirty.get(&writer.events_tree_root_id).unwrap();
@@ -1211,7 +1213,7 @@ mod tests {
             appended.push((position, record.clone()));
 
             // Append the event
-            event_tree_append(&db, &mut writer, record, position).unwrap();
+            event_tree_append(&db, &mut writer, record, position, db.page_size).unwrap();
 
             // Check if the root is an internal node
             let root_page = writer.dirty.get(&writer.events_tree_root_id).unwrap();
@@ -1338,7 +1340,7 @@ mod tests {
             appended.push((position, record.clone()));
 
             // Append the event
-            event_tree_append(&db, &mut writer, record, position).unwrap();
+            event_tree_append(&db, &mut writer, record, position, db.page_size).unwrap();
 
             // Check if the root is an internal node
             let root_page = writer.dirty.get(&writer.events_tree_root_id).unwrap();
@@ -1458,7 +1460,7 @@ mod tests {
             appended.push((position, record.clone()));
 
             // Append the event
-            event_tree_append(&db, &mut writer, record, position).unwrap();
+            event_tree_append(&db, &mut writer, record, position, db.page_size).unwrap();
 
             // Check if the root is an internal node
             let root_page = writer.dirty.get(&writer.events_tree_root_id).unwrap();
@@ -1567,7 +1569,7 @@ mod tests {
             uuid: None,
             metadata: Vec::new(),
         };
-        event_tree_append(&db, &mut writer, event.clone(), pos).unwrap();
+        event_tree_append(&db, &mut writer, event.clone(), pos, db.page_size).unwrap();
         db.commit(&mut writer).unwrap();
 
         // Lookup should return identical payload
@@ -1619,7 +1621,7 @@ mod tests {
             uuid: None,
             metadata: Vec::new(),
         };
-        event_tree_append(&db, &mut writer, event.clone(), pos).unwrap();
+        event_tree_append(&db, &mut writer, event.clone(), pos, db.page_size).unwrap();
         db.commit(&mut writer).unwrap();
 
         // Lookup
@@ -1670,7 +1672,7 @@ mod tests {
             uuid: None,
             metadata: metadata.clone(),
         };
-        event_tree_append(&db, &mut writer, event.clone(), pos).unwrap();
+        event_tree_append(&db, &mut writer, event.clone(), pos, db.page_size).unwrap();
         db.commit(&mut writer).unwrap();
 
         // Read back through the materialization path and confirm metadata survives.
@@ -1713,7 +1715,7 @@ mod tests {
             uuid: Some(uuid::Uuid::new_v4()),
             metadata: metadata.clone(),
         };
-        event_tree_append(&db, &mut writer, event.clone(), pos).unwrap();
+        event_tree_append(&db, &mut writer, event.clone(), pos, db.page_size).unwrap();
         db.commit(&mut writer).unwrap();
 
         // Read back through the materialization path and confirm both data and
@@ -1775,7 +1777,7 @@ mod tests {
             uuid: None,
             metadata: metadata.clone(),
         };
-        event_tree_append(&db, &mut writer, event.clone(), pos).unwrap();
+        event_tree_append(&db, &mut writer, event.clone(), pos, db.page_size).unwrap();
         db.commit(&mut writer).unwrap();
 
         let reader = db.reader().unwrap();
@@ -1807,7 +1809,7 @@ mod tests {
 
         // Append must fail cleanly with InvalidArgument rather than corrupting
         // the encoding.
-        match event_tree_append(&db, &mut writer, event, pos) {
+        match event_tree_append(&db, &mut writer, event, pos, db.page_size) {
             Err(DcbError::InvalidArgument(_)) => {}
             other => panic!("Expected InvalidArgument, got {other:?}"),
         }
@@ -1844,7 +1846,7 @@ mod tests {
 
         // Append must fail cleanly with InvalidArgument rather than corrupting
         // the encoding.
-        match event_tree_append(&db, &mut writer, event, pos) {
+        match event_tree_append(&db, &mut writer, event, pos, db.page_size) {
             Err(DcbError::InvalidArgument(_)) => {}
             other => panic!("Expected InvalidArgument, got {other:?}"),
         }
@@ -1877,7 +1879,7 @@ mod tests {
             metadata: Vec::new(),
         };
 
-        match event_tree_append(&db, &mut writer, event, pos) {
+        match event_tree_append(&db, &mut writer, event, pos, db.page_size) {
             Err(DcbError::InvalidArgument(_)) => {}
             other => panic!("Expected InvalidArgument, got {other:?}"),
         }
@@ -1900,7 +1902,7 @@ mod tests {
             metadata: Vec::new(),
         };
 
-        match event_tree_append(&db, &mut writer, event, pos) {
+        match event_tree_append(&db, &mut writer, event, pos, db.page_size) {
             Err(DcbError::InvalidArgument(_)) => {}
             other => panic!("Expected InvalidArgument, got {other:?}"),
         }
@@ -1976,7 +1978,7 @@ mod tests {
                 metadata: Vec::new(),
             };
             appended.push((position, record.clone()));
-            event_tree_append(&db, &mut writer, record, position).unwrap();
+            event_tree_append(&db, &mut writer, record, position,db.page_size).unwrap();
 
             let root_page = writer.dirty.get(&writer.events_tree_root_id).unwrap();
             if let Node::EventInternal(root_node) = &root_page.node {
@@ -2051,7 +2053,7 @@ mod tests {
             metadata: Vec::new(),
         };
 
-        match event_tree_append(&db, &mut writer, event, pos) {
+        match event_tree_append(&db, &mut writer, event, pos, db.page_size) {
             Err(DcbError::InvalidArgument(message)) => {
                 assert!(
                     message.contains("event too large for page size"),

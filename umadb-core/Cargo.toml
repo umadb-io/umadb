@@ -14,7 +14,6 @@ categories = ["database"]
 umadb-dcb = { path = "../umadb-dcb", version = "0.6.14" }
 rustc-hash = "2.1"
 crc32fast = "1"
-dashmap = "6"
 itertools = "0.14"
 uuid = { workspace = true }
 libc = { workspace = true }
@@ -29,3 +28,7 @@ moka = { version = "0.12", features = ["sync"] }
 [dev-dependencies]
 tempfile = { workspace = true }
 serial_test = { workspace = true }
+umadb-core = { path = ".", features = ["test-utils"] }
+
+[features]
+test-utils = []

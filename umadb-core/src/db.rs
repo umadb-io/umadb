@@ -1,9 +1,7 @@
-use std::path::Path;
-
 use crate::common::{PageID, Position};
 use crate::events_tree::{EventIterator, event_tree_append_event_value, event_tree_lookup};
 use crate::events_tree_nodes::{EventRecord, EventValue, validate_event_record_for_append};
-use crate::mvcc::{Mvcc, MvccPageReader, StorageOptions, Writer};
+use crate::mvcc::{Mvcc, MvccSnapshot, Writer};
 use crate::node::Node;
 use crate::page::Page;
 use crate::tags_tree::{TagsTreeIterator, tags_tree_insert};
@@ -30,13 +28,9 @@ pub struct UmaDb {
 impl UmaDb {
     /// Create a new EventStore at the given directory or file path with default options.
     /// If a directory path is provided, a file named "uma.db" will be used inside it.
-    pub fn new<P: AsRef<Path>>(path: P) -> DcbResult<Self> {
-        Self::new_with_options(false, StorageOptions::default().db_path(path))
-    }
-
-    /// Create a new EventStore with explicit options.
-    pub fn new_with_options(verbose: bool, options: StorageOptions) -> DcbResult<Self> {
-        let mvcc = Mvcc::new(verbose, options)?;
+    #[cfg(any(test, feature = "test-utils"))]
+    pub fn new<P: AsRef<std::path::Path>>(path: P) -> DcbResult<Self> {
+        let mvcc = Mvcc::new(false, crate::mvcc::StorageOptions::default().db_path(path))?;
         Ok(Self {
             mvcc: Arc::new(mvcc),
         })
@@ -86,6 +80,7 @@ impl UmaDb {
     /// - Otherwise performs unconditional append and records Ok(last_position) for that item.
     ///
     /// At the end, commits the writer once. If commit fails, returns the commit error and discards per-item results.
+    #[cfg(any(test, feature = "test-utils"))]
     pub fn append_batch(
         &self,
         mut items: Vec<(
@@ -108,7 +103,7 @@ impl UmaDb {
                 break;
             }
             let res =
-                Self::process_append_request(events, condition, tracking, mvcc, &mut writer, None);
+                process_append_request(events, condition, tracking, mvcc.as_ref(), &mut writer, None, mvcc.page_size);
             match &res {
                 Ok(_) => results.push(res),
                 Err(e) if is_integrity_error(e) => results.push(Err(clone_dcb_error(e))),
@@ -142,101 +137,6 @@ impl UmaDb {
         // No non-integrity errors: single commit at end
         mvcc.commit(&mut writer)?;
         Ok(results)
-    }
-
-    pub fn process_append_request(
-        events: Vec<DcbEvent>,
-        condition: Option<DcbAppendCondition>,
-        tracking_info: Option<TrackingInfo>,
-        mvcc: &Mvcc,
-        writer: &mut Writer,
-        cancel: Option<Arc<std::sync::atomic::AtomicBool>>,
-    ) -> DcbResult<u64> {
-        // Check condition using read_conditional (limit 1), starting after the provided position
-        if let Some(cond) = condition {
-            let from = cond.after.map(|after| Position(after + 1));
-            let read_result1 = read_conditional(
-                mvcc,
-                &writer.dirty,
-                writer.events_tree_root_id,
-                writer.tags_tree_root_id,
-                cond.fail_if_events_match.clone(),
-                from,
-                false,
-                Some(1),
-                false,
-                cancel.clone(),
-            );
-            match read_result1 {
-                Ok(found_vec) => {
-                    // Read didn't error...
-                    if let Some(matched) = found_vec.first() {
-                        // Found one event... consider if the request is idempotent...
-                        return match is_request_idempotent(
-                            mvcc,
-                            &writer.dirty,
-                            writer.events_tree_root_id,
-                            writer.tags_tree_root_id,
-                            &events,
-                            cond.fail_if_events_match.clone(),
-                            from,
-                            cancel.clone(),
-                        ) {
-                            Ok(Some(last_recorded_position)) => Ok(last_recorded_position),
-                            Ok(None) => {
-                                // Propagate an integrity error for this item but continue with others
-                                let msg = format!(
-                                    "condition: {:?} matched: {:?}, ",
-                                    cond.clone(),
-                                    matched,
-                                );
-                                Err(DcbError::IntegrityError(msg))
-                            }
-                            Err(err) => {
-                                // Propagate the error for this item but continue with others
-                                Err(err)
-                            }
-                        };
-                    }
-                }
-                Err(e) => {
-                    // Propagate the read error for this item but continue with others
-                    return Err(e);
-                }
-            }
-        }
-
-        let mut all_event_values_and_size_diffs = Vec::with_capacity(events.len());
-        for ev in events {
-            let record = EventRecord {
-                event_type: ev.event_type,
-                data: ev.data,
-                tags: ev.tags,
-                uuid: ev.uuid,
-                metadata: ev.metadata,
-            };
-            all_event_values_and_size_diffs
-                .push(validate_event_record_for_append(mvcc.page_size, record)?);
-        }
-
-        // If tracking is provided for this item, enforce monotonicity and update tracking leaf under same writer
-        if let Some(tracking_info) = tracking_info {
-            tracking_upsert(
-                mvcc,
-                writer,
-                &tracking_info.source,
-                Position(tracking_info.position),
-            )?;
-        }
-
-        // Append unconditionally
-        if all_event_values_and_size_diffs.is_empty() {
-            return Ok(0);
-        }
-        match unconditional_append_event_values(mvcc, writer, all_event_values_and_size_diffs) {
-            Ok(last) => Ok(last),
-            Err(e) => Err(e),
-        }
     }
 }
 
@@ -316,7 +216,7 @@ impl DcbEventStoreSync for UmaDb {
         let mvcc = &self.mvcc;
         let mut writer = mvcc.writer()?;
         let result =
-            Self::process_append_request(events, condition, tracking_info, mvcc, &mut writer, None);
+            process_append_request(events, condition, tracking_info, mvcc.as_ref(), &mut writer, None, mvcc.page_size);
         if result.is_ok() {
             mvcc.commit(&mut writer)?;
         }
@@ -330,7 +230,7 @@ struct ReadResponse {
 }
 
 /// Ensure tracking constraint and update/insert the position into leaf without splitting.
-fn tracking_upsert(mvcc: &Mvcc, writer: &mut Writer, source: &str, pos: Position) -> DcbResult<()> {
+fn tracking_upsert<T: MvccSnapshot>(mvcc: &T, writer: &mut Writer, source: &str, pos: Position, page_size: usize) -> DcbResult<()> {
     // Enforce maximum key length (1-byte length field in tracking nodes)
     let key_len = source.len();
     if key_len > u8::MAX as usize {
@@ -427,7 +327,7 @@ fn tracking_upsert(mvcc: &Mvcc, writer: &mut Writer, source: &str, pos: Position
             }
         }
         // Now check overflow and perform split if needed in a new scope
-        if leaf_page.calc_serialized_size() > mvcc.page_size {
+        if leaf_page.calc_serialized_size() > page_size {
             let promoted_key: String;
             let right_id: PageID;
             {
@@ -489,7 +389,7 @@ fn tracking_upsert(mvcc: &Mvcc, writer: &mut Writer, source: &str, pos: Position
                     ));
                 };
                 internal.insert_promoted_at(child_idx, prom_key, new_child_id);
-                need_split = parent_page.calc_serialized_size() > mvcc.page_size;
+                need_split = parent_page.calc_serialized_size() > page_size;
             }
             if need_split {
                 // Reborrow mutably to perform the split
@@ -562,31 +462,6 @@ impl DcbReadResponseSync for ReadResponse {
     }
 }
 
-// TODO: Move because this now used only in tests...
-pub fn unconditional_append(
-    mvcc: &Mvcc,
-    writer: &mut Writer,
-    events: Vec<DcbEvent>,
-) -> DcbResult<u64> {
-    // Note: when used with tracking, the caller must perform tracking checks and updates
-    // before this call within the same writer to ensure atomicity.
-
-    let mut all_event_values_and_size_diffs = Vec::with_capacity(events.len());
-    for ev in events {
-        let record = EventRecord {
-            event_type: ev.event_type,
-            data: ev.data,
-            tags: ev.tags,
-            uuid: ev.uuid,
-            metadata: ev.metadata,
-        };
-        let event_values_and_diffs = validate_event_record_for_append(mvcc.page_size, record)?;
-        all_event_values_and_size_diffs.push(event_values_and_diffs);
-    }
-
-    unconditional_append_event_values(mvcc, writer, all_event_values_and_size_diffs)
-}
-
 /// Append events unconditionally to the database.
 ///
 /// For each event, this will:
@@ -595,10 +470,11 @@ pub fn unconditional_append(
 /// - insert the position for each tag into the tags tree
 ///
 /// Caller is responsible for committing the writer.
-fn unconditional_append_event_values(
-    mvcc: &Mvcc,
+fn unconditional_append_event_values<T: MvccSnapshot>(
+    mvcc: &T,
     writer: &mut Writer,
     all_event_values_and_size_diffs: Vec<((EventValue, usize), Option<(EventValue, usize)>)>,
+    page_size: usize,
 ) -> Result<u64, DcbError> {
     let mut last_pos_u64: u64 = 0;
 
@@ -613,7 +489,7 @@ fn unconditional_append_event_values(
             EventValue::Inline(record) => {
                 for tag in record.tags.iter() {
                     let tag_hash: TagHash = tag_to_hash(tag);
-                    tags_tree_insert(mvcc, writer, tag_hash, position)?;
+                    tags_tree_insert(mvcc, writer, tag_hash, position, page_size)?;
                 }
             }
             EventValue::Overflow { .. } => {
@@ -628,6 +504,7 @@ fn unconditional_append_event_values(
                 overflow_value_and_size_diff,
             ),
             position,
+            page_size,
         )?;
     }
 
@@ -636,7 +513,7 @@ fn unconditional_append_event_values(
 
 /// Read events using the tags index by merging per-tag iterators, grouping by position,
 /// filtering by tag and type matches, and then looking up the event record.
-pub fn read_conditional<T: MvccPageReader>(
+pub fn read_conditional<T: MvccSnapshot>(
     mvcc: &T,
     dirty: &HashMap<PageID, Page>,
     events_tree_root_id: PageID,
@@ -921,6 +798,104 @@ pub fn read_conditional<T: MvccPageReader>(
 
     Ok(out)
 }
+
+pub fn process_append_request<T: MvccSnapshot>(
+    events: Vec<DcbEvent>,
+    condition: Option<DcbAppendCondition>,
+    tracking_info: Option<TrackingInfo>,
+    mvcc: &T,
+    writer: &mut Writer,
+    cancel: Option<Arc<std::sync::atomic::AtomicBool>>,
+    page_size: usize,
+) -> DcbResult<u64> {
+    // Check condition using read_conditional (limit 1), starting after the provided position
+    if let Some(cond) = condition {
+        let from = cond.after.map(|after| Position(after + 1));
+        let read_result1 = read_conditional(
+            mvcc,
+            &writer.dirty,
+            writer.events_tree_root_id,
+            writer.tags_tree_root_id,
+            cond.fail_if_events_match.clone(),
+            from,
+            false,
+            Some(1),
+            false,
+            cancel.clone(),
+        );
+        match read_result1 {
+            Ok(found_vec) => {
+                // Read didn't error...
+                if let Some(matched) = found_vec.first() {
+                    // Found one event... consider if the request is idempotent...
+                    return match is_request_idempotent(
+                        mvcc,
+                        &writer.dirty,
+                        writer.events_tree_root_id,
+                        writer.tags_tree_root_id,
+                        &events,
+                        cond.fail_if_events_match.clone(),
+                        from,
+                        cancel.clone(),
+                    ) {
+                        Ok(Some(last_recorded_position)) => Ok(last_recorded_position),
+                        Ok(None) => {
+                            // Propagate an integrity error for this item but continue with others
+                            let msg = format!(
+                                "condition: {:?} matched: {:?}, ",
+                                cond.clone(),
+                                matched,
+                            );
+                            Err(DcbError::IntegrityError(msg))
+                        }
+                        Err(err) => {
+                            // Propagate the error for this item but continue with others
+                            Err(err)
+                        }
+                    };
+                }
+            }
+            Err(e) => {
+                // Propagate the read error for this item but continue with others
+                return Err(e);
+            }
+        }
+    }
+
+    let mut all_event_values_and_size_diffs = Vec::with_capacity(events.len());
+    for ev in events {
+        let record = EventRecord {
+            event_type: ev.event_type,
+            data: ev.data,
+            tags: ev.tags,
+            uuid: ev.uuid,
+            metadata: ev.metadata,
+        };
+        all_event_values_and_size_diffs
+            .push(validate_event_record_for_append(page_size, record)?);
+    }
+
+    // If tracking is provided for this item, enforce monotonicity and update tracking leaf under same writer
+    if let Some(tracking_info) = tracking_info {
+        tracking_upsert(
+            mvcc,
+            writer,
+            &tracking_info.source,
+            Position(tracking_info.position),
+            page_size,
+        )?;
+    }
+
+    // Append unconditionally
+    if all_event_values_and_size_diffs.is_empty() {
+        return Ok(0);
+    }
+    match unconditional_append_event_values(mvcc, writer, all_event_values_and_size_diffs, page_size) {
+        Ok(last) => Ok(last),
+        Err(e) => Err(e),
+    }
+}
+
 /// Compute a TagHash ([u8; 16]) from a tag string using a stable UUID v5 hash.
 #[inline(always)]
 pub fn tag_to_hash_v5uuid(tag: &str) -> TagHash {
@@ -968,8 +943,8 @@ pub fn tag_to_hash(tag: &str) -> TagHash {
     }
 }
 
-pub fn is_request_idempotent(
-    mvcc: &Mvcc,
+pub fn is_request_idempotent<T: MvccSnapshot>(
+    mvcc: &T,
     dirty: &HashMap<PageID, Page>,
     events_tree_root_id: PageID,
     tags_tree_root_id: PageID,
@@ -1090,10 +1065,35 @@ pub fn shadow_for_batch_abort(src: &DcbError) -> DcbError {
     }
 }
 
+#[cfg(any(test, feature = "test-utils"))]
+pub fn unconditional_append(
+    mvcc: &Mvcc,
+    writer: &mut Writer,
+    events: Vec<DcbEvent>,
+) -> DcbResult<u64> {
+    // Note: when used with tracking, the caller must perform tracking checks and updates
+    // before this call within the same writer to ensure atomicity.
+
+    let mut all_event_values_and_size_diffs = Vec::with_capacity(events.len());
+    for ev in events {
+        let record = EventRecord {
+            event_type: ev.event_type,
+            data: ev.data,
+            tags: ev.tags,
+            uuid: ev.uuid,
+            metadata: ev.metadata,
+        };
+        let event_values_and_diffs = validate_event_record_for_append(mvcc.page_size, record)?;
+        all_event_values_and_size_diffs.push(event_values_and_diffs);
+    }
+
+    unconditional_append_event_values(mvcc, writer, all_event_values_and_size_diffs, mvcc.page_size)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::mvcc::DEFAULT_PAGE_SIZE;
+    use crate::mvcc::{DEFAULT_PAGE_SIZE, StorageOptions};
     use crate::page::Page;
     use serial_test::serial;
     use std::collections::HashMap;
@@ -1102,6 +1102,7 @@ mod tests {
         DcbAppendCondition, DcbError, DcbEvent, DcbEventStoreSync, DcbQuery, DcbQueryItem,
     };
     use uuid::Uuid;
+
 
     #[test]
     #[serial]

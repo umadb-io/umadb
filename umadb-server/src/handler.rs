@@ -4,7 +4,7 @@ use tokio::sync::{mpsc, oneshot, watch};
 use tokio::sync::mpsc::Receiver;
 use tokio::sync::watch::Sender;
 use umadb_core::common::Position;
-use umadb_core::db::{clone_dcb_error, is_integrity_error, is_invalid_argument_error, read_conditional, shadow_for_batch_abort, UmaDb};
+use umadb_core::db::{clone_dcb_error, is_integrity_error, is_invalid_argument_error, process_append_request, read_conditional, shadow_for_batch_abort, UmaDb};
 use umadb_core::mvcc::{Mvcc, StorageOptions};
 use umadb_dcb::{DcbAppendCondition, DcbError, DcbEvent, DcbQuery, DcbResult, DcbSequencedEvent, TrackingInfo};
 use crate::APPEND_BATCH_MAX_EVENTS;
@@ -95,13 +95,14 @@ impl UmaDbRequestHandler {
                     let mut abort_err: Option<DcbError> = None;
 
                     responders.push(response_tx);
-                    let result = UmaDb::process_append_request(
+                    let result = process_append_request(
                         events,
                         condition,
                         tracking_info,
-                        mvcc,
+                        mvcc.as_ref(),
                         &mut writer,
                         cancel,
+                        mvcc.page_size,
                     );
                     // Record result and possibly mark abort
                     match &result {
@@ -141,13 +142,14 @@ impl UmaDbRequestHandler {
                                 let ev_len = events.len();
                                 let idx_in_batch = responders.len();
                                 responders.push(response_tx);
-                                let res_next = UmaDb::process_append_request(
+                                let res_next = process_append_request(
                                     events,
                                     condition,
                                     tracking_info,
-                                    mvcc,
+                                    mvcc.as_ref(),
                                     &mut writer,
                                     cancel,
+                                    mvcc.page_size,
                                 );
                                 match &res_next {
                                     Ok(_) => results.push(res_next),
