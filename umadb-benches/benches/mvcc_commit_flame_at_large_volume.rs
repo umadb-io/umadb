@@ -1,6 +1,5 @@
 // cargo bench --bench mvcc_commit_flame --features flamegraphs
 
-use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 use umadb_core::db::unconditional_append;
