@@ -24,3 +24,6 @@ tower = "0.5.3"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
+
+[features]
+test-utils = []

@@ -11,7 +11,7 @@ publish = false
 umadb-dcb = { path = "../umadb-dcb", version = "0.6.14"}
 umadb-core = { path = "../umadb-core", version = "0.6.14"}
 umadb-client = { path = "../umadb-client", version = "0.6.14"}
-umadb-server = { path = "../umadb-server", version = "0.6.14"}
+umadb-server = { path = "../umadb-server", version = "0.6.14", features = ["test-utils"]}
 memory-stats = "1.2"
 futures = { workspace = true }
 sysinfo = "0.33"

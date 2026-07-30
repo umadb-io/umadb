@@ -25,7 +25,7 @@ uuid = { version = ">=1.23", features = ["v4"] }
 pyo3-stub-gen = "0.23"
 
 [target.'cfg(not(windows))'.dependencies]
-umadb-runner = { package = "umadb", path = "../umadb", version = "0.6.14" }
+umadb-cli = { package = "umadb", path = "../umadb", version = "0.6.14" }
 
 [features]
 default = ["extension-module"]

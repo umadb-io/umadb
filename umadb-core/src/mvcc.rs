@@ -200,6 +200,10 @@ struct WriterState {
     scratch: Vec<u8>,
 }
 
+pub trait MvccPageReader {
+    fn read_page(&self, page_id: PageID) -> DcbResult<Arc<Page>>;
+}
+
 // Main MVCC structure
 pub struct Mvcc {
     pub pager: Pager,
@@ -610,46 +614,6 @@ impl Mvcc {
         Ok(())
     }
 
-    pub fn read_page(&self, page_id: PageID) -> DcbResult<Arc<Page>> {
-        // Try to get the page from the deserialized page cache.
-        if let Some(ref page_cache) = self.page_cache {
-            if let Some(page) = page_cache.get(&page_id) {
-                return Ok(page);
-            }
-        }
-
-        // Otherwise deserialize from a serialized page.
-        let page = match self.read_method {
-            ReadMethod::Mmap => {
-                let mapped = self.pager.read_page_mmap_slice(page_id)?;
-                if self.verbose {
-                    println!("Read {page_id:?} from mmap, deserializing...");
-                }
-                Page::deserialize(page_id, mapped.as_slice())?
-            }
-            ReadMethod::FileIo => {
-                let page = self.pager.read_page(page_id)?;
-                if self.verbose {
-                    println!("Read {page_id:?} from file, deserializing...");
-                }
-                Page::deserialize(page_id, &page)?
-            }
-        };
-        let page = Arc::new(page);
-
-        // Cache the newly read page.
-        if let Some(ref page_cache) = self.page_cache {
-            page_cache.insert(page_id, Arc::clone(&page));
-        }
-
-        Ok(page)
-    }
-
-    pub fn fsync(&self) -> DcbResult<()> {
-        self.pager.fsync()?;
-        Ok(())
-    }
-
     pub fn reader(&self) -> DcbResult<Reader> {
         // Need to be careful here about time-of-check to time-of-use (TOCTOU).
         loop {
@@ -859,6 +823,52 @@ impl Mvcc {
         }
 
         Ok(())
+    }
+
+    pub fn fsync(&self) -> DcbResult<()> {
+        self.pager.fsync()?;
+        Ok(())
+    }
+
+    pub fn read_page(&self, page_id: PageID) -> DcbResult<Arc<Page>> {
+        // Try to get the page from the deserialized page cache.
+        if let Some(ref page_cache) = self.page_cache {
+            if let Some(page) = page_cache.get(&page_id) {
+                return Ok(page);
+            }
+        }
+
+        // Otherwise deserialize from a serialized page.
+        let page = match self.read_method {
+            ReadMethod::Mmap => {
+                let mapped = self.pager.read_page_mmap_slice(page_id)?;
+                if self.verbose {
+                    println!("Read {page_id:?} from mmap, deserializing...");
+                }
+                Page::deserialize(page_id, mapped.as_slice())?
+            }
+            ReadMethod::FileIo => {
+                let page = self.pager.read_page(page_id)?;
+                if self.verbose {
+                    println!("Read {page_id:?} from file, deserializing...");
+                }
+                Page::deserialize(page_id, &page)?
+            }
+        };
+        let page = Arc::new(page);
+
+        // Cache the newly read page.
+        if let Some(ref page_cache) = self.page_cache {
+            page_cache.insert(page_id, Arc::clone(&page));
+        }
+
+        Ok(page)
+    }
+}
+
+impl MvccPageReader for Mvcc {
+    fn read_page(&self, page_id: PageID) -> DcbResult<Arc<Page>> {
+        self.read_page(page_id)
     }
 }
 

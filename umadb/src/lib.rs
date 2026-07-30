@@ -2,14 +2,12 @@ use clap::{CommandFactory, FromArgMatches, Parser};
 use std::io::IsTerminal;
 use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
-use umadb_server::{
-    DEFAULT_PAGE_SIZE, ServerTlsOptions, start_server_with_options, uptime as server_uptime,
-};
+use umadb_server::{DEFAULT_PAGE_SIZE, ServerTlsOptions, start_server_with_options, server_uptime};
 pub use umadb_server::{ReadMethod, ServerOptions, StorageOptions};
 
-/// Parses an iterator of string arguments into RunOptions.
+/// Parses an iterator of string arguments into CliOptions.
 /// Exits the process automatically on `--help` or `--version`.
-pub fn parse_args_from<I, T>(args: I) -> Result<RunOptions, Box<dyn std::error::Error>>
+pub fn parse_cli_options<I, T>(args: I) -> Result<CliOptions, Box<dyn std::error::Error>>
 where
     I: IntoIterator<Item = T>,
     T: Into<std::ffi::OsString> + Clone,
@@ -25,10 +23,9 @@ where
     // and gracefully exit the process if `-h` or `-V` are provided.
     let matches = cmd.get_matches_from(args);
     let parsed_args = Args::from_arg_matches(&matches)?;
-    let run_options = RunOptions::from_args(parsed_args);
-    run_options.validate()?;
-
-    Ok(run_options)
+    let options = CliOptions::from_args(parsed_args);
+    options.validate()?;
+    Ok(options)
 }
 
 #[derive(Parser, Debug)]
@@ -88,7 +85,7 @@ pub struct Args {
 }
 
 #[derive(Clone, Debug)]
-pub struct RunOptions {
+pub struct CliOptions {
     pub listen_addr: String,
     pub db_path: String,
     pub tls_cert_path: Option<String>,
@@ -100,7 +97,7 @@ pub struct RunOptions {
     pub zero_fill_pages: bool,
 }
 
-impl Default for RunOptions {
+impl Default for CliOptions {
     fn default() -> Self {
         Self {
             listen_addr: "127.0.0.1:50051".to_string(),
@@ -116,7 +113,7 @@ impl Default for RunOptions {
     }
 }
 
-impl RunOptions {
+impl CliOptions {
     fn from_args(args: Args) -> Self {
         Self {
             listen_addr: args.listen,
@@ -132,7 +129,7 @@ impl RunOptions {
     }
 }
 
-impl RunOptions {
+impl CliOptions {
     fn validate(&self) -> Result<(), Box<dyn std::error::Error>> {
         if self.tls_cert_path.is_some() != self.tls_key_path.is_some() {
             return Err("both tls_cert_path and tls_key_path must be provided for TLS".into());
@@ -163,19 +160,20 @@ impl RunOptions {
     }
 }
 
-pub fn run_blocking(opts: RunOptions) -> Result<(), Box<dyn std::error::Error>> {
-    let _ = server_uptime();
-    let rt = build_runtime()?;
+pub fn start_server_with_cli_options(opts: CliOptions) -> Result<(), Box<dyn std::error::Error>> {
+    let _ = server_uptime();  // Need to access to initialize.
+    let rt = build_server_runtime()?;
 
     print_banner();
 
     rt.block_on(async {
-        let (rx, _shutdown_task) = spawn_shutdown_on_signal();
-        run_async(opts, rx).await
+        let server_options = opts.to_server_options()?;
+        let (shutdown_rx, _) = spawn_shutdown_on_signal();
+        start_server_with_options(server_options, shutdown_rx).await
     })
 }
 
-fn build_runtime() -> Result<tokio::runtime::Runtime, Box<dyn std::error::Error>> {
+fn build_server_runtime() -> Result<tokio::runtime::Runtime, Box<dyn std::error::Error>> {
     Ok(tokio::runtime::Builder::new_multi_thread()
         .worker_threads(
             std::thread::available_parallelism()
@@ -249,24 +247,17 @@ fn spawn_shutdown_on_signal() -> (oneshot::Receiver<()>, JoinHandle<()>) {
     (rx, task)
 }
 
-async fn run_async(
-    opts: RunOptions,
-    shutdown: oneshot::Receiver<()>,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let server_options = opts.to_server_options()?;
-    start_server_with_options(server_options, shutdown).await
-}
 
 #[cfg(test)]
 mod tests {
-    use super::RunOptions;
+    use super::CliOptions;
 
     #[test]
     fn tls_paths_must_be_pairwise() {
-        let options = RunOptions {
+        let options = CliOptions {
             tls_cert_path: Some("cert.pem".to_string()),
             tls_key_path: None,
-            ..RunOptions::default()
+            ..CliOptions::default()
         };
 
         assert!(options.validate().is_err());
@@ -274,6 +265,6 @@ mod tests {
 
     #[test]
     fn default_options_validate() {
-        assert!(RunOptions::default().validate().is_ok());
+        assert!(CliOptions::default().validate().is_ok());
     }
 }

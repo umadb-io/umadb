@@ -1,5 +1,5 @@
 use crate::common::{PageID, Position};
-use crate::mvcc::{Mvcc, Writer};
+use crate::mvcc::{Mvcc, MvccPageReader, Writer};
 use crate::node::Node;
 use crate::page::Page;
 use crate::tags_tree_nodes::{
@@ -591,8 +591,8 @@ pub fn tags_tree_insert(
 }
 
 // Iterator over positions for a given tag in the tags tree
-pub struct TagsTreeIterator<'a> {
-    db: &'a Mvcc,
+pub struct TagsTreeIterator<'a, T: MvccPageReader> {
+    db: &'a T,
     dirty: &'a HashMap<PageID, Page>,
     tags_root_id: PageID,
     tag: TagHash,
@@ -613,9 +613,9 @@ enum IterState {
     Done,
 }
 
-impl<'a> TagsTreeIterator<'a> {
+impl<'a, T: MvccPageReader> TagsTreeIterator<'a, T> {
     pub fn new(
-        db: &'a Mvcc,
+        db: &'a T,
         dirty: &'a HashMap<PageID, Page>,
         tags_root_id: PageID,
         tag: TagHash,
@@ -638,7 +638,7 @@ impl<'a> TagsTreeIterator<'a> {
     }
 }
 
-impl<'a> Iterator for TagsTreeIterator<'a> {
+impl<'a, T: MvccPageReader> Iterator for TagsTreeIterator<'a, T> {
     type Item = Position;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -669,7 +669,7 @@ impl<'a> Iterator for TagsTreeIterator<'a> {
     }
 }
 
-impl<'a> TagsTreeIterator<'a> {
+impl<'a, T: MvccPageReader> TagsTreeIterator<'a, T> {
     // Return next batch (positions from a single page). Returns false if no more batches.
     fn next_batch(&mut self) -> bool {
         let tag = self.tag;

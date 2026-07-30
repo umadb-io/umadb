@@ -3,7 +3,7 @@ use std::path::Path;
 use crate::common::{PageID, Position};
 use crate::events_tree::{EventIterator, event_tree_append_event_value, event_tree_lookup};
 use crate::events_tree_nodes::{EventRecord, EventValue, validate_event_record_for_append};
-use crate::mvcc::{Mvcc, StorageOptions, Writer};
+use crate::mvcc::{Mvcc, MvccPageReader, StorageOptions, Writer};
 use crate::node::Node;
 use crate::page::Page;
 use crate::tags_tree::{TagsTreeIterator, tags_tree_insert};
@@ -148,7 +148,7 @@ impl UmaDb {
         events: Vec<DcbEvent>,
         condition: Option<DcbAppendCondition>,
         tracking_info: Option<TrackingInfo>,
-        mvcc: &Arc<Mvcc>,
+        mvcc: &Mvcc,
         writer: &mut Writer,
         cancel: Option<Arc<std::sync::atomic::AtomicBool>>,
     ) -> DcbResult<u64> {
@@ -248,7 +248,7 @@ impl DcbEventStoreSync for UmaDb {
         backwards: bool,
         limit: Option<u32>,
     ) -> DcbResult<Box<dyn DcbReadResponseSync + Send + 'static>> {
-        let mvcc = &self.mvcc;
+        let mvcc: &Mvcc = self.mvcc.as_ref();
         let reader = mvcc.reader()?;
 
         // Compute last committed position for unlimited head
@@ -636,8 +636,8 @@ fn unconditional_append_event_values(
 
 /// Read events using the tags index by merging per-tag iterators, grouping by position,
 /// filtering by tag and type matches, and then looking up the event record.
-pub fn read_conditional(
-    mvcc: &Mvcc,
+pub fn read_conditional<T: MvccPageReader>(
+    mvcc: &T,
     dirty: &HashMap<PageID, Page>,
     events_tree_root_id: PageID,
     tags_tree_root_id: PageID,
@@ -969,7 +969,7 @@ pub fn tag_to_hash(tag: &str) -> TagHash {
 }
 
 pub fn is_request_idempotent(
-    mvcc: &Arc<Mvcc>,
+    mvcc: &Mvcc,
     dirty: &HashMap<PageID, Page>,
     events_tree_root_id: PageID,
     tags_tree_root_id: PageID,

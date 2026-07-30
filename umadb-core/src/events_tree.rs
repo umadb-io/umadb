@@ -5,7 +5,7 @@ use crate::events_tree_nodes::{
     deserialize_metadata, metadata_serialized_size, serialize_metadata_into,
     validate_event_record_for_append,
 };
-use crate::mvcc::{Mvcc, Writer};
+use crate::mvcc::{Mvcc, MvccPageReader, Writer};
 use crate::node::Node;
 use crate::page::{PAGE_HEADER_SIZE, Page};
 use std::collections::HashMap;
@@ -55,8 +55,8 @@ fn write_overflow_chain(mvcc: &Mvcc, writer: &mut Writer, data: &[u8]) -> DcbRes
     Ok(next_id)
 }
 
-fn read_overflow_chain(
-    mvcc: &Mvcc,
+fn read_overflow_chain<T: MvccPageReader>(
+    mvcc: &T,
     dirty: &HashMap<PageID, Page>,
     mut page_id: PageID,
 ) -> DcbResult<Vec<u8>> {
@@ -75,8 +75,8 @@ fn read_overflow_chain(
     Ok(out)
 }
 
-fn with_page<T, F>(
-    mvcc: &Mvcc,
+fn with_page<T, F, M: MvccPageReader>(
+    mvcc: &M,
     dirty: &HashMap<PageID, Page>,
     page_id: PageID,
     f: F,
@@ -123,8 +123,8 @@ fn data_and_metadata_to_overflow_chain(
     Ok((root_id, metadata_len))
 }
 
-fn materialize_event_value(
-    mvcc: &Mvcc,
+fn materialize_event_value<T: MvccPageReader>(
+    mvcc: &T,
     dirty: &HashMap<PageID, Page>,
     value: &EventValue,
 ) -> DcbResult<EventRecord> {
@@ -491,8 +491,8 @@ pub fn event_tree_append_event_value(
     Ok(())
 }
 
-pub fn event_tree_lookup(
-    mvcc: &Mvcc,
+pub fn event_tree_lookup<T: MvccPageReader>(
+    mvcc: &T,
     dirty: &HashMap<PageID, Page>,
     events_tree_root_id: PageID,
     position: Position,
@@ -540,8 +540,8 @@ pub fn event_tree_lookup(
     }
 }
 
-pub struct EventIterator<'a> {
-    pub mvcc: &'a Mvcc,
+pub struct EventIterator<'a, T: MvccPageReader> {
+    pub mvcc: &'a T,
     pub dirty: &'a HashMap<PageID, Page>,
     pub stack: Vec<(PageID, Option<usize>)>,
     pub page_cache: HashMap<PageID, Arc<Page>>,
@@ -549,9 +549,9 @@ pub struct EventIterator<'a> {
     pub backwards: bool,
 }
 
-impl<'a> EventIterator<'a> {
+impl<'a, T: MvccPageReader> EventIterator<'a, T> {
     pub fn new(
-        mvcc: &'a Mvcc,
+        mvcc: &'a T,
         dirty: &'a HashMap<PageID, Page>,
         events_tree_root_id: PageID,
         start: Option<Position>,
@@ -571,7 +571,7 @@ impl<'a> EventIterator<'a> {
     pub fn next_batch(
         &mut self,
         batch_size: u32,
-        cancel: Option<&std::sync::Arc<std::sync::atomic::AtomicBool>>,
+        cancel: Option<&Arc<std::sync::atomic::AtomicBool>>,
     ) -> DcbResult<Vec<(Position, EventRecord)>> {
         let mut result: Vec<(Position, EventRecord)> = Vec::with_capacity(batch_size as usize);
         if batch_size == 0 {

@@ -1,37 +1,31 @@
 use futures::Stream;
 use std::fs;
-use std::path::Path;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::LazyLock;
-use std::thread;
 use std::time::Instant;
-use tokio::sync::{Semaphore, mpsc, oneshot, watch};
+use tokio::sync::{mpsc, oneshot, watch, Semaphore};
 
 use tokio_stream::wrappers::ReceiverStream;
 use tonic::transport::{Identity, ServerTlsConfig};
-use tonic::{Request, Response, Status, transport::Server};
-use umadb_core::db::{
-    UmaDb, clone_dcb_error, is_integrity_error, is_invalid_argument_error, read_conditional,
-    shadow_for_batch_abort,
-};
+use tonic::{transport::Server, Request, Response, Status};
 pub use umadb_core::mvcc::{
-    DEFAULT_DB_FILENAME, DEFAULT_PAGE_SIZE, Mvcc, ReadMethod, StorageOptions,
+    Mvcc, ReadMethod, StorageOptions, DEFAULT_DB_FILENAME, DEFAULT_PAGE_SIZE,
 };
 use umadb_dcb::{
-    DcbAppendCondition, DcbError, DcbEvent, DcbQuery, DcbResult, DcbSequencedEvent, TrackingInfo,
+    DcbError, DcbEvent, DcbQuery, DcbResult, TrackingInfo,
 };
 
-use tokio::runtime::Runtime;
 use tonic::codegen::http;
 use tonic::transport::server::TcpIncoming;
-use umadb_core::common::Position;
-
 use std::convert::Infallible;
 use std::future::Future;
 use std::task::{Context, Poll};
 use tonic::server::NamedService;
+use handler::UmaDbRequestHandler;
 use umadb_proto::status_from_dcb_error;
+
+mod handler;
 
 // Server options
 #[derive(Clone, Debug)]
@@ -179,7 +173,7 @@ const APPEND_BATCH_MAX_EVENTS: usize = 2000;
 const READ_RESPONSE_BATCH_SIZE_DEFAULT: u32 = 100;
 const READ_RESPONSE_BATCH_SIZE_MAX: u32 = 5000;
 
-pub fn uptime() -> std::time::Duration {
+pub fn server_uptime() -> std::time::Duration {
     START_TIME.elapsed()
 }
 
@@ -201,21 +195,6 @@ fn build_server_builder_with_options(tls: Option<ServerTlsOptions>) -> Server {
     }
 
     server_builder
-}
-
-// Function to start the gRPC server with a shutdown signal
-pub async fn start_server<P: AsRef<Path>>(
-    db_path: P,
-    addr: &str,
-    shutdown_rx: oneshot::Receiver<()>,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let options = ServerOptions {
-        listen_addr: addr.to_string(),
-        tls: None,
-        api_key: None,
-        storage: StorageOptions::default().db_path(db_path.as_ref()),
-    };
-    start_server_with_options(options, shutdown_rx).await
 }
 
 /// Raise the process's open-file limit (`RLIMIT_NOFILE`) soft cap toward the hard
@@ -322,7 +301,9 @@ pub async fn start_server_with_options(
 
     // Create a shutdown broadcast channel for terminating ongoing subscriptions
     let (srv_shutdown_tx, srv_shutdown_rx) = watch::channel(false);
-    let dcb_server = match DcbServer::new(srv_shutdown_rx, options.api_key.clone(), options.storage)
+
+    // Construct the actual gRPC server implementation.
+    let dcb_server = match UmaDbServer::new(srv_shutdown_rx, options.api_key.clone(), options.storage)
     {
         Ok(server) => server,
         Err(err) => {
@@ -372,7 +353,7 @@ pub async fn start_server_with_options(
     let router = builder;
 
     println!("UmaDB is listening on {addr} ({tls_mode_display_str}, {api_key_display_str})");
-    println!("UmaDB started in {:?}", uptime());
+    println!("UmaDB started in {:?}", server_uptime());
     // let incoming = router.server.bind_incoming();
     router
         .serve_with_incoming_shutdown(incoming, async move {
@@ -394,7 +375,7 @@ pub async fn start_server_with_options(
     Ok(())
 }
 
-/// Maximum number of blocking read/subscribe batch-scans allowed to execute
+/// Maximum number of blocking batch read allowed to execute
 /// concurrently on the blocking thread pool.
 ///
 /// This bounds CPU oversubscription so that the (small, fixed) Tokio reactor
@@ -404,10 +385,10 @@ pub async fn start_server_with_options(
 /// actively scanning storage at any instant.
 ///
 /// Defaults to `available_parallelism() * PER_CORE`; overridable via the
-/// `UMADB_READ_SCAN_CONCURRENCY` environment variable.
-fn read_scan_concurrency_limit() -> usize {
+/// `UMADB_READER_THREADS` environment variable.
+fn readers_concurrency_limit() -> usize {
     const PER_CORE: usize = 4;
-    if let Some(n) = std::env::var("UMADB_READ_SCAN_CONCURRENCY")
+    if let Some(n) = std::env::var("UMADB_READER_THREADS")
         .ok()
         .and_then(|s| s.parse::<usize>().ok())
         .filter(|n| *n > 0)
@@ -422,26 +403,27 @@ fn read_scan_concurrency_limit() -> usize {
 }
 
 // gRPC server implementation
-pub struct DcbServer {
-    pub(crate) request_handler: RequestHandler,
+pub struct UmaDbServer {
+    pub(crate) request_handler: UmaDbRequestHandler,
     shutdown_watch_rx: watch::Receiver<bool>,
     api_key: Option<String>,
     // Limits concurrent blocking read/subscribe batch-scans (see `read_scan_concurrency_limit`).
-    read_scan_semaphore: Arc<Semaphore>,
+    readers_semaphore: Arc<Semaphore>,
 }
 
-impl DcbServer {
+impl UmaDbServer {
     pub fn new(
-        shutdown_rx: watch::Receiver<bool>,
+        shutdown_watch_rx: watch::Receiver<bool>,
         api_key: Option<String>,
         storage_options: StorageOptions,
     ) -> DcbResult<Self> {
-        let command_handler = RequestHandler::new(storage_options)?;
+        let request_handler = UmaDbRequestHandler::new(storage_options)?;
+        let readers_semaphore = Arc::new(Semaphore::new(readers_concurrency_limit()));
         Ok(Self {
-            request_handler: command_handler,
-            shutdown_watch_rx: shutdown_rx,
+            request_handler,
+            shutdown_watch_rx,
             api_key,
-            read_scan_semaphore: Arc::new(Semaphore::new(read_scan_concurrency_limit())),
+            readers_semaphore,
         })
     }
 
@@ -468,13 +450,9 @@ impl DcbServer {
 }
 
 #[tonic::async_trait]
-impl umadb_proto::v1::dcb_server::Dcb for DcbServer {
+impl umadb_proto::v1::dcb_server::Dcb for UmaDbServer {
     type ReadStream =
         Pin<Box<dyn Stream<Item = Result<umadb_proto::v1::ReadResponse, Status>> + Send + 'static>>;
-    type SubscribeStream = Pin<
-        Box<dyn Stream<Item = Result<umadb_proto::v1::SubscribeResponse, Status>> + Send + 'static>,
-    >;
-
     async fn read(
         &self,
         request: Request<umadb_proto::v1::ReadRequest>,
@@ -513,7 +491,7 @@ impl umadb_proto::v1::dcb_server::Dcb for DcbServer {
 
         let cancel_signal = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let cancel_signal_for_task = cancel_signal.clone();
-        let read_scan_semaphore = self.read_scan_semaphore.clone();
+        let read_scan_semaphore = self.readers_semaphore.clone();
 
         // Spawn a task to handle the read operation and stream multiple batches
         tokio::spawn(async move {
@@ -687,6 +665,10 @@ impl umadb_proto::v1::dcb_server::Dcb for DcbServer {
         ))
     }
 
+    type SubscribeStream = Pin<
+        Box<dyn Stream<Item = Result<umadb_proto::v1::SubscribeResponse, Status>> + Send + 'static>,
+    >;
+
     async fn subscribe(
         &self,
         request: Request<umadb_proto::v1::SubscribeRequest>,
@@ -713,7 +695,7 @@ impl umadb_proto::v1::dcb_server::Dcb for DcbServer {
 
         let cancel_signal = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let cancel_signal_for_task = cancel_signal.clone();
-        let read_scan_semaphore = self.read_scan_semaphore.clone();
+        let read_scan_semaphore = self.readers_semaphore.clone();
 
         // Spawn a task to handle the subscribe operation and stream multiple batches
         tokio::spawn(async move {
@@ -911,7 +893,7 @@ impl umadb_proto::v1::dcb_server::Dcb for DcbServer {
         // This does a tracking-tree descent (bounded, but real file I/O), so run it off
         // the reactor and gate it with the same semaphore as read scans to bound
         // concurrent blocking storage work. The permit is released as soon as it returns.
-        let permit = match self.read_scan_semaphore.clone().acquire_owned().await {
+        let permit = match self.readers_semaphore.clone().acquire_owned().await {
             Ok(permit) => permit,
             Err(_) => {
                 return Err(status_from_dcb_error(DcbError::InternalError(
@@ -935,352 +917,19 @@ impl umadb_proto::v1::dcb_server::Dcb for DcbServer {
     }
 }
 
-// Message types for communication between the gRPC server and the request handler's writer thread
-enum WriterRequest {
-    Append {
-        events: Vec<DcbEvent>,
-        condition: Option<DcbAppendCondition>,
-        tracking_info: Option<TrackingInfo>,
-        response_tx: oneshot::Sender<DcbResult<u64>>,
-        cancel: Option<Arc<std::sync::atomic::AtomicBool>>,
-    },
-    Shutdown,
-}
-
-// Thread-safe request handler
-struct RequestHandler {
-    mvcc: Arc<Mvcc>,
-    head_watch_tx: watch::Sender<Option<u64>>,
-    writer_request_tx: mpsc::Sender<WriterRequest>,
-}
-
-impl RequestHandler {
-    fn new(storage_options: StorageOptions) -> DcbResult<Self> {
-        // Create a channel for sending requests to the writer thread
-        let (request_tx, mut request_rx) = mpsc::channel::<WriterRequest>(1024);
-
-        // Build a shared Mvcc instance (Arc) upfront so reads can proceed concurrently
-        let mvcc = Arc::new(Mvcc::new(false, storage_options)?);
-
-        // Initialize the head watch channel with the current head.
-        let init_head = {
-            let header_page = mvcc.get_latest_header_page()?;
-            let header = header_page.as_header_node()?;
-            let last = header.next_position.0.saturating_sub(1);
-            if last == 0 { None } else { Some(last) }
-        };
-        let (head_tx, _head_rx) = watch::channel::<Option<u64>>(init_head);
-
-        // Spawn a thread for processing writer requests.
-        let mvcc_for_writer = mvcc.clone();
-        let head_tx_writer = head_tx.clone();
-        thread::spawn(move || {
-            let db = UmaDb::from_arc(mvcc_for_writer);
-
-            // Create a runtime for processing writer requests.
-            let rt = Runtime::new().unwrap();
-
-            // Process writer requests.
-            rt.block_on(async {
-                while let Some(request) = request_rx.recv().await {
-                    match request {
-                        WriterRequest::Append {
-                            events,
-                            condition,
-                            tracking_info,
-                            response_tx,
-                            cancel,
-                        } => {
-                            // Batch processing: drain any immediately available requests
-                            // let mut items: Vec<(Vec<DCBEvent>, Option<DCBAppendCondition>)> =
-                            //     Vec::new();
-
-                            let mut total_events = 0;
-                            total_events += events.len();
-                            // items.push((events, condition));
-
-                            let mvcc = &db.mvcc;
-                            let mut writer = match mvcc.writer() {
-                                Ok(writer) => writer,
-                                Err(err) => {
-                                    let _ = response_tx.send(Err(err));
-                                    continue;
-                                }
-                            };
-
-                            let mut responders: Vec<oneshot::Sender<DcbResult<u64>>> = Vec::new();
-                            let mut results: Vec<DcbResult<u64>> = Vec::new();
-
-                            // Track abort state for non-integrity error within the batch
-                            let mut abort_idx: Option<usize> = None;
-                            let mut abort_err: Option<DcbError> = None;
-
-                            responders.push(response_tx);
-                            let result = UmaDb::process_append_request(
-                                events,
-                                condition,
-                                tracking_info,
-                                mvcc,
-                                &mut writer,
-                                cancel,
-                            );
-                            // Record result and possibly mark abort
-                            match &result {
-                                Ok(_) => results.push(result),
-                                Err(e) if is_integrity_error(e) => {
-                                    results.push(Err(clone_dcb_error(e)))
-                                }
-                                Err(e) if is_invalid_argument_error(e) => {
-                                    results.push(Err(clone_dcb_error(e)))
-                                }
-                                Err(e) => {
-                                    abort_idx = Some(0);
-                                    abort_err = Some(clone_dcb_error(e));
-                                    results.push(Err(clone_dcb_error(e)));
-                                }
-                            }
-
-                            // Drain the channel for more pending writer requests without awaiting.
-                            // Important: do not drop a popped request when hitting the batch limit.
-                            // We stop draining BEFORE attempting to recv if we've reached the limit.
-                            loop {
-                                if total_events >= APPEND_BATCH_MAX_EVENTS {
-                                    break;
-                                }
-                                // Stop draining if we've already decided to abort
-                                if abort_idx.is_some() {
-                                    break;
-                                }
-                                match request_rx.try_recv() {
-                                    Ok(WriterRequest::Append {
-                                        events,
-                                        condition,
-                                        tracking_info,
-                                        response_tx,
-                                        cancel,
-                                    }) => {
-                                        let ev_len = events.len();
-                                        let idx_in_batch = responders.len();
-                                        responders.push(response_tx);
-                                        let res_next = UmaDb::process_append_request(
-                                            events,
-                                            condition,
-                                            tracking_info,
-                                            mvcc,
-                                            &mut writer,
-                                            cancel,
-                                        );
-                                        match &res_next {
-                                            Ok(_) => results.push(res_next),
-                                            Err(e) if is_integrity_error(e) => {
-                                                results.push(Err(clone_dcb_error(e)))
-                                            }
-                                            Err(e) if is_invalid_argument_error(e) => {
-                                                results.push(Err(clone_dcb_error(e)))
-                                            }
-                                            Err(e) => {
-                                                abort_idx = Some(idx_in_batch);
-                                                abort_err = Some(clone_dcb_error(e));
-                                                results.push(Err(clone_dcb_error(e)));
-                                                // Do not accumulate more into the batch
-                                            }
-                                        }
-                                        total_events += ev_len;
-                                    }
-                                    Ok(WriterRequest::Shutdown) => {
-                                        // Push back the shutdown signal by breaking and letting
-                                        // outer loop handle after batch. We'll process the
-                                        // current batch first, then break the outer loop on
-                                        // the next iteration when the channel is empty.
-                                        break;
-                                    }
-                                    Err(mpsc::error::TryRecvError::Empty) => {
-                                        break;
-                                    }
-                                    Err(mpsc::error::TryRecvError::Disconnected) => break,
-                                }
-                            }
-                            // println!("Total events: {total_events}");
-
-                            if let (Some(failed_at), Some(orig_err)) = (abort_idx, abort_err) {
-                                // Abort batch: skip commit; respond to all items in this batch
-                                let shadow = shadow_for_batch_abort(&orig_err);
-                                for (i, tx) in responders.into_iter().enumerate() {
-                                    if i == failed_at {
-                                        let _ = tx.send(Err(clone_dcb_error(&orig_err)));
-                                    } else {
-                                        let _ = tx.send(Err(clone_dcb_error(&shadow)));
-                                    }
-                                }
-                                // Do not update head, since nothing was committed
-                                continue;
-                            }
-
-                            // Single commit at the end of the batch
-                            let batch_result = match mvcc.commit(&mut writer) {
-                                Ok(_) => Ok(results),
-                                Err(err) => Err(err),
-                            };
-
-                            match batch_result {
-                                Ok(results) => {
-                                    // Send individual results back to requesters
-                                    for (res, tx) in results.into_iter().zip(responders.into_iter())
-                                    {
-                                        let _ = tx.send(res);
-                                    }
-                                    // After a successful batch commit, publish the updated head from writer.next_position.
-                                    let last_committed = writer.next_position.0.saturating_sub(1);
-                                    let new_head = if last_committed == 0 {
-                                        None
-                                    } else {
-                                        Some(last_committed)
-                                    };
-                                    let _ = head_tx_writer.send(new_head);
-                                }
-                                Err(e) => {
-                                    // If the batch failed as a whole (e.g., commit failed), propagate the SAME error to all responders.
-                                    // DCBError is not Clone (contains io::Error), so reconstruct a best-effort copy by using its Display text
-                                    // for Io and cloning data for other variants.
-                                    let total = responders.len();
-                                    let mut iter = responders.into_iter();
-                                    for _ in 0..total {
-                                        if let Some(tx) = iter.next() {
-                                            let _ = tx.send(Err(clone_dcb_error(&e)));
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        WriterRequest::Shutdown => {
-                            break;
-                        }
-                    }
-                }
-            });
-        });
-
-        Ok(Self {
-            mvcc,
-            head_watch_tx: head_tx,
-            writer_request_tx: request_tx,
-        })
-    }
-
-    fn read(
-        &self,
-        query: Option<DcbQuery>,
-        start: Option<u64>,
-        backwards: bool,
-        limit: Option<u32>,
-        cancel: Option<Arc<std::sync::atomic::AtomicBool>>,
-    ) -> DcbResult<(Vec<DcbSequencedEvent>, Option<u64>)> {
-        let reader = self.mvcc.reader()?;
-        let db_head = if reader.next_position > Position(1) {
-            Some(reader.next_position.0.saturating_sub(1))
-        } else {
-            None
-        };
-
-        let q = query.unwrap_or(DcbQuery { items: vec![] });
-        let start_position = start.map(Position);
-
-        let events = read_conditional(
-            &self.mvcc,
-            &std::collections::HashMap::new(),
-            reader.events_tree_root_id,
-            reader.tags_tree_root_id,
-            q,
-            start_position,
-            backwards,
-            limit,
-            false,
-            cancel,
-        )
-        .map_err(|e| match e {
-            DcbError::CancelledByUser() => DcbError::CancelledByUser(),
-            _ => DcbError::Corruption(format!("{e}")),
-        })?;
-
-        Ok((events, db_head))
-    }
-
-    fn head(&self) -> DcbResult<Option<u64>> {
-        let header_page = self
-            .mvcc
-            .get_latest_header_page()
-            .map_err(|e| DcbError::Corruption(format!("{e}")))?;
-        let header = header_page
-            .as_header_node()
-            .map_err(|e| DcbError::Corruption(format!("{e}")))?;
-        let last = header.next_position.0.saturating_sub(1);
-        if last == 0 { Ok(None) } else { Ok(Some(last)) }
-    }
-
-    fn get_tracking_info(&self, source: String) -> DcbResult<Option<u64>> {
-        let db = UmaDb::from_arc(self.mvcc.clone());
-        db.get_tracking_info(&source)
-    }
-
-    pub async fn append(
-        &self,
-        events: Vec<DcbEvent>,
-        condition: Option<DcbAppendCondition>,
-        tracking_info: Option<TrackingInfo>,
-        cancel: Option<Arc<std::sync::atomic::AtomicBool>>,
-    ) -> DcbResult<u64> {
-        // The writer thread is the authoritative enforcer of the append condition and
-        // idempotency (see `UmaDb::process_append_request`), which evaluates the condition
-        // against the writer's snapshot — including events appended earlier in the same
-        // uncommitted batch (`writer.dirty`), which a reader snapshot cannot see.
-        //
-        // We deliberately do NOT pre-check the condition here. The former pre-check ran
-        // blocking storage I/O directly on a Tokio reactor thread, which under high
-        // concurrency starved HTTP/2 keepalive handling (PING/PONG) and caused
-        // `KeepAliveTimedOut` disconnects. It also duplicated work the writer must redo
-        // anyway; its only benefit was advancing the condition's `after` to shorten the
-        // writer's scan, which is negligible when `after` is already near the head.
-        let (response_tx, response_rx) = oneshot::channel();
-
-        self.writer_request_tx
-            .send(WriterRequest::Append {
-                events,
-                condition,
-                tracking_info,
-                response_tx,
-                cancel,
-            })
-            .await
-            .map_err(|_| {
-                DcbError::Io(std::io::Error::other(
-                    "failed to send append request to EventStore thread",
-                ))
-            })?;
-
-        response_rx.await.map_err(|_| {
-            DcbError::Io(std::io::Error::other(
-                "failed to receive append response from EventStore thread",
-            ))
-        })?
-    }
-
-    fn watch_head(&self) -> watch::Receiver<Option<u64>> {
-        self.head_watch_tx.subscribe()
-    }
-
-    #[allow(dead_code)]
-    async fn shutdown(&self) {
-        let _ = self.writer_request_tx.send(WriterRequest::Shutdown).await;
-    }
-}
-
-// Clone implementation for EventStoreHandle
-impl Clone for RequestHandler {
-    fn clone(&self) -> Self {
-        Self {
-            mvcc: self.mvcc.clone(),
-            head_watch_tx: self.head_watch_tx.clone(),
-            writer_request_tx: self.writer_request_tx.clone(),
-        }
-    }
+// Function to start the gRPC server with a shutdown signal
+// - this is only used in tests and benchmarks
+#[cfg(any(test, feature = "test-utils"))]
+pub async fn start_server<P: AsRef<std::path::Path>>(
+    db_path: P,
+    addr: &str,
+    shutdown_rx: oneshot::Receiver<()>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let options = ServerOptions {
+        listen_addr: addr.to_string(),
+        tls: None,
+        api_key: None,
+        storage: StorageOptions::default().db_path(db_path.as_ref()),
+    };
+    start_server_with_options(options, shutdown_rx).await
 }
