@@ -32,6 +32,7 @@ async fn connect_async_with_retry(addr_http: String) -> AsyncUmaDbClient {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[serial]
 async fn grpc_async_streams_large_reads_total_count() {
     // Arrange: start a gRPC server backed by a temporary directory
     let temp_dir = tempfile::tempdir().unwrap();
@@ -291,6 +292,7 @@ async fn grpc_async_subscription_catch_up_and_continue() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[serial]
 async fn grpc_async_stream_catch_up_and_continue() {
     let temp_dir = tempfile::tempdir().unwrap();
     let db_path = temp_dir.path().to_path_buf();
