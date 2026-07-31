@@ -144,7 +144,7 @@ pub fn writer_thread_pipelining(
                     let mut abort_err = None;
 
                     let result = process_append_request(
-                        events, condition, tracking_info, &snapshot, &mut active_writer, cancel, mvcc.page_size,
+                        events, condition, tracking_info, &snapshot, &mut active_writer, cancel,
                     );
 
                     match &result {
@@ -172,7 +172,7 @@ pub fn writer_thread_pipelining(
                                 responders.push(response_tx);
 
                                 let res_next = process_append_request(
-                                    events, condition, tracking_info, &snapshot, &mut active_writer, cancel, mvcc.page_size,
+                                    events, condition, tracking_info, &snapshot, &mut active_writer, cancel,
                                 );
 
                                 match &res_next {

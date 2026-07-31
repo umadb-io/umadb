@@ -22,7 +22,6 @@ pub fn tags_tree_insert<T: MvccSnapshot>(
     writer: &mut Writer,
     tag: TagHash,
     pos: Position,
-    page_size: usize,
 ) -> DcbResult<()> {
     // let verbose = mvcc.verbose;
     let verbose = false;
@@ -186,6 +185,7 @@ pub fn tags_tree_insert<T: MvccSnapshot>(
             // Insert into leaf and check overflow
             let mut split_info: Option<(Position, PageID)> = None; // (promoted_key, new_right_page_id)
             {
+                let page_size = writer.page_size;
                 let leaf_page = writer.get_mut_dirty(dirty_leaf_id)?;
                 match &mut leaf_page.node {
                     Node::TagLeaf(tleaf) => {
@@ -261,6 +261,7 @@ pub fn tags_tree_insert<T: MvccSnapshot>(
                 }
 
                 // Now check for internal overflow and split if needed
+                let page_size = writer.page_size;
                 let parent_page = writer.get_mut_dirty(dirty_parent_id)?;
                 let needs_split = parent_page.calc_serialized_size() > page_size;
                 if needs_split {
@@ -337,7 +338,7 @@ pub fn tags_tree_insert<T: MvccSnapshot>(
             .calc_serialized_size();
         // Start per-tag tree if the leaf page would overflow and
         // the tag's inline positions occupy more than half the page.
-        if sz > page_size && inline_positions_len * 8 * 2 > page_size {
+        if sz > writer.page_size && inline_positions_len * 8 * 2 > writer.page_size {
             if verbose {
                 println!("Migrating inline positions to per-tag TagLeafNode for index {i}",);
             }
@@ -362,7 +363,7 @@ pub fn tags_tree_insert<T: MvccSnapshot>(
                 //     positions: pos_vec.clone(),
                 // }
                 // .calc_serialized_size();
-                if page_bytes <= page_size {
+                if page_bytes <= writer.page_size {
                     let tag_leaf_id = writer.alloc_page_id();
                     let tag_leaf_page = Page::new(tag_leaf_id, Node::TagLeaf(new_tag_leaf_node));
                     writer.insert_dirty(tag_leaf_page)?;
@@ -383,7 +384,7 @@ pub fn tags_tree_insert<T: MvccSnapshot>(
                     })?;
                     let left_bytes =
                         crate::page::PAGE_HEADER_SIZE + new_tag_leaf_node.calc_serialized_size();
-                    if left_bytes > page_size {
+                    if left_bytes > writer.page_size {
                         return Err(DcbError::DatabaseCorrupted(
                             "Recursive per-tag split not implemented".to_string(),
                         ));
@@ -435,7 +436,7 @@ pub fn tags_tree_insert<T: MvccSnapshot>(
     // Check if leaf overflows
     let needs_split = {
         let page = writer.get_mut_dirty(dirty_leaf_page_id)?;
-        page.calc_serialized_size() > page_size
+        page.calc_serialized_size() > writer.page_size
     };
     if needs_split {
         let leaf_page = writer.get_mut_dirty(dirty_leaf_page_id)?;
@@ -477,6 +478,7 @@ pub fn tags_tree_insert<T: MvccSnapshot>(
             None
         };
 
+        let page_size = writer.page_size;
         let parent_page = writer.get_mut_dirty(dirty_parent_page_id)?;
         // First, apply child replacement if needed
         if let Node::TagsInternal(internal) = &mut parent_page.node {
@@ -973,7 +975,7 @@ mod tests {
         let mut writer = db.writer().unwrap();
         let tag = th(10);
         let pos = writer.issue_position();
-        tags_tree_insert(&db, &mut writer, tag, pos, db.page_size).unwrap();
+        tags_tree_insert(&db, &mut writer, tag, pos).unwrap();
         db.commit(&mut writer).unwrap();
 
         let writer = db.writer().unwrap();
@@ -997,7 +999,7 @@ mod tests {
         let tags = [30u64, 10, 20, 20, 15];
         for &n in &tags {
             let pos = writer.issue_position();
-            tags_tree_insert(&db, &mut writer, th(n), pos, db.page_size).unwrap();
+            tags_tree_insert(&db, &mut writer, th(n), pos).unwrap();
         }
         // Verify sorted order and duplicate handling in leaf
         let page = writer.get_page_ref(&db, writer.tags_tree_root_id).unwrap();
@@ -1029,12 +1031,12 @@ mod tests {
         let mut writer = db.writer().unwrap();
         let t1 = th(42);
         let p1 = writer.issue_position();
-        tags_tree_insert(&db, &mut writer, t1, p1, db.page_size).unwrap();
+        tags_tree_insert(&db, &mut writer, t1, p1).unwrap();
         let p2 = writer.issue_position();
-        tags_tree_insert(&db, &mut writer, t1, p2, db.page_size).unwrap();
+        tags_tree_insert(&db, &mut writer, t1, p2).unwrap();
         let t2 = th(7);
         let p3 = writer.issue_position();
-        tags_tree_insert(&db, &mut writer, t2, p3, db.page_size).unwrap();
+        tags_tree_insert(&db, &mut writer, t2, p3).unwrap();
         db.commit(&mut writer).unwrap();
 
         let reader = db.reader().unwrap();
@@ -1067,7 +1069,7 @@ mod tests {
             appended.push((tag, position));
 
             // Insert the pair into the tags tree
-            tags_tree_insert(&db, &mut writer, tag, position, db.page_size).unwrap();
+            tags_tree_insert(&db, &mut writer, tag, position).unwrap();
 
             // Check if we've split the leaf
             let root_page = writer.dirty.get(&writer.tags_tree_root_id).unwrap();
@@ -1142,7 +1144,7 @@ mod tests {
             appended.push((tag, position));
 
             // Insert the pair into the tags tree
-            tags_tree_insert(&db, &mut writer, tag, position, db.page_size).unwrap();
+            tags_tree_insert(&db, &mut writer, tag, position).unwrap();
 
             // Check if we've split an internal node: root is internal and its first child is also internal
             let root_page = writer.dirty.get(&writer.tags_tree_root_id).unwrap();
@@ -1240,7 +1242,7 @@ mod tests {
             appended.push((tag, position));
 
             // Insert the pair into the tags tree
-            tags_tree_insert(&db, &mut writer, tag, position, db.page_size).unwrap();
+            tags_tree_insert(&db, &mut writer, tag, position).unwrap();
 
             // Check if the root is an internal node and its first child is also internal
             let root_page = writer.dirty.get(&writer.tags_tree_root_id).unwrap();
@@ -1332,7 +1334,7 @@ mod tests {
         // 30 positions will exceed: header(9) + node(20 + 8P) > 256 when P >= 29
         for _ in 0..30 {
             let p = writer.issue_position();
-            tags_tree_insert(&db, &mut writer, tag, p, db.page_size).unwrap();
+            tags_tree_insert(&db, &mut writer, tag, p).unwrap();
             inserted.push(p);
         }
         // Root should still be a TagsLeaf containing the tag key
@@ -1386,7 +1388,7 @@ mod tests {
         for _ in 0..30 {
             let mut writer = db.writer().unwrap();
             let p = writer.issue_position();
-            tags_tree_insert(&db, &mut writer, tag, p, db.page_size).unwrap();
+            tags_tree_insert(&db, &mut writer, tag, p).unwrap();
             db.commit(&mut writer).unwrap();
             inserted.push(p);
         }
@@ -1440,12 +1442,12 @@ mod tests {
         // First, insert enough to migrate inline -> per-tag TagLeaf (30 triggers migration at page size 256)
         for _ in 0..30 {
             let p = writer.issue_position();
-            tags_tree_insert(&db, &mut writer, tag, p, db.page_size).unwrap();
+            tags_tree_insert(&db, &mut writer, tag, p).unwrap();
             inserted.push(p);
         }
         // Next insert should cause per-tag TagLeaf overflow and split to TagInternal
         let last = writer.issue_position();
-        tags_tree_insert(&db, &mut writer, tag, last, db.page_size).unwrap();
+        tags_tree_insert(&db, &mut writer, tag, last).unwrap();
         inserted.push(last);
 
         // Inspect structure in-memory
@@ -1514,14 +1516,14 @@ mod tests {
         for _ in 0..30 {
             let mut writer = db.writer().unwrap();
             let p = writer.issue_position();
-            tags_tree_insert(&db, &mut writer, tag, p, db.page_size).unwrap();
+            tags_tree_insert(&db, &mut writer, tag, p).unwrap();
             db.commit(&mut writer).unwrap();
             inserted.push(p);
         }
         // Next insert should cause per-tag TagLeaf overflow and split to TagInternal
         let mut writer = db.writer().unwrap();
         let last = writer.issue_position();
-        tags_tree_insert(&db, &mut writer, tag, last, db.page_size).unwrap();
+        tags_tree_insert(&db, &mut writer, tag, last).unwrap();
         inserted.push(last);
         db.commit(&mut writer).unwrap();
 
@@ -1592,7 +1594,7 @@ mod tests {
         for _ in 0..31 {
             // 30 to migrate, +1 to split TagLeaf
             let p = writer.issue_position();
-            tags_tree_insert(&db, &mut writer, tag, p, db.page_size).unwrap();
+            tags_tree_insert(&db, &mut writer, tag, p).unwrap();
             inserted.push(p);
         }
 
@@ -1634,7 +1636,7 @@ mod tests {
 
             // Insert another position and continue
             let p = writer.issue_position();
-            tags_tree_insert(&db, &mut writer, tag, p, db.page_size).unwrap();
+            tags_tree_insert(&db, &mut writer, tag, p).unwrap();
             inserted.push(p);
 
             safety -= 1;
@@ -1666,7 +1668,7 @@ mod tests {
             // 30 to migrate, +1 to split TagLeaf
             let mut writer = db.writer().unwrap();
             let p = writer.issue_position();
-            tags_tree_insert(&db, &mut writer, tag, p, db.page_size).unwrap();
+            tags_tree_insert(&db, &mut writer, tag, p).unwrap();
             db.commit(&mut writer).unwrap();
             inserted.push(p);
         }
@@ -1709,7 +1711,7 @@ mod tests {
 
             // Insert another position and continue
             let p = writer.issue_position();
-            tags_tree_insert(&db, &mut writer, tag, p, db.page_size).unwrap();
+            tags_tree_insert(&db, &mut writer, tag, p).unwrap();
             inserted.push(p);
             db.commit(&mut writer).unwrap();
 
@@ -1736,7 +1738,7 @@ mod tests {
         let mut inserted: Vec<Position> = Vec::new();
         for _ in 0..5 {
             let p = writer.issue_position();
-            tags_tree_insert(&db, &mut writer, tag, p, db.page_size).unwrap();
+            tags_tree_insert(&db, &mut writer, tag, p).unwrap();
             inserted.push(p);
         }
         db.commit(&mut writer).unwrap();
@@ -1879,7 +1881,7 @@ mod tests {
             let mut writer = db.writer().unwrap();
             for _ in 0..15 {
                 let p = writer.issue_position();
-                tags_tree_insert(&db, &mut writer, tag, p, db.page_size).unwrap();
+                tags_tree_insert(&db, &mut writer, tag, p).unwrap();
                 inserted.push(p);
             }
             db.commit(&mut writer).unwrap();
@@ -1898,7 +1900,7 @@ mod tests {
         {
             let mut writer = db.writer().unwrap();
             let p = writer.issue_position();
-            tags_tree_insert(&db, &mut writer, tag, p, db.page_size).unwrap();
+            tags_tree_insert(&db, &mut writer, tag, p).unwrap();
             inserted.push(p);
             db.commit(&mut writer).unwrap();
         }
@@ -1979,7 +1981,7 @@ mod tests {
     //     {
     //         let mut writer = db.writer().unwrap();
     //         for i in 0..30 {
-    //             tags_tree_insert(&db, &mut writer, tag, Position(i), db.page_size).unwrap();
+    //             tags_tree_insert(&db, &mut writer, tag, Position(i)).unwrap();
     //         }
     //         db.commit(&mut writer).unwrap();
     //     }
@@ -1992,7 +1994,7 @@ mod tests {
     //     {
     //         let mut writer = db.writer().unwrap();
     //         println!("PT root before insert: {:?}", get_pt_root_id(&db, tag));
-    //         tags_tree_insert(&db, &mut writer, tag, Position(100), db.page_size).unwrap();
+    //         tags_tree_insert(&db, &mut writer, tag, Position(100)).unwrap();
     //         let pt_root_during = get_pt_root_id_from_writer(&db, &mut writer, tag);
     //         println!("PT root during insert: {:?}", pt_root_during);
     //         // Verify replacement_info was actually used
@@ -2007,7 +2009,7 @@ mod tests {
     //     // This time, the PT root is already in the main tree, but it's "clean" again after commit.
     //     {
     //         let mut writer = db.writer().unwrap();
-    //         tags_tree_insert(&db, &mut writer, tag, Position(200), db.page_size).unwrap();
+    //         tags_tree_insert(&db, &mut writer, tag, Position(200)).unwrap();
     //         db.commit(&mut writer).unwrap();
     //     }
     //
@@ -2033,7 +2035,7 @@ mod tests {
     //             let tag = th(n);
     //             hint::black_box(tag);
     //             hint::black_box(pos);
-    //             tags_tree_insert(&db, &mut writer, tag, pos, db.page_size).unwrap();
+    //             tags_tree_insert(&db, &mut writer, tag, pos).unwrap();
     //         }
     //         let insert_elapsed = start_insert.elapsed();
     //         let start_commit = Instant::now();
@@ -2075,7 +2077,7 @@ mod tests {
     //         for _ in 0..(size as u64) {
     //             let pos = writer.issue_position();
     //             hint::black_box(pos);
-    //             tags_tree_insert(&db, &mut writer, tag, pos, db.page_size).unwrap();
+    //             tags_tree_insert(&db, &mut writer, tag, pos).unwrap();
     //         }
     //         let insert_elapsed = start_insert.elapsed();
     //         let start_commit = Instant::now();

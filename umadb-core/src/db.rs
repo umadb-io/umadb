@@ -103,7 +103,7 @@ impl UmaDb {
                 break;
             }
             let res =
-                process_append_request(events, condition, tracking, mvcc.as_ref(), &mut writer, None, mvcc.page_size);
+                process_append_request(events, condition, tracking, mvcc.as_ref(), &mut writer, None);
             match &res {
                 Ok(_) => results.push(res),
                 Err(e) if is_integrity_error(e) => results.push(Err(clone_dcb_error(e))),
@@ -216,7 +216,7 @@ impl DcbEventStoreSync for UmaDb {
         let mvcc = &self.mvcc;
         let mut writer = mvcc.writer()?;
         let result =
-            process_append_request(events, condition, tracking_info, mvcc.as_ref(), &mut writer, None, mvcc.page_size);
+            process_append_request(events, condition, tracking_info, mvcc.as_ref(), &mut writer, None);
         if result.is_ok() {
             mvcc.commit(&mut writer)?;
         }
@@ -230,7 +230,7 @@ struct ReadResponse {
 }
 
 /// Ensure tracking constraint and update/insert the position into leaf without splitting.
-fn tracking_upsert<T: MvccSnapshot>(mvcc: &T, writer: &mut Writer, source: &str, pos: Position, page_size: usize) -> DcbResult<()> {
+fn tracking_upsert<T: MvccSnapshot>(mvcc: &T, writer: &mut Writer, source: &str, pos: Position) -> DcbResult<()> {
     // Enforce maximum key length (1-byte length field in tracking nodes)
     let key_len = source.len();
     if key_len > u8::MAX as usize {
@@ -310,6 +310,7 @@ fn tracking_upsert<T: MvccSnapshot>(mvcc: &T, writer: &mut Writer, source: &str,
 
     // Insert/update in the leaf
     {
+        let page_size = writer.page_size;
         let leaf_page = writer.get_mut_dirty(dirty_leaf_id)?;
         // First, insert/update within a limited scope to end the mutable borrow before size checks
         {
@@ -389,7 +390,7 @@ fn tracking_upsert<T: MvccSnapshot>(mvcc: &T, writer: &mut Writer, source: &str,
                     ));
                 };
                 internal.insert_promoted_at(child_idx, prom_key, new_child_id);
-                need_split = parent_page.calc_serialized_size() > page_size;
+                need_split = parent_page.calc_serialized_size() > writer.page_size;
             }
             if need_split {
                 // Reborrow mutably to perform the split
@@ -474,7 +475,6 @@ fn unconditional_append_event_values<T: MvccSnapshot>(
     mvcc: &T,
     writer: &mut Writer,
     all_event_values_and_size_diffs: Vec<((EventValue, usize), Option<(EventValue, usize)>)>,
-    page_size: usize,
 ) -> Result<u64, DcbError> {
     let mut last_pos_u64: u64 = 0;
 
@@ -489,7 +489,7 @@ fn unconditional_append_event_values<T: MvccSnapshot>(
             EventValue::Inline(record) => {
                 for tag in record.tags.iter() {
                     let tag_hash: TagHash = tag_to_hash(tag);
-                    tags_tree_insert(mvcc, writer, tag_hash, position, page_size)?;
+                    tags_tree_insert(mvcc, writer, tag_hash, position)?;
                 }
             }
             EventValue::Overflow { .. } => {
@@ -504,7 +504,6 @@ fn unconditional_append_event_values<T: MvccSnapshot>(
                 overflow_value_and_size_diff,
             ),
             position,
-            page_size,
         )?;
     }
 
@@ -806,7 +805,6 @@ pub fn process_append_request<T: MvccSnapshot>(
     mvcc: &T,
     writer: &mut Writer,
     cancel: Option<Arc<std::sync::atomic::AtomicBool>>,
-    page_size: usize,
 ) -> DcbResult<u64> {
     // Check condition using read_conditional (limit 1), starting after the provided position
     if let Some(cond) = condition {
@@ -872,7 +870,7 @@ pub fn process_append_request<T: MvccSnapshot>(
             metadata: ev.metadata,
         };
         all_event_values_and_size_diffs
-            .push(validate_event_record_for_append(page_size, record)?);
+            .push(validate_event_record_for_append(writer.page_size, record)?);
     }
 
     // If tracking is provided for this item, enforce monotonicity and update tracking leaf under same writer
@@ -882,7 +880,6 @@ pub fn process_append_request<T: MvccSnapshot>(
             writer,
             &tracking_info.source,
             Position(tracking_info.position),
-            page_size,
         )?;
     }
 
@@ -890,7 +887,7 @@ pub fn process_append_request<T: MvccSnapshot>(
     if all_event_values_and_size_diffs.is_empty() {
         return Ok(0);
     }
-    match unconditional_append_event_values(mvcc, writer, all_event_values_and_size_diffs, page_size) {
+    match unconditional_append_event_values(mvcc, writer, all_event_values_and_size_diffs) {
         Ok(last) => Ok(last),
         Err(e) => Err(e),
     }
@@ -1087,7 +1084,7 @@ pub fn unconditional_append(
         all_event_values_and_size_diffs.push(event_values_and_diffs);
     }
 
-    unconditional_append_event_values(mvcc, writer, all_event_values_and_size_diffs, mvcc.page_size)
+    unconditional_append_event_values(mvcc, writer, all_event_values_and_size_diffs)
 }
 
 #[cfg(test)]

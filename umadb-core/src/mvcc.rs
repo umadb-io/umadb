@@ -735,6 +735,8 @@ impl Mvcc {
             header_node.tracking_root_page_id,
             header_node.next_position,
             self.verbose,
+            self.page_size,
+            self.max_node_size,
         );
 
         if self.verbose {
@@ -1075,6 +1077,8 @@ pub struct Writer {
     pub dirty: HashMap<PageID, Page>,
     pub reused_page_ids: VecDeque<(PageID, Tsn)>,
     pub verbose: bool,
+    pub page_size: usize,
+    pub max_node_size: usize,
 }
 
 impl Writer {
@@ -1088,6 +1092,8 @@ impl Writer {
         tracking_tree_root_id: PageID,
         next_position: Position,
         verbose: bool,
+        page_size: usize,
+        max_node_size: usize,
     ) -> Self {
         Self {
             header_page_id,
@@ -1104,6 +1110,8 @@ impl Writer {
             dirty: HashMap::new(),
             reused_page_ids: VecDeque::new(),
             verbose,
+            page_size,
+            max_node_size,
         }
     }
 
@@ -1381,12 +1389,12 @@ impl Writer {
         Ok(())
     }
 
-    pub fn process_freed_page_ids<T: MvccSnapshot>(&mut self, mvcc: &T, max_node_size: usize, page_size: usize) -> DcbResult<()> {
+    pub fn process_freed_page_ids<T: MvccSnapshot>(&mut self, snapshot: &T, max_node_size: usize, page_size: usize) -> DcbResult<()> {
         while !self.reused_page_ids.is_empty() || !self.freed_page_ids.is_empty() {
             // Remove reused page IDs from free lists.
             while let Some((reused_page_id, tsn)) = self.reused_page_ids.pop_front() {
                 // Remove the reused page ID from the freed list tree
-                self.remove_free_page_id(mvcc, tsn, reused_page_id)?;
+                self.remove_free_page_id(snapshot, tsn, reused_page_id)?;
             }
 
             // Process freed page IDs
@@ -1395,7 +1403,7 @@ impl Writer {
                 self.dirty.remove(&freed_page_id);
 
                 // Insert the page ID in the freed list tree
-                self.insert_freed_page_id(mvcc, self.tsn, freed_page_id, max_node_size, page_size)?;
+                self.insert_freed_page_id(snapshot, self.tsn, freed_page_id, max_node_size, page_size)?;
             }
         }
         Ok(())
@@ -1404,7 +1412,7 @@ impl Writer {
     // Free list tree methods
     pub fn insert_freed_page_id<T: MvccSnapshot>(
         &mut self,
-        mvcc: &T,
+        snapshot: &T,
         tsn: Tsn,
         freed_page_id: PageID,
         max_node_size: usize,
@@ -1422,7 +1430,7 @@ impl Writer {
         let mut stack: Vec<PageID> = Vec::new();
         let plan: FreePageIDInsertStrategy;
         loop {
-            let current_page_ref = self.get_page_ref(mvcc, current_page_id)?;
+            let current_page_ref = self.get_page_ref(snapshot, current_page_id)?;
             if let Node::FreeListLeaf(leaf_node) = &current_page_ref.node {
                 let len_keys = leaf_node.keys.len();
                 if len_keys == 0 {
@@ -1494,7 +1502,7 @@ impl Writer {
         match plan {
             FreePageIDInsertStrategy::PushPageIdOntoExistingTsnSubtree => {
                 // Read leaf immutably to find last_idx and current root_id
-                let leaf_snapshot = { self.get_page_ref(mvcc, dirty_leaf_page_id)? };
+                let leaf_snapshot = { self.get_page_ref(snapshot, dirty_leaf_page_id)? };
                 let Node::FreeListLeaf(leaf_ro) = &leaf_snapshot.node else {
                     return Err(DcbError::DatabaseCorrupted(
                         "Expected FreeListLeaf node".to_string(),
@@ -1507,7 +1515,7 @@ impl Writer {
                         "Expected TSN-subtree root_id to be set".to_string(),
                     ));
                 }
-                let new_root_id = self.tsn_subtree_insert(mvcc, tsn_root_id, freed_page_id, max_node_size)?;
+                let new_root_id = self.tsn_subtree_insert(snapshot, tsn_root_id, freed_page_id, max_node_size)?;
                 if new_root_id != tsn_root_id {
                     // Now mutate the freelist leaf to update root_id
                     let dirty_leaf_page = self.get_mut_dirty(dirty_leaf_page_id)?;
@@ -1521,7 +1529,7 @@ impl Writer {
             }
             FreePageIDInsertStrategy::MoveTsnToNewTsnSubtree => {
                 // Read leaf immutably to capture inline page_ids
-                let leaf_snapshot = { self.get_page_ref(mvcc, dirty_leaf_page_id)? };
+                let leaf_snapshot = { self.get_page_ref(snapshot, dirty_leaf_page_id)? };
                 let Node::FreeListLeaf(leaf_ro) = &leaf_snapshot.node else {
                     return Err(DcbError::DatabaseCorrupted(
                         "Expected FreeListLeaf node".to_string(),
@@ -1562,7 +1570,7 @@ impl Writer {
                 let mut tsn_root_id = tsn_leaf_id;
                 // Insert remaining ids via general insert, root may change
                 for pid in page_ids.into_iter().filter(|p| !initial_ids.contains(p)) {
-                    tsn_root_id = self.tsn_subtree_insert(mvcc, tsn_root_id, pid, max_node_size)?;
+                    tsn_root_id = self.tsn_subtree_insert(snapshot, tsn_root_id, pid, max_node_size)?;
                 }
                 // Now mutate the freelist leaf to clear inline and set root
                 let dirty_leaf_page = self.get_mut_dirty(dirty_leaf_page_id)?;
@@ -3298,6 +3306,8 @@ mod tests {
                 header_node.tracking_root_page_id,
                 header_node.next_position,
                 VERBOSE,
+                db.page_size,
+                db.max_node_size,
             );
 
             // Check the free list tree root ID
@@ -3447,6 +3457,8 @@ mod tests {
                 header_node.tracking_root_page_id,
                 header_node.next_position,
                 VERBOSE,
+                db.page_size,
+                db.max_node_size,
             );
 
             let mut has_split_leaf = false;
@@ -3768,6 +3780,8 @@ mod tests {
                     header_node.tracking_root_page_id,
                     header_node.next_position,
                     VERBOSE,
+                    db.page_size,
+                    db.max_node_size,
                 );
 
                 // Remember the initial root ID
@@ -3873,6 +3887,8 @@ mod tests {
                 header_node.tracking_root_page_id,
                 header_node.next_position,
                 VERBOSE,
+                db.page_size,
+                db.max_node_size,
             );
 
             // Start with TSN 100
@@ -4095,6 +4111,8 @@ mod tests {
                     header_node.tracking_root_page_id,
                     header_node.next_position,
                     VERBOSE,
+                    db.page_size,
+                    db.max_node_size,
                 );
 
                 // Remember the initial root ID

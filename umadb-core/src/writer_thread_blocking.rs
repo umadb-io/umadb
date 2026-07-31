@@ -50,7 +50,6 @@ pub fn writer_thread_blocking(mvcc: Arc<Mvcc>, mut request_rx: mpsc::Receiver<Wr
                     mvcc.as_ref(),
                     &mut writer,
                     cancel,
-                    mvcc.page_size,
                 );
                 // Record result and possibly mark abort
                 match &result {
@@ -97,7 +96,6 @@ pub fn writer_thread_blocking(mvcc: Arc<Mvcc>, mut request_rx: mpsc::Receiver<Wr
                                 mvcc.as_ref(),
                                 &mut writer,
                                 cancel,
-                                mvcc.page_size,
                             );
                             match &res_next {
                                 Ok(_) => results.push(res_next),
