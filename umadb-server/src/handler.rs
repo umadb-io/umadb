@@ -58,9 +58,10 @@ impl UmaDbRequestHandler {
     }
 
     fn writer_thread(mvcc: Arc<Mvcc>, mut request_rx: Receiver<WriterThreadRequest>, head_watch_tx: Sender<Option<u64>>) {
-        let db = UmaDb::from_arc(mvcc);
-
         // Process writer requests.
+        let writer_snapshot = mvcc.as_ref();
+        // let previous_batch_result: Option<()>;
+
         while let Some(request) = request_rx.blocking_recv() {
             match request {
                 WriterThreadRequest::Append {
@@ -78,7 +79,6 @@ impl UmaDbRequestHandler {
                     total_events += events.len();
                     // items.push((events, condition));
 
-                    let mvcc = &db.mvcc;
                     let mut writer = match mvcc.writer() {
                         Ok(writer) => writer,
                         Err(err) => {
@@ -99,7 +99,7 @@ impl UmaDbRequestHandler {
                         events,
                         condition,
                         tracking_info,
-                        mvcc.as_ref(),
+                        writer_snapshot,
                         &mut writer,
                         cancel,
                         mvcc.page_size,
@@ -146,7 +146,7 @@ impl UmaDbRequestHandler {
                                     events,
                                     condition,
                                     tracking_info,
-                                    mvcc.as_ref(),
+                                    writer_snapshot,
                                     &mut writer,
                                     cancel,
                                     mvcc.page_size,
@@ -197,11 +197,29 @@ impl UmaDbRequestHandler {
                         continue;
                     }
 
-                    // Single commit at the end of the batch
-                    let batch_result = match mvcc.commit(&mut writer) {
-                        Ok(_) => Ok(results),
+                    let batch_result = match writer.process_freed_page_ids(
+                        writer_snapshot, mvcc.max_node_size, mvcc.page_size
+                    ) {
+                        Ok(_) => {
+                            match mvcc.write_and_fsync(&mut writer) {
+                                Ok(_) => {
+                                    match mvcc.update_page_cache(&mut writer) {
+                                        Ok(_) => Ok(results),
+                                        Err(err) => Err(err),
+                                    }
+                                },
+                                Err(err) => Err(err)
+                            }
+                        },
                         Err(err) => Err(err),
                     };
+
+
+                    // // Single commit at the end of the batch
+                    // let batch_result = match mvcc.commit(&mut writer) {
+                    //     Ok(_) => Ok(results),
+                    //     Err(err) => Err(err),
+                    // };
 
                     match batch_result {
                         Ok(results) => {

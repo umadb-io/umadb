@@ -738,6 +738,81 @@ impl Mvcc {
     //     count
     // }
 
+    pub fn write_and_fsync(&self, writer: &mut Writer) -> DcbResult<()> {
+        // Write all dirty pages (except for the header page) to the file
+        if !writer.dirty.is_empty() {
+            let count = {
+                // let num_dirty = writer.dirty.len();
+                // println!("Number dirty pages: {num_dirty}");
+                // if num_dirty >= 0 {
+                //     self.write_pages_parallel(writer.dirty.values())?
+                // } else {
+                //     self.write_pages(writer.dirty.values())?
+                // }
+                self.write_pages(writer.dirty.values())?
+            };
+            if self.verbose {
+                println!("Wrote {} dirty page(s) to file", count);
+            }
+        }
+
+        // Sync the file to disk
+        self.fsync()?;
+
+        // Mutate the owned header instance and serialize into the pre-allocated buffer
+        let alternate_header_page_id =
+            if writer.header_page_id == HEADER_PAGE_ID_0 {
+                HEADER_PAGE_ID_1
+            } else {
+                HEADER_PAGE_ID_0
+            };
+        self.update_header(
+            alternate_header_page_id,
+            writer.tsn,
+            writer.free_lists_tree_root_id,
+            writer.events_tree_root_id,
+            writer.tags_tree_root_id,
+            writer.tracking_tree_root_id,
+            writer.next_page_id,
+            writer.next_position,
+        )?;
+
+        // Sync the file to disk
+        self.fsync()?;
+
+        if self.verbose {
+            println!("Committed writer with {:?}", writer.tsn);
+        }
+
+        Ok(())
+    }
+
+    pub fn update_page_cache(&self, writer: &mut Writer) -> DcbResult<()> {
+        // Cache the new pages without cloning by draining dirty pages.
+        if let Some(ref page_cache) = self.page_cache {
+            for (page_id, page) in writer.dirty.drain() {
+                page_cache.insert(page_id, Arc::new(page));
+            }
+        } else {
+            writer.dirty.clear();
+        }
+
+        // Cache the header page.
+        // Mutate the owned header instance and serialize into the pre-allocated buffer
+        let alternate_header_page_idx =
+            if writer.header_page_id == HEADER_PAGE_ID_0 {
+                1
+            } else {
+                0
+            };
+        let header_page = self.writer_state.lock().unwrap().headers[alternate_header_page_idx].clone();
+        if let Some(ref page_cache) = self.page_cache {
+            page_cache.insert(header_page.page_id, Arc::new(header_page));
+        }
+
+        Ok(())
+    }
+
     pub fn commit(&self, writer: &mut Writer) -> DcbResult<()> {
         // Process reused and freed page IDs
         if self.verbose {
@@ -745,22 +820,8 @@ impl Mvcc {
             println!("Commiting writer with {:?}", writer.tsn);
         }
 
-        while !writer.reused_page_ids.is_empty() || !writer.freed_page_ids.is_empty() {
-            // Remove reused page IDs from free lists.
-            while let Some((reused_page_id, tsn)) = writer.reused_page_ids.pop_front() {
-                // Remove the reused page ID from the freed list tree
-                writer.remove_free_page_id(self, tsn, reused_page_id)?;
-            }
-
-            // Process freed page IDs
-            while let Some(freed_page_id) = writer.freed_page_ids.pop_front() {
-                // Remove dirty pages that were also freed
-                writer.dirty.remove(&freed_page_id);
-
-                // Insert the page ID in the freed list tree
-                writer.insert_freed_page_id(self, writer.tsn, freed_page_id)?;
-            }
-        }
+        //
+        writer.process_freed_page_ids(self, self.max_node_size, self.page_size)?;
 
         // Write all dirty pages (except for the header page) to the file
         if !writer.dirty.is_empty() {
@@ -869,6 +930,27 @@ impl Mvcc {
 impl MvccSnapshot for Mvcc {
     fn read_page(&self, page_id: PageID) -> DcbResult<Arc<Page>> {
         self.read_page(page_id)
+    }
+}
+
+pub struct WriterSnapshot<'a> {
+    // Fully durable pages.
+    base_mvcc: &'a Mvcc,
+
+    // The dirty pages modified in the previous batch
+    // that haven't been fully committed/fsynced yet.
+    wet_pages: HashMap<PageID, Arc<Page>>,
+}
+
+impl<'a> MvccSnapshot for WriterSnapshot<'a> {
+    fn read_page(&self, page_id: PageID) -> DcbResult<Arc<Page>> {
+        // 1. Check if the writer has modified this page recently
+        if let Some(wet_page) = self.wet_pages.get(&page_id) {
+            return Ok(wet_page.clone());
+        }
+
+        // 2. If not, fall back to the globally committed disk/cache state
+        self.base_mvcc.read_page(page_id)
     }
 }
 
@@ -1183,12 +1265,34 @@ impl Writer {
         Ok(())
     }
 
+    pub fn process_freed_page_ids<T: MvccSnapshot>(&mut self, mvcc: &T, max_node_size: usize, page_size: usize) -> DcbResult<()> {
+        while !self.reused_page_ids.is_empty() || !self.freed_page_ids.is_empty() {
+            // Remove reused page IDs from free lists.
+            while let Some((reused_page_id, tsn)) = self.reused_page_ids.pop_front() {
+                // Remove the reused page ID from the freed list tree
+                self.remove_free_page_id(mvcc, tsn, reused_page_id)?;
+            }
+
+            // Process freed page IDs
+            while let Some(freed_page_id) = self.freed_page_ids.pop_front() {
+                // Remove dirty pages that were also freed
+                self.dirty.remove(&freed_page_id);
+
+                // Insert the page ID in the freed list tree
+                self.insert_freed_page_id(mvcc, self.tsn, freed_page_id, max_node_size, page_size)?;
+            }
+        }
+        Ok(())
+    }
+
     // Free list tree methods
-    pub fn insert_freed_page_id(
+    pub fn insert_freed_page_id<T: MvccSnapshot>(
         &mut self,
-        mvcc: &Mvcc,
+        mvcc: &T,
         tsn: Tsn,
         freed_page_id: PageID,
+        max_node_size: usize,
+        page_size: usize,
     ) -> DcbResult<()> {
         let verbose = self.verbose;
         if verbose {
@@ -1206,7 +1310,7 @@ impl Writer {
             if let Node::FreeListLeaf(leaf_node) = &current_page_ref.node {
                 let len_keys = leaf_node.keys.len();
                 if len_keys == 0 {
-                    if !leaf_node.would_fit_new_tsn_and_page_id(mvcc.max_node_size) {
+                    if !leaf_node.would_fit_new_tsn_and_page_id(max_node_size) {
                         return Err(DcbError::InternalError("Page size too small".to_string()));
                     }
                     plan = FreePageIDInsertStrategy::PushTsnOntoFreeListLeaf;
@@ -1217,7 +1321,7 @@ impl Writer {
                         // Append to the existing last TSN
                         if leaf_node.values[last_idx].root_id != PageID(0) {
                             plan = FreePageIDInsertStrategy::PushPageIdOntoExistingTsnSubtree;
-                        } else if leaf_node.would_fit_new_page_id(mvcc.max_node_size) {
+                        } else if leaf_node.would_fit_new_page_id(max_node_size) {
                             plan = FreePageIDInsertStrategy::PushPageIdOntoFreeListLeaf(last_idx);
                         } else if leaf_node.keys.len() == 1 {
                             plan = FreePageIDInsertStrategy::MoveTsnToNewTsnSubtree;
@@ -1226,7 +1330,7 @@ impl Writer {
                         }
                     } else if tsn > last_key {
                         // New last TSN
-                        if leaf_node.would_fit_new_tsn_and_page_id(mvcc.max_node_size) {
+                        if leaf_node.would_fit_new_tsn_and_page_id(max_node_size) {
                             plan = FreePageIDInsertStrategy::PushTsnOntoFreeListLeaf;
                         } else {
                             plan = FreePageIDInsertStrategy::CreateAndPromoteFreeListLeaf;
@@ -1287,7 +1391,7 @@ impl Writer {
                         "Expected TSN-subtree root_id to be set".to_string(),
                     ));
                 }
-                let new_root_id = self.tsn_subtree_insert(mvcc, tsn_root_id, freed_page_id)?;
+                let new_root_id = self.tsn_subtree_insert(mvcc, tsn_root_id, freed_page_id, max_node_size)?;
                 if new_root_id != tsn_root_id {
                     // Now mutate the freelist leaf to update root_id
                     let dirty_leaf_page = self.get_mut_dirty(dirty_leaf_page_id)?;
@@ -1323,7 +1427,7 @@ impl Writer {
                     let mut candidate = tmp_leaf.clone();
                     candidate.page_ids.push(*pid);
                     let candidate_page = Page::new(PageID(0), Node::FreeListTsnLeaf(candidate));
-                    if candidate_page.calc_serialized_size() <= mvcc.page_size {
+                    if candidate_page.calc_serialized_size() <= page_size {
                         tmp_leaf.page_ids.push(*pid);
                         initial_ids.push(*pid);
                     } else {
@@ -1342,7 +1446,7 @@ impl Writer {
                 let mut tsn_root_id = tsn_leaf_id;
                 // Insert remaining ids via general insert, root may change
                 for pid in page_ids.into_iter().filter(|p| !initial_ids.contains(p)) {
-                    tsn_root_id = self.tsn_subtree_insert(mvcc, tsn_root_id, pid)?;
+                    tsn_root_id = self.tsn_subtree_insert(mvcc, tsn_root_id, pid, max_node_size)?;
                 }
                 // Now mutate the freelist leaf to clear inline and set root
                 let dirty_leaf_page = self.get_mut_dirty(dirty_leaf_page_id)?;
@@ -1505,7 +1609,7 @@ impl Writer {
 
             // Check if the internal page needs splitting
 
-            if dirty_internal_page.calc_serialized_size() > mvcc.page_size {
+            if dirty_internal_page.calc_serialized_size() > page_size {
                 if let Node::FreeListInternal(dirty_internal_node) = &mut dirty_internal_page.node {
                     if verbose {
                         println!("Splitting internal {dirty_page_id:?}...");
@@ -1603,11 +1707,12 @@ impl Writer {
 
     /// Insert a PageID into the TSN-subtree rooted at `root_id`, maintaining sorted order.
     /// Returns the root id (maybe the same or a new root if promoted).
-    fn tsn_subtree_insert(
+    fn tsn_subtree_insert<T: MvccSnapshot>(
         &mut self,
-        mvcc: &Mvcc,
+        mvcc: &T,
         root_id: PageID,
         key: PageID,
+        max_node_size: usize,
     ) -> DcbResult<PageID> {
         let verbose = self.verbose;
         let mut stack: Vec<(PageID, usize)> = Vec::new();
@@ -1654,7 +1759,7 @@ impl Writer {
                 }
                 Err(ins) => {
                     leaf.page_ids.insert(ins, key);
-                    if leaf.calc_serialized_size() <= mvcc.max_node_size {
+                    if leaf.calc_serialized_size() <= max_node_size {
                         return Ok(root_id);
                     }
                     // Split the leaf in half without cloning the entire vector.
@@ -1686,7 +1791,7 @@ impl Writer {
                             // Insert promoted key and child at child_idx
                             parent_node.keys.insert(child_idx, prom_key);
                             parent_node.child_ids.insert(child_idx + 1, prom_right_id);
-                            if parent_node.calc_serialized_size() <= mvcc.max_node_size {
+                            if parent_node.calc_serialized_size() <= max_node_size {
                                 // Fits; continue upward, no further promotion from this parent
                                 current_id = parent_id;
                                 continue;
@@ -1761,9 +1866,9 @@ impl Writer {
         }
     }
 
-    pub fn remove_free_page_id(
+    pub fn remove_free_page_id<T: MvccSnapshot>(
         &mut self,
-        mvcc: &Mvcc,
+        mvcc: &T,
         tsn: Tsn,
         used_page_id: PageID,
     ) -> DcbResult<()> {
@@ -2428,7 +2533,7 @@ mod tests {
             let free_page_id = writer.alloc_page_id();
             assert_eq!(PageID(5), free_page_id);
             writer
-                .insert_freed_page_id(&db, writer.tsn, free_page_id)
+                .insert_freed_page_id(&db, writer.tsn, free_page_id, db.max_node_size, db.page_size)
                 .unwrap();
 
             // Check the dirty page IDs
@@ -2461,7 +2566,7 @@ mod tests {
             let free_page_id = writer.alloc_page_id();
             assert_eq!(PageID(5), free_page_id);
             writer
-                .insert_freed_page_id(&db, writer.tsn, free_page_id)
+                .insert_freed_page_id(&db, writer.tsn, free_page_id, db.max_node_size, db.page_size)
                 .unwrap();
 
             // Check the dirty page IDs
@@ -2494,7 +2599,7 @@ mod tests {
             let free_page_id = writer.alloc_page_id();
             assert_eq!(PageID(5), free_page_id);
             writer
-                .insert_freed_page_id(&db, writer.tsn, free_page_id)
+                .insert_freed_page_id(&db, writer.tsn, free_page_id, db.max_node_size, db.page_size)
                 .unwrap();
 
             // Check the dirty page IDs
@@ -3053,7 +3158,7 @@ mod tests {
         #[test]
         #[serial]
         fn test_insert_freed_page_id_to_empty_leaf_root() {
-            let (_temp_dir, mut db) = construct_mvcc(64);
+            let (_temp_dir, db) = construct_mvcc(64);
 
             // Get latest header
             let header_page = db.get_latest_header_page().unwrap();
@@ -3092,7 +3197,7 @@ mod tests {
             // Insert the allocated page ID in the free list tree
             let current_tsn = writer.tsn;
             writer
-                .insert_freed_page_id(&mut db, current_tsn, page_id)
+                .insert_freed_page_id(&db, current_tsn, page_id, db.max_node_size, db.page_size)
                 .unwrap();
 
             // Check the root page has been CoW-ed
@@ -3126,7 +3231,7 @@ mod tests {
         #[test]
         #[serial]
         fn test_remove_freed_page_id_from_root_leaf_root() {
-            let (_temp_dir, mut db) = construct_mvcc(64);
+            let (_temp_dir, db) = construct_mvcc(64);
 
             // First, insert a page ID
             let mut writer;
@@ -3147,7 +3252,7 @@ mod tests {
                 // Insert the page ID
                 inserted_tsn = writer.tsn;
                 writer
-                    .insert_freed_page_id(&mut db, inserted_tsn, inserted_page_id)
+                    .insert_freed_page_id(&db, inserted_tsn, inserted_page_id, db.max_node_size, db.page_size)
                     .unwrap();
 
                 // Commit the transaction
@@ -3207,7 +3312,7 @@ mod tests {
         #[test]
         #[serial]
         fn test_insert_freed_page_ids_until_split_leaf() {
-            let (_temp_dir, mut db) = construct_mvcc(64);
+            let (_temp_dir, db) = construct_mvcc(64);
 
             // Get latest header
             let header_page = db.get_latest_header_page().unwrap();
@@ -3235,12 +3340,12 @@ mod tests {
             while !has_split_leaf {
                 // Allocate and insert the first page ID
                 let page_id1 = writer.alloc_page_id();
-                writer.insert_freed_page_id(&mut db, tsn, page_id1).unwrap();
+                writer.insert_freed_page_id(&db, tsn, page_id1, db.max_node_size, db.page_size).unwrap();
                 inserted.push((tsn, page_id1));
 
                 // Allocate and insert second page ID
                 let page_id2 = writer.alloc_page_id();
-                writer.insert_freed_page_id(&mut db, tsn, page_id2).unwrap();
+                writer.insert_freed_page_id(&db, tsn, page_id2, db.max_node_size, db.page_size).unwrap();
                 inserted.push((tsn, page_id2));
 
                 // Increment TSN for next iteration
@@ -3349,7 +3454,7 @@ mod tests {
                 // Allocate and insert the first page ID
                 let page_id1 = writer.alloc_page_id();
                 writer
-                    .insert_freed_page_id(&db, writer.tsn, page_id1)
+                    .insert_freed_page_id(&db, writer.tsn, page_id1, db.max_node_size, db.page_size)
                     .unwrap();
                 inserted.push((writer.tsn, page_id1));
 
@@ -3366,7 +3471,7 @@ mod tests {
                     // Allocate and insert second page ID
                     let page_id2 = writer.alloc_page_id();
                     writer
-                        .insert_freed_page_id(&db, writer.tsn, page_id2)
+                        .insert_freed_page_id(&db, writer.tsn, page_id2, db.max_node_size, db.page_size)
                         .unwrap();
                     inserted.push((writer.tsn, page_id2));
 
@@ -3386,7 +3491,7 @@ mod tests {
             let mut writer = db.writer().unwrap();
             let page_id3 = writer.alloc_page_id();
             writer
-                .insert_freed_page_id(&db, writer.tsn, page_id3)
+                .insert_freed_page_id(&db, writer.tsn, page_id3, db.max_node_size, db.page_size)
                 .unwrap();
             db.commit(&mut writer).unwrap();
             inserted.push((writer.tsn, page_id3));
@@ -3394,7 +3499,7 @@ mod tests {
             writer = db.writer().unwrap();
             let page_id4 = writer.alloc_page_id();
             writer
-                .insert_freed_page_id(&db, writer.tsn, page_id4)
+                .insert_freed_page_id(&db, writer.tsn, page_id4, db.max_node_size, db.page_size)
                 .unwrap();
             db.commit(&mut writer).unwrap();
             inserted.push((writer.tsn, page_id4));
@@ -3471,7 +3576,7 @@ mod tests {
         #[test]
         #[serial]
         fn test_remove_freed_page_ids_from_split_leaf() {
-            let (_temp_dir, mut db) = construct_mvcc(128);
+            let (_temp_dir, db) = construct_mvcc(128);
 
             // First, insert page IDs until we split a leaf
             if VERBOSE {
@@ -3498,12 +3603,12 @@ mod tests {
 
                     // Allocate and insert the first page ID
                     let page_id1 = writer.alloc_page_id();
-                    writer.insert_freed_page_id(&mut db, tsn, page_id1).unwrap();
+                    writer.insert_freed_page_id(&db, tsn, page_id1, db.max_node_size, db.page_size).unwrap();
                     inserted.push((tsn, page_id1));
 
                     // Allocate and insert second page ID
                     let page_id2 = writer.alloc_page_id();
-                    writer.insert_freed_page_id(&mut db, tsn, page_id2).unwrap();
+                    writer.insert_freed_page_id(&db, tsn, page_id2, db.max_node_size, db.page_size).unwrap();
                     inserted.push((tsn, page_id2));
 
                     // Check if we've split the leaf
@@ -3634,7 +3739,7 @@ mod tests {
         #[test]
         #[serial]
         fn test_insert_freed_page_ids_until_split_internal() {
-            let (_temp_dir, mut db) = construct_mvcc(64);
+            let (_temp_dir, db) = construct_mvcc(64);
 
             // Get latest header
             let header_page = db.get_latest_header_page().unwrap();
@@ -3663,12 +3768,12 @@ mod tests {
             while !has_split_internal {
                 // Allocate and insert the first page ID
                 let page_id1 = writer.alloc_page_id();
-                writer.insert_freed_page_id(&mut db, tsn, page_id1).unwrap();
+                writer.insert_freed_page_id(&db, tsn, page_id1, db.max_node_size, db.page_size).unwrap();
                 inserted.push((tsn, page_id1));
 
                 // Allocate and insert second page ID
                 let page_id2 = writer.alloc_page_id();
-                writer.insert_freed_page_id(&mut db, tsn, page_id2).unwrap();
+                writer.insert_freed_page_id(&db, tsn, page_id2, db.max_node_size, db.page_size).unwrap();
                 inserted.push((tsn, page_id2));
 
                 // Increment TSN for next iteration
@@ -3795,7 +3900,7 @@ mod tests {
         #[test]
         #[serial]
         fn test_remove_freed_page_ids_from_split_internal() {
-            let (_temp_dir, mut db) = construct_mvcc(64);
+            let (_temp_dir, db) = construct_mvcc(64);
 
             // First, insert page IDs until we split an internal node
             let mut inserted: Vec<(Tsn, PageID)> = Vec::new();
@@ -3820,12 +3925,12 @@ mod tests {
 
                     // Allocate and insert the first page ID
                     let page_id1 = writer.alloc_page_id();
-                    writer.insert_freed_page_id(&mut db, tsn, page_id1).unwrap();
+                    writer.insert_freed_page_id(&db, tsn, page_id1, db.max_node_size, db.page_size).unwrap();
                     inserted.push((tsn, page_id1));
 
                     // Allocate and insert second page ID
                     let page_id2 = writer.alloc_page_id();
-                    writer.insert_freed_page_id(&mut db, tsn, page_id2).unwrap();
+                    writer.insert_freed_page_id(&db, tsn, page_id2, db.max_node_size, db.page_size).unwrap();
                     inserted.push((tsn, page_id2));
 
                     // Check if we've split an internal node
@@ -3967,7 +4072,7 @@ mod tests {
             // so that its parent internal node (which is the root internal node here)
             // will not already have the old child page ID replaced with a dirty
             // child page ID.
-            let (_temp_dir, mut db) = construct_mvcc(128);
+            let (_temp_dir, db) = construct_mvcc(128);
 
             // First, insert page IDs until we split an internal node
             let mut inserted: Vec<(Tsn, PageID)> = Vec::new();
@@ -3987,12 +4092,12 @@ mod tests {
 
                     // Allocate and insert the first page ID
                     let page_id1 = writer.alloc_page_id();
-                    writer.insert_freed_page_id(&mut db, tsn, page_id1).unwrap();
+                    writer.insert_freed_page_id(&db, tsn, page_id1, db.max_node_size, db.page_size).unwrap();
                     inserted.push((tsn, page_id1));
 
                     // Allocate and insert second page ID
                     let page_id2 = writer.alloc_page_id();
-                    writer.insert_freed_page_id(&mut db, tsn, page_id2).unwrap();
+                    writer.insert_freed_page_id(&db, tsn, page_id2, db.max_node_size, db.page_size).unwrap();
                     inserted.push((tsn, page_id2));
 
                     // Check if we've split an internal node
@@ -4041,10 +4146,10 @@ mod tests {
         fn test_insert_freed_page_ids_overflow_single_key_moves_to_tsn_subtree() {
             // Use tiny pages to force the inline list to overflow quickly
             let page_size = 64;
-            let (_temp_dir, mut mvcc) = construct_mvcc(page_size);
+            let (_temp_dir, db) = construct_mvcc(page_size);
 
             // Start a writer
-            let mut writer = mvcc.writer().unwrap();
+            let mut writer = db.writer().unwrap();
             let tsn = writer.tsn;
 
             // With page_size=64, max_node_size = 55. A single key/value with 4 page IDs
@@ -4052,7 +4157,7 @@ mod tests {
             let mut inserted_count: usize = 0;
             loop {
                 let pid = writer.alloc_page_id();
-                writer.insert_freed_page_id(&mut mvcc, tsn, pid).unwrap();
+                writer.insert_freed_page_id(&db, tsn, pid, db.max_node_size, db.page_size).unwrap();
                 inserted_count += 1;
                 let dirty_page_id = {
                     let mut keys = writer.dirty.keys();
@@ -4061,7 +4166,7 @@ mod tests {
                 };
                 let dirty_page = writer.get_mut_dirty(dirty_page_id).unwrap();
                 if let Node::FreeListLeaf(leaf_node) = &dirty_page.node {
-                    if !leaf_node.would_fit_new_page_id(mvcc.max_node_size) {
+                    if !leaf_node.would_fit_new_page_id(db.max_node_size) {
                         break;
                     }
                 } else {
@@ -4071,16 +4176,16 @@ mod tests {
 
             // The next insert for the same TSN should succeed by creating a TSN-subtree
             let pid5 = writer.alloc_page_id();
-            writer.insert_freed_page_id(&mut mvcc, tsn, pid5).unwrap();
+            writer.insert_freed_page_id(&db, tsn, pid5, db.max_node_size, db.page_size).unwrap();
             inserted_count += 1;
 
             // Insert two more page IDs for the same TSN into the TSN-subtree
             let pid6 = writer.alloc_page_id();
-            writer.insert_freed_page_id(&mut mvcc, tsn, pid6).unwrap();
+            writer.insert_freed_page_id(&db, tsn, pid6, db.max_node_size, db.page_size).unwrap();
             inserted_count += 1;
 
             let pid7 = writer.alloc_page_id();
-            writer.insert_freed_page_id(&mut mvcc, tsn, pid7).unwrap();
+            writer.insert_freed_page_id(&db, tsn, pid7, db.max_node_size, db.page_size).unwrap();
             inserted_count += 1;
 
             // Verify that the leaf now points to a TSN-subtree for this TSN, and that the TSN-subtree root is an internal node (leaf split)
@@ -4101,7 +4206,7 @@ mod tests {
             assert_ne!(PageID(0), tsn_root_id);
             // The TSN-subtree leaf should have split, so the root must now be internal
             // With page_size=64, max_node_size = 55. Seven page IDs exceeds capacity (2 + 8 * 7).
-            let tsn_root_page = writer.get_page_ref(&mvcc, tsn_root_id).unwrap();
+            let tsn_root_page = writer.get_page_ref(&db, tsn_root_id).unwrap();
             match &tsn_root_page.node {
                 Node::FreeListTsnInternal(internal) => {
                     assert_eq!(2, internal.child_ids.len());
@@ -4123,7 +4228,7 @@ mod tests {
                     "guard hit while waiting for TSN-subtree internal split"
                 );
                 let pid = writer.alloc_page_id();
-                writer.insert_freed_page_id(&mut mvcc, tsn, pid).unwrap();
+                writer.insert_freed_page_id(&db, tsn, pid, db.max_node_size, db.page_size).unwrap();
                 extra_inserts += 1;
 
                 // Refresh tsn_root_id from the FreeList leaf since the root may change when it splits
@@ -4145,7 +4250,7 @@ mod tests {
 
                 let root_node_owned = {
                     writer
-                        .get_page_ref(&mvcc, tsn_root_id)
+                        .get_page_ref(&db, tsn_root_id)
                         .unwrap()
                         .node
                         .clone()
@@ -4156,7 +4261,7 @@ mod tests {
                         let first_child_id = internal_root.child_ids[0];
                         let first_child_node = {
                             writer
-                                .get_page_ref(&mvcc, first_child_id)
+                                .get_page_ref(&db, first_child_id)
                                 .unwrap()
                                 .node
                                 .clone()
@@ -4178,11 +4283,11 @@ mod tests {
 
             // Now add another PageID to the internal->internal->leaf.
             let pid = writer.alloc_page_id();
-            writer.insert_freed_page_id(&mut mvcc, tsn, pid).unwrap();
+            writer.insert_freed_page_id(&db, tsn, pid, db.max_node_size, db.page_size).unwrap();
             extra_inserts += 1;
 
             // Verify all page IDs are discoverable via find_reusable_page_ids
-            writer.find_reusable_page_ids(&mvcc).unwrap();
+            writer.find_reusable_page_ids(&db).unwrap();
             assert_eq!(
                 inserted_count + extra_inserts,
                 writer.reusable_page_ids.len()
@@ -4230,7 +4335,7 @@ mod tests {
         fn test_tsn_subtree_random_order_insert_and_ordering() {
             // Moderate page size to force multiple leaves and internals
             let page_size = 256;
-            let (_temp_dir, mut db) = construct_mvcc(page_size);
+            let (_temp_dir, db) = construct_mvcc(page_size);
             let mut writer = db.writer().unwrap();
             let tsn = writer.tsn;
 
@@ -4247,11 +4352,11 @@ mod tests {
             }
             // Insert them all for the same TSN in random order
             for pid in &pids {
-                writer.insert_freed_page_id(&mut db, tsn, *pid).unwrap();
+                writer.insert_freed_page_id(&db, tsn, *pid, db.max_node_size, db.page_size).unwrap();
             }
             // Insert a duplicate of the first ID and ensure it is ignored
             let dup = pids[0];
-            writer.insert_freed_page_id(&mut db, tsn, dup).unwrap();
+            writer.insert_freed_page_id(&db, tsn, dup, db.max_node_size, db.page_size).unwrap();
 
             // Verify via reusable_page_ids
             writer.find_reusable_page_ids(&db).unwrap();
@@ -4301,15 +4406,15 @@ mod tests {
         fn test_upgrade_inline_to_tsn_subtree_with_random_inserts_and_duplicates() {
             // Small page size to quickly overflow inline and create a TSN-subtree
             let page_size = 96;
-            let (_temp_dir, mut mvcc) = construct_mvcc(page_size);
-            let mut writer = mvcc.writer().unwrap();
+            let (_temp_dir, db) = construct_mvcc(page_size);
+            let mut writer = db.writer().unwrap();
             let tsn = writer.tsn;
 
             // Insert a few to fill inline list close to capacity
             let mut inline_ids = Vec::new();
             loop {
                 let pid = writer.alloc_page_id();
-                let res = writer.insert_freed_page_id(&mut mvcc, tsn, pid);
+                let res = writer.insert_freed_page_id(&db, tsn, pid, db.max_node_size, db.page_size);
                 if res.is_err() {
                     panic!("unexpected error inserting into inline");
                 }
@@ -4318,7 +4423,7 @@ mod tests {
                 let dirty_id = writer.dirty.keys().cloned().next().unwrap();
                 if let Node::FreeListLeaf(leaf_node) = &writer.get_mut_dirty(dirty_id).unwrap().node
                 {
-                    if !leaf_node.would_fit_new_page_id(mvcc.max_node_size) {
+                    if !leaf_node.would_fit_new_page_id(db.max_node_size) {
                         break;
                     }
                 }
@@ -4343,11 +4448,11 @@ mod tests {
             }
 
             for pid in &extra_ids {
-                writer.insert_freed_page_id(&mut mvcc, tsn, *pid).unwrap();
+                writer.insert_freed_page_id(&db, tsn, *pid, db.max_node_size, db.page_size).unwrap();
             }
 
             // Verify no duplicates and all ids present
-            writer.find_reusable_page_ids(&mvcc).unwrap();
+            writer.find_reusable_page_ids(&db).unwrap();
             let mut expected: Vec<PageID> = inline_ids.clone();
             for p in extra_ids {
                 if !expected.contains(&p) {
