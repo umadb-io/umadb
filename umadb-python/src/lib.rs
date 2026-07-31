@@ -10,7 +10,6 @@ use umadb_client;
 use umadb_dcb;
 use umadb_dcb::{DcbError, DcbEventStoreSync};
 use uuid::Uuid;
-use umadb_cli::{parse_cli_options, start_server_with_cli_options};
 
 create_exception!(umadb, IntegrityError, PyValueError);
 create_exception!(umadb, TransportError, PyRuntimeError);
@@ -683,12 +682,12 @@ fn cancel_all_stream_responses() {
 fn run_server_from_args(py: Python<'_>, args: Vec<String>) -> PyResult<()> {
     // Pass the raw arguments to our Rust clap parser
     // clap handles --help and --version natively and will gracefully exit the process if they are called.
-    let options = parse_cli_options(args)
+    let options = umadb_cli::parse_cli_options(args)
         .map_err(|err| ServerStartError::new_err(err.to_string()))?;
 
     // Convert any runtime error directly to a ServerStartError
     let run_result =
-        py.detach(move || start_server_with_cli_options(options).map_err(|err| err.to_string()));
+        py.detach(move || umadb_cli::start_server_with_cli_options(options).map_err(|err| err.to_string()));
 
     run_result.map_err(ServerStartError::new_err)
 }
