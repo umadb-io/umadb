@@ -613,7 +613,7 @@ pub mod bench_api {
             .map(|page| {
                 let page_id = page.page_id;
                 let mut buf = vec![0u8; page.calc_serialized_size()];
-                page.serialize_into_with_zero_fill(&mut buf, false)
+                page.serialize_into(&mut buf, false)
                     .expect("Failed to serialize comprehensive full page sample");
                 (page_id, buf)
             })

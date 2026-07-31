@@ -33,7 +33,7 @@ impl Page {
     }
 
     /// Serialized page (header + body) into `buf`, optionally zero-filling unused tail bytes.
-    pub fn serialize_into_with_zero_fill(
+    pub fn serialize_into(
         &self,
         buf: &mut [u8],
         zero_fill_remainder: bool,
@@ -92,11 +92,6 @@ impl Page {
             ))),
         }
     }
-}
-
-#[inline]
-pub fn page_as_header_node(page: &Page) -> DcbResult<&HeaderNode> {
-    page.as_header_node()
 }
 
 #[inline]
@@ -277,7 +272,7 @@ mod tests {
             tags_tree_root_id: PageID(1011),
             next_position: Position(1234),
             schema_version: crate::db::DB_SCHEMA_VERSION,
-            tracking_root_page_id: PageID(0),
+            tracking_tree_root_id: PageID(0),
         });
 
         // Create a Page with the node

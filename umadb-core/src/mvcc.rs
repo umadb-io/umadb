@@ -1,16 +1,13 @@
 use crate::common::Position;
 use crate::common::{PageID, Tsn};
-use crate::db::{DB_SCHEMA_VERSION, read_conditional};
+use crate::db::{DB_SCHEMA_VERSION};
 use crate::events_tree_nodes::EventLeafNode;
 use crate::free_lists_tree_nodes::{
     FreeListInternalNode, FreeListLeafNode, FreeListLeafValue, FreeListTsnLeafNode,
 };
 use crate::header_node::HeaderNode;
 use crate::node::Node;
-use crate::page::{
-    PAGE_HEADER_SIZE, Page, page_approx_deserialized_bytes, page_as_header_node,
-    serialize_page_into,
-};
+use crate::page::{PAGE_HEADER_SIZE, Page, page_approx_deserialized_bytes, serialize_page_into};
 use crate::pager::Pager;
 use crate::tags_tree_nodes::TagsLeafNode;
 use crate::tags_tree_nodes::set_tag_key_width;
@@ -24,7 +21,7 @@ use std::sync::{Arc, Mutex};
 use std::thread::sleep;
 use std::time::Duration;
 use umadb_dcb::DcbError::InternalError;
-use umadb_dcb::{DcbError, DcbQuery, DcbResult};
+use umadb_dcb::{DcbError, DcbResult};
 use tokio::sync::oneshot;
 
 const GET_LATEST_HEADER_RETRIES: usize = 5;
@@ -199,17 +196,6 @@ impl ReaderTsnRegistry {
     }
 }
 
-/// Mutable state owned by the single writer thread (and, during startup, the
-/// constructor). It is guarded by one `Mutex` purely to obtain interior mutability
-/// through `&self` on the shared `Arc<Mvcc>` — it is never contended, because only
-/// the one writer thread ever mutates it.
-struct WriterState {
-    /// On-disk header pages 0 and 1, double-buffered across commits.
-    headers: [Page; 2],
-    /// Reusable page-serialization buffer (avoids allocating on every page write).
-    scratch: Vec<u8>,
-}
-
 pub trait MvccSnapshot {
     fn read_page(&self, page_id: PageID) -> DcbResult<Arc<Page>>;
 }
@@ -220,7 +206,7 @@ pub struct Mvcc {
     pub reader_tsns: Arc<ReaderTsnRegistry>,
     pub page_size: usize,
     pub max_node_size: usize,
-    writer_state: Mutex<WriterState>,
+    page_buf: Mutex<Vec<u8>>,
     pub verbose: bool,
     pub zero_fill_pages: bool,
     read_method: ReadMethod,
@@ -228,8 +214,8 @@ pub struct Mvcc {
 }
 
 pub struct PreparedCommit {
+    header_to_write: (PageID, Vec<u8>),
     pages_to_write: Vec<(PageID, Vec<u8>)>,
-    header_to_write: (PageID, Vec<u8>)
 }
 
 impl Mvcc {
@@ -258,11 +244,11 @@ impl Mvcc {
         );
 
         println!(
-            "UmaDB write mode: {}",
+            "UmaDB writing with {}",
             if options.pipelined_writer {
-                "async pipeline"
+                "pipeline mode"
             } else {
-                "synchronous blocking"
+                "synchronous mode"
             }
         );
 
@@ -292,19 +278,7 @@ impl Mvcc {
             reader_tsns: Arc::new(ReaderTsnRegistry::default()),
             page_size: options.page_size,
             max_node_size: options.page_size - PAGE_HEADER_SIZE,
-            writer_state: Mutex::new(WriterState {
-                headers: [
-                    Page {
-                        page_id: PageID(0),
-                        node: Node::Header(HeaderNode::default()),
-                    },
-                    Page {
-                        page_id: PageID(1),
-                        node: Node::Header(HeaderNode::default()),
-                    },
-                ],
-                scratch: vec![0u8; options.page_size],
-            }),
+            page_buf: Mutex::new(vec![0u8; options.page_size]),
             verbose,
             zero_fill_pages: options.zero_fill_pages,
             read_method: options.read_method,
@@ -322,26 +296,40 @@ impl Mvcc {
             let initial_tags_tree_root_id = PageID(4);
             let initial_next_page_id = PageID(5);
             let initial_next_position = Position(1);
-            mvcc.update_header(
-                HEADER_PAGE_ID_0,
-                initial_tsn,
-                initial_free_lists_tree_root_id,
-                initial_events_tree_root_id,
-                initial_tags_tree_root_id,
-                PageID(0),
-                initial_next_page_id,
-                initial_next_position,
-            )?;
-            mvcc.update_header(
-                HEADER_PAGE_ID_1,
-                initial_tsn,
-                initial_free_lists_tree_root_id,
-                initial_events_tree_root_id,
-                initial_tags_tree_root_id,
-                PageID(0),
-                initial_next_page_id,
-                initial_next_position,
-            )?;
+            // Write header 0.
+            let header0 = Page{
+                page_id: HEADER_PAGE_ID_0,
+                node: Node::Header(
+                    HeaderNode {
+                        tsn: initial_tsn,
+                        free_lists_tree_root_id: initial_free_lists_tree_root_id,
+                        events_tree_root_id: initial_events_tree_root_id,
+                        tags_tree_root_id: initial_tags_tree_root_id,
+                        next_page_id: initial_next_page_id,
+                        next_position: initial_next_position,
+                        schema_version: DB_SCHEMA_VERSION,
+                        tracking_tree_root_id: PageID(0),
+                    }
+                )
+            };
+            mvcc.write_header(&header0)?;
+            // Write header 1.
+            let header1 = Page{
+                page_id: HEADER_PAGE_ID_1,
+                node: Node::Header(
+                    HeaderNode {
+                        tsn: initial_tsn,
+                        free_lists_tree_root_id: initial_free_lists_tree_root_id,
+                        events_tree_root_id: initial_events_tree_root_id,
+                        tags_tree_root_id: initial_tags_tree_root_id,
+                        next_page_id: initial_next_page_id,
+                        next_position: initial_next_position,
+                        schema_version: DB_SCHEMA_VERSION,
+                        tracking_tree_root_id: PageID(0),
+                    }
+                )
+            };
+            mvcc.write_header(&header1)?;
 
             // Create and write an empty free lists tree root page.
             let free_list_leaf = FreeListLeafNode {
@@ -375,40 +363,27 @@ impl Mvcc {
         } else {
             // Existing DB: hydrate headers from disk and set tag key width based on latest header
             if let Ok(header_page) = mvcc.get_latest_header_page() {
-                let header_latest = page_as_header_node(&header_page)?;
+                let header_node = header_page.as_header_node()?;
                 // Don't proceed if this software is too old.
-                if header_latest.schema_version > DB_SCHEMA_VERSION {
-                    let schema_version = header_latest.schema_version;
+                if header_node.schema_version > DB_SCHEMA_VERSION {
+                    let schema_version = header_node.schema_version;
                     return Err(InternalError(format!(
                         "Software version is too old. This software supports schema version {DB_SCHEMA_VERSION} but the database file has schema version {schema_version}."
                     )));
                 }
 
                 // Set key width first from the reported header schema
-                if header_latest.schema_version == 0 {
+                if header_node.schema_version == 0 {
                     set_tag_key_width(8);
                 } else {
                     set_tag_key_width(crate::tags_tree_nodes::TAG_HASH_LEN);
                 }
 
-                // Hydrate in-memory header pages 0 and 1 from disk so we preserve on-disk fields
-                let h0 = mvcc.read_page(HEADER_PAGE_ID_0).ok();
-                let h1 = mvcc.read_page(HEADER_PAGE_ID_1).ok();
-                {
-                    let mut ws = mvcc.writer_state.lock().unwrap();
-                    if let Some(p0) = h0 {
-                        ws.headers[0] = (*p0).clone();
-                    }
-                    if let Some(p1) = h1 {
-                        ws.headers[1] = (*p1).clone();
-                    }
-                }
-
                 // Defensive check: if header says schema_version=1, verify tags root deserializes at width=16.
                 // If it fails but succeeds at width=8, downgrade schema_version to 0 in both headers.
-                if header_latest.schema_version == 1 {
+                if header_node.schema_version == 1 {
                     use crate::node::Node;
-                    let tags_root = header_latest.tags_tree_root_id;
+                    let tags_root = header_node.tags_tree_root_id;
                     // Try with width=16
                     set_tag_key_width(crate::tags_tree_nodes::TAG_HASH_LEN);
                     let sixteen_ok = mvcc
@@ -416,139 +391,38 @@ impl Mvcc {
                         .map(|p| matches!(p.node, Node::TagsLeaf(_) | Node::TagsInternal(_)))
                         .is_ok();
                     if !sixteen_ok {
-                        // Try legacy width=8
-                        set_tag_key_width(8);
-                        let eight_ok = mvcc
-                            .read_page(tags_root)
-                            .map(|p| matches!(p.node, Node::TagsLeaf(_) | Node::TagsInternal(_)))
-                            .is_ok();
-                        if eight_ok {
-                            // Downgrade: write schema_version=0 into both in-memory headers and write to disk
-                            {
-                                let mut ws = mvcc.writer_state.lock().unwrap();
-                                // Cold one-time startup path: a local scratch buffer is fine.
-                                let mut buf = vec![0u8; mvcc.page_size];
-                                for hp in ws.headers.iter_mut() {
-                                    let header_page_id = hp.page_id;
-                                    if let Node::Header(ref mut hn) = hp.node {
-                                        let schema_version = hn.schema_version;
-                                        if mvcc.verbose {
-                                            println!(
-                                                "Resetting header node {header_page_id:?} schema version from {schema_version:?} to 0"
-                                            );
-                                        }
-                                        hn.schema_version = 0;
-                                    }
-                                    // Re-write the header pages with identical fields but schema_version=0
-                                    serialize_page_into(&mut buf, &hp.node, mvcc.zero_fill_pages)?;
-                                    mvcc.pager.write_page(hp.page_id, &buf)?;
-                                }
-                            }
-
-                            // Ensure key width remains 8 for this DB after downgrade
-                            set_tag_key_width(8);
-
-                            // Sync to disk to persist the downgrade promptly
-                            mvcc.fsync()?;
-                        } else {
-                            // Neither width worked; leave as-is
-                            if mvcc.verbose {
-                                println!(
-                                    "Tags root failed to deserialize at width 16 and 8; leaving schema_version unchanged"
-                                );
-                            }
-                        }
-                    }
-                }
-            }
-            if let Ok(header_page) = mvcc.get_latest_header_page() {
-                let hid = header_page.page_id;
-                let header_latest = page_as_header_node(&header_page)?;
-                // Validate header.next_position against events tree's last event and fix if needed
-                {
-                    let empty_dirty: std::collections::HashMap<PageID, Page> =
-                        std::collections::HashMap::new();
-                    let mut last_by_tree: Option<u64> = None;
-                    match read_conditional(
-                        &mvcc,
-                        &empty_dirty,
-                        header_latest.events_tree_root_id,
-                        header_latest.tags_tree_root_id,
-                        DcbQuery { items: vec![] },
-                        None,
-                        true,
-                        Some(1),
-                        false,
-                        None,
-                    ) {
-                        Ok(mut v) => {
-                            if let Some(ev) = v.pop() {
-                                last_by_tree = Some(ev.position);
-                            }
-                        }
-                        Err(e) => {
-                            if mvcc.verbose {
-                                println!(
-                                    "Warning: failed to read last event from events tree: {:?}",
-                                    e
-                                );
-                            }
-                        }
-                    }
-                    let last_pos = last_by_tree.unwrap_or(0);
-                    let expected_next = Position(last_pos.saturating_add(1));
-                    if expected_next != header_latest.next_position {
-                        if mvcc.verbose {
-                            println!(
-                                "Fixing header.next_position from {} to {} based on events tree",
-                                header_latest.next_position.0, expected_next.0
-                            );
-                        }
-                        // Rewrite only the latest header page
-                        mvcc.update_header(
-                            hid,
-                            header_latest.tsn,
-                            header_latest.free_lists_tree_root_id,
-                            header_latest.events_tree_root_id,
-                            header_latest.tags_tree_root_id,
-                            header_latest.tracking_root_page_id,
-                            header_latest.next_page_id,
-                            expected_next,
-                        )?;
-                        mvcc.fsync()?;
+                        return Err(DcbError::InitializationError(
+                            "Tag key width is too small for schema version.".to_string())
+                        );
                     }
                 }
             }
         }
 
-        // Cache header pages.
-        if let Some(ref page_cache) = mvcc.page_cache {
-            if let Some(p0) = mvcc.read_page(HEADER_PAGE_ID_0).ok() {
-                page_cache.insert(p0.page_id, p0);
-            }
-            if let Some(p1) = mvcc.read_page(HEADER_PAGE_ID_1).ok() {
-                page_cache.insert(p1.page_id, p1);
-            }
+        // Check we can read all the root pages.
+        let page = mvcc.read_page(HEADER_PAGE_ID_0)?;
+        if !matches!(page.node, Node::Header(_)) {
+            return Err(DcbError::DatabaseCorrupted(format!("Page {} is not a header page", HEADER_PAGE_ID_0.0)))
+        };
+        if !matches!(mvcc.read_page(HEADER_PAGE_ID_1)?.node, Node::Header(_)) {
+            return Err(DcbError::DatabaseCorrupted(format!("Page {} is not a header page", HEADER_PAGE_ID_1.0)))
+        };
+        let header_page = mvcc.get_latest_header_page()?;
+        let header_node = header_page.as_header_node()?;
+        if !matches!(mvcc.read_page(header_node.free_lists_tree_root_id)?.node, Node::FreeListInternal(_) | Node::FreeListLeaf(_)) {
+            return Err(DcbError::DatabaseCorrupted(format!("Page {} is not a free list page", header_node.free_lists_tree_root_id.0)))
+        };
+        if !matches!(mvcc.read_page(header_node.tags_tree_root_id)?.node, Node::TagsInternal(_) | Node::TagsLeaf(_)) {
+            return Err(DcbError::DatabaseCorrupted(format!("Page {} is not a tags tree page", header_node.tags_tree_root_id.0)))
+        };
+        if !matches!(mvcc.read_page(header_node.events_tree_root_id)?.node, Node::EventInternal(_) | Node::EventLeaf(_)) {
+            return Err(DcbError::DatabaseCorrupted(format!("Page {} is not a event tree page", header_node.events_tree_root_id.0)))
+        };
+        if header_node.tracking_tree_root_id != PageID(0) {
+            if !matches!(mvcc.read_page(header_node.tracking_tree_root_id)?.node, Node::TrackingInternal(_) | Node::TrackingLeaf(_)) {
+                return Err(DcbError::DatabaseCorrupted(format!("Page {} is not a tracking tree page", header_node.tracking_tree_root_id.0)))
+            };
         }
-        // Cache tree root pages.
-        if let Some(ref page_cache) = mvcc.page_cache {
-            let header_page = mvcc.get_latest_header_page()?;
-            let header_node = page_as_header_node(&header_page)?;
-            let page = mvcc.read_page(header_node.free_lists_tree_root_id)?;
-            page_cache.insert(page.page_id, page);
-
-            let page = mvcc.read_page(header_node.tags_tree_root_id)?;
-            page_cache.insert(page.page_id, page);
-
-            let page = mvcc.read_page(header_node.events_tree_root_id)?;
-            page_cache.insert(page.page_id, page);
-
-            if header_node.tracking_root_page_id != PageID(0) {
-                let page = mvcc.read_page(header_node.tracking_root_page_id)?;
-                page_cache.insert(page.page_id, page);
-            }
-        }
-
         Ok(mvcc)
     }
 
@@ -559,21 +433,21 @@ impl Mvcc {
 
             match (h0, h1) {
                 (Ok(page0), Ok(page1)) => {
-                    let header0 = page_as_header_node(&page0)?;
-                    let header1 = page_as_header_node(&page1)?;
+                    let node0 = page0.as_header_node()?;
+                    let node1 = page1.as_header_node()?;
 
-                    if header1.tsn > header0.tsn {
+                    if node1.tsn > node0.tsn {
                         return Ok(page1);
                     } else {
                         return Ok(page0);
                     }
                 }
                 (Ok(page0), Err(_)) => {
-                    let _ = page_as_header_node(&page0)?;
+                    let _ = page0.as_header_node()?;
                     return Ok(page0);
                 }
                 (Err(_), Ok(page1)) => {
-                    let _ = page_as_header_node(&page1)?;
+                    let _ = page1.as_header_node()?;
                     return Ok(page1);
                 }
                 (Err(e0), Err(e1)) => {
@@ -603,81 +477,11 @@ impl Mvcc {
         ))
     }
 
-    fn update_header(
-        &self,
-        page_id: PageID,
-        tsn: Tsn,
-        free_lists_tree_root_id: PageID,
-        events_tree_root_id: PageID,
-        tags_tree_root_id: PageID,
-        tracking_tree_root_id: PageID,
-        next_page_id: PageID,
-        next_position: Position,
-    ) -> DcbResult<()> {
-        let mut ws = self.writer_state.lock().unwrap();
-        let headers_idx = if page_id == HEADER_PAGE_ID_0 { 0 } else { 1 };
-        match &mut ws.headers[headers_idx].node {
-            Node::Header(node) => {
-                // Update node values.
-                node.tsn = tsn;
-                node.free_lists_tree_root_id = free_lists_tree_root_id;
-                node.events_tree_root_id = events_tree_root_id;
-                node.tags_tree_root_id = tags_tree_root_id;
-                node.next_page_id = next_page_id;
-                node.next_position = next_position;
-                node.tracking_root_page_id = tracking_tree_root_id;
-            }
-            _ => panic!("Shouldn't get here: header should be a header"),
-        }
-
-        // Write the updated header using the reusable scratch buffer. Destructure to
-        // borrow `headers` and `scratch` disjointly.
-        let WriterState { headers, scratch } = &mut *ws;
-        serialize_page_into(scratch, &headers[headers_idx].node, self.zero_fill_pages)?;
-        self.pager.write_page(page_id, scratch)?;
+    fn write_header(&self, page: &Page) -> DcbResult<()> {
+        let mut buf = self.page_buf.lock().unwrap();
+        page.serialize_into(&mut buf, self.zero_fill_pages)?;
+        self.pager.write_page(page.page_id, &buf)?;
         Ok(())
-    }
-
-    fn generate_header_bytes(
-        &self,
-        page_id: PageID,
-        tsn: Tsn,
-        free_lists_tree_root_id: PageID,
-        events_tree_root_id: PageID,
-        tags_tree_root_id: PageID,
-        tracking_root_page_id: PageID,
-        next_page_id: PageID,
-        next_position: Position,
-        page_size: usize,
-    ) -> DcbResult<(Vec<u8>, Page)> {
-        let schema_version = {
-            let ws = self.writer_state.lock().unwrap();
-            let headers_idx = if page_id == HEADER_PAGE_ID_0 { 0 } else { 1 };
-            match &ws.headers[headers_idx].node {
-                Node::Header(node) => {
-                    node.schema_version
-                }
-                _ => panic!("Shouldn't get here: header should be a header"),
-            }
-        };
-        let page = Page {
-            page_id,
-            node: Node::Header(
-                HeaderNode {
-                    tsn,
-                    free_lists_tree_root_id,
-                    events_tree_root_id,
-                    tags_tree_root_id,
-                    next_page_id,
-                    next_position,
-                    schema_version,
-                    tracking_root_page_id,
-                }
-            )
-        };
-        let mut buf: Vec<u8> = vec![0u8; page_size];
-        serialize_page_into(&mut buf, &page.node, self.zero_fill_pages)?;
-        Ok((buf, page))
     }
 
     pub fn reader(&self) -> DcbResult<Reader> {
@@ -685,7 +489,7 @@ impl Mvcc {
         loop {
             // Observe latest, publish our guard, then re-observe.
             let header_page = self.get_latest_header_page()?;
-            let header_node = page_as_header_node(&header_page)?;
+            let header_node = header_page.as_header_node()?;
 
             // Publish our guard for this snapshot's TSN.
             let tsn = header_node.tsn;
@@ -694,7 +498,7 @@ impl Mvcc {
             // Re-read: if latest is still tsn, no writer has committed past our
             // snapshot since we published, so its pages cannot have been reused.
             let recheck = self.get_latest_header_page()?;
-            let recheck_node = page_as_header_node(&recheck)?;
+            let recheck_node = recheck.as_header_node()?;
             if recheck_node.tsn == tsn {
                 return Ok(Reader {
                     header_page_id: header_page.page_id,
@@ -702,7 +506,7 @@ impl Mvcc {
                     events_tree_root_id: header_node.events_tree_root_id,
                     tags_tree_root_id: header_node.tags_tree_root_id,
                     next_position: header_node.next_position,
-                    tracking_tree_root_id: header_node.tracking_root_page_id,
+                    tracking_tree_root_id: header_node.tracking_tree_root_id,
                     reader_tsns: Arc::clone(&self.reader_tsns),
                 });
             }
@@ -722,17 +526,17 @@ impl Mvcc {
 
         // Get the latest header
         let header_page = self.get_latest_header_page()?;
-        let header_node = page_as_header_node(&header_page)?;
+        let header_node = header_page.as_header_node()?;
 
         // Create the writer
         let mut writer = Writer::new(
-            header_page.page_id,
+            header_page.clone(),
             Tsn(header_node.tsn.0 + 1),
             header_node.next_page_id,
             header_node.free_lists_tree_root_id,
             header_node.events_tree_root_id,
             header_node.tags_tree_root_id,
-            header_node.tracking_root_page_id,
+            header_node.tracking_tree_root_id,
             header_node.next_position,
             self.verbose,
             self.page_size,
@@ -755,12 +559,11 @@ impl Mvcc {
     where
         I: IntoIterator<Item = &'a Page>,
     {
-        let mut ws = self.writer_state.lock().unwrap();
-        let buf = &mut ws.scratch;
+        let mut buf = self.page_buf.lock().unwrap();
         let mut count = 0usize;
         for page in pages {
-            page.serialize_into_with_zero_fill(buf, self.zero_fill_pages)?;
-            self.pager.write_page(page.page_id, buf)?;
+            page.serialize_into(&mut buf, self.zero_fill_pages)?;
+            self.pager.write_page(page.page_id, &buf)?;
             if self.verbose {
                 println!("Wrote {:?} to file", page.page_id);
             }
@@ -812,49 +615,40 @@ impl Mvcc {
 
         writer.process_freed_page_ids(mvcc, self.max_node_size, self.page_size)?;
 
-        let drained_pages = writer.dirty.drain().collect::<Vec<_>>();
+        let mut wet_pages = HashMap::with_capacity(writer.dirty.len() + 1);
 
-        let mut wet_pages = HashMap::new();
+        // Copy-on-write the header page.
+        let dirty_header = writer.cow_header_page()?;
+        let next_header_page_id = dirty_header.page_id;
 
-        // Generate header bytes.
-        let alternate_header_page_id =
-            if writer.header_page_id == HEADER_PAGE_ID_0 {
-                HEADER_PAGE_ID_1
-            } else {
-                HEADER_PAGE_ID_0
-            };
-        let (next_header_data, header_page) = self.generate_header_bytes(
-            alternate_header_page_id,
-            writer.tsn,
-            writer.free_lists_tree_root_id,
-            writer.events_tree_root_id,
-            writer.tags_tree_root_id,
-            writer.tracking_tree_root_id,
-            writer.next_page_id,
-            writer.next_position,
-            self.page_size,
-        )?;
-        wet_pages.insert(alternate_header_page_id, Arc::new(header_page));
+        // Serialize the header.
+        let mut serialized_header: Vec<u8> = vec![0u8; writer.page_size];
+        serialize_page_into(&mut serialized_header, &dirty_header.node, self.zero_fill_pages)?;
 
-        let mut pages_to_write: Vec<(PageID, Vec<u8>)> = Vec::with_capacity(drained_pages.len());
-        for i in 0..drained_pages.len() {
-            let mut page_buf = vec![0u8; crate::mvcc::DEFAULT_PAGE_SIZE];
-            let (page_id, drained_page) = &drained_pages[i];
-            serialize_page_into(&mut page_buf, &drained_page.node, true)?;
-            pages_to_write.push((page_id.clone(), page_buf))
-        }
-
-        let prepared_commit = PreparedCommit {
-            pages_to_write,
-            header_to_write: (alternate_header_page_id, next_header_data),
+        // Prepare the commit.
+        let mut prepared_commit = PreparedCommit {
+            header_to_write: (next_header_page_id, serialized_header),
+            pages_to_write: Vec::with_capacity(writer.dirty.len()),
         };
-        for (page_id, page) in drained_pages {
+
+        // Drain the dirty pages.
+        for (page_id, page) in writer.dirty.drain() {
+            // Serialize the dirty page.
+            let mut serialized_page = vec![0u8; DEFAULT_PAGE_SIZE];
+            serialize_page_into(&mut serialized_page, &page.node, true)?;
+            prepared_commit.pages_to_write.push((page_id.clone(), serialized_page));
+
+            // Remember the "wet" page for the writer snapshot.
             wet_pages.insert(page_id, Arc::new(page));
         }
 
+        // Remember the "wet" header for the writer snapshot.
+        let next_header = Arc::new(dirty_header);
+        wet_pages.insert(next_header_page_id, next_header.clone());
+
         // Advance the writer so it is primed for the NEXT pipelined batch. The
         // writer is persisted across batches (it is the sole authority on future
-        // DB state and cannot be re-derived from the header, which lags behind by
+        // DB state and cannot be re-derived from the on-disk header, which lags behind by
         // one in-flight batch), so the bookkeeping that `Mvcc::writer()` used to do
         // per batch must be done here instead:
         //  - flip to the header slot we just generated (headers are double-buffered),
@@ -867,7 +661,7 @@ impl Mvcc {
         //    cache that is only sound while a page ID's content is immutable — true
         //    within a single batch, but false across batches once a freed page ID is
         //    reused, which would otherwise return stale nodes for that ID.
-        writer.header_page_id = alternate_header_page_id;
+        writer.header_page = next_header;
         writer.tsn = Tsn(writer.tsn.0 + 1);
         writer.deserialized.clear();
 
@@ -897,13 +691,6 @@ impl Mvcc {
         // Write all dirty pages (except for the header page) to the file
         if !writer.dirty.is_empty() {
             let count = {
-                // let num_dirty = writer.dirty.len();
-                // println!("Number dirty pages: {num_dirty}");
-                // if num_dirty >= 0 {
-                //     self.write_pages_parallel(writer.dirty.values())?
-                // } else {
-                //     self.write_pages(writer.dirty.values())?
-                // }
                 self.write_pages(writer.dirty.values())?
             };
             if self.verbose {
@@ -923,31 +710,16 @@ impl Mvcc {
             writer.dirty.clear();
         }
 
-        // Mutate the owned header instance and serialize into the pre-allocated buffer
-        let (alternate_header_page_id, alternate_header_page_idx) =
-            if writer.header_page_id == HEADER_PAGE_ID_0 {
-                (HEADER_PAGE_ID_1, 1)
-            } else {
-                (HEADER_PAGE_ID_0, 0)
-            };
-        self.update_header(
-            alternate_header_page_id,
-            writer.tsn,
-            writer.free_lists_tree_root_id,
-            writer.events_tree_root_id,
-            writer.tags_tree_root_id,
-            writer.tracking_tree_root_id,
-            writer.next_page_id,
-            writer.next_position,
-        )?;
+        // Mutate and write header page.
+        let next_header_page = writer.cow_header_page()?;
+        self.write_header(&next_header_page)?;
 
         // Sync the file to disk
         self.fsync()?;
 
         // Cache the header page.
-        let header_page = self.writer_state.lock().unwrap().headers[alternate_header_page_idx].clone();
         if let Some(ref page_cache) = self.page_cache {
-            page_cache.insert(header_page.page_id, Arc::new(header_page));
+            page_cache.insert(next_header_page.page_id, Arc::new(next_header_page));
         }
 
         if self.verbose {
@@ -1063,7 +835,7 @@ impl<'a> MvccSnapshot for WriterSnapshot<'a> {
 
 // Writer transaction
 pub struct Writer {
-    pub header_page_id: PageID,
+    pub header_page: Arc<Page>,
     pub tsn: Tsn,
     pub next_page_id: PageID,
     pub free_lists_tree_root_id: PageID,
@@ -1083,7 +855,7 @@ pub struct Writer {
 
 impl Writer {
     pub fn new(
-        header_page_id: PageID,
+        header_page: Arc<Page>,
         tsn: Tsn,
         next_page_id: PageID,
         free_lists_tree_root_id: PageID,
@@ -1096,7 +868,7 @@ impl Writer {
         max_node_size: usize,
     ) -> Self {
         Self {
-            header_page_id,
+            header_page,
             tsn,
             next_page_id,
             free_lists_tree_root_id,
@@ -2438,6 +2210,32 @@ impl Writer {
 
         Ok(())
     }
+
+    pub fn cow_header_page(&self) -> DcbResult<Page> {
+        let alternate_header_page_id =
+            if self.header_page.page_id == HEADER_PAGE_ID_0 {
+                HEADER_PAGE_ID_1
+            } else {
+                HEADER_PAGE_ID_0
+            };
+        let header_node = self.header_page.as_header_node()?;
+        let page = Page {
+            page_id: alternate_header_page_id,
+            node: Node::Header(
+                HeaderNode {
+                    tsn: self.tsn,
+                    free_lists_tree_root_id: self.free_lists_tree_root_id,
+                    events_tree_root_id: self.events_tree_root_id,
+                    tags_tree_root_id: self.tags_tree_root_id,
+                    next_page_id: self.next_page_id,
+                    next_position: self.next_position,
+                    schema_version: header_node.schema_version,
+                    tracking_tree_root_id: self.tracking_tree_root_id,
+                }
+            )
+        };
+        Ok(page)
+    }
 }
 
 enum FreePageIDInsertStrategy {
@@ -2519,35 +2317,35 @@ mod tests {
         {
             let mut writer = db.writer().unwrap();
             assert_eq!(Tsn(1), writer.tsn);
-            assert_eq!(PageID(0), writer.header_page_id);
+            assert_eq!(PageID(0), writer.header_page.page_id);
             db.commit(&mut writer).unwrap();
         }
 
         {
             let mut writer = db.writer().unwrap();
             assert_eq!(Tsn(2), writer.tsn);
-            assert_eq!(PageID(1), writer.header_page_id);
+            assert_eq!(PageID(1), writer.header_page.page_id);
             db.commit(&mut writer).unwrap();
         }
 
         {
             let mut writer = db.writer().unwrap();
             assert_eq!(Tsn(3), writer.tsn);
-            assert_eq!(PageID(0), writer.header_page_id);
+            assert_eq!(PageID(0), writer.header_page.page_id);
             db.commit(&mut writer).unwrap();
         }
 
         {
             let mut writer = db.writer().unwrap();
             assert_eq!(Tsn(4), writer.tsn);
-            assert_eq!(PageID(1), writer.header_page_id);
+            assert_eq!(PageID(1), writer.header_page.page_id);
             db.commit(&mut writer).unwrap();
         }
 
         {
             let mut writer = db.writer().unwrap();
             assert_eq!(Tsn(5), writer.tsn);
-            assert_eq!(PageID(0), writer.header_page_id);
+            assert_eq!(PageID(0), writer.header_page.page_id);
             db.commit(&mut writer).unwrap();
         }
     }
@@ -2614,7 +2412,7 @@ mod tests {
             let mut writer = db.writer().unwrap();
             assert_eq!(0, db.reader_tsns.live_reader_count());
             assert_eq!(Tsn(1), writer.tsn);
-            assert_eq!(PageID(0), writer.header_page_id);
+            assert_eq!(PageID(0), writer.header_page.page_id);
             db.commit(&mut writer).unwrap();
         }
 
@@ -3297,13 +3095,13 @@ mod tests {
             let tsn = Tsn(1001);
 
             let mut writer = Writer::new(
-                header_page_id,
+                header_page.clone(),
                 tsn,
                 header_node.next_page_id,
                 header_node.free_lists_tree_root_id,
                 header_node.events_tree_root_id,
                 header_node.tags_tree_root_id,
-                header_node.tracking_root_page_id,
+                header_node.tracking_tree_root_id,
                 header_node.next_position,
                 VERBOSE,
                 db.page_size,
@@ -3443,18 +3241,17 @@ mod tests {
             // Get latest header
             let header_page = db.get_latest_header_page().unwrap();
             let header_node = header_page.as_header_node().unwrap();
-            let header_page_id = header_page.page_id;
 
             // Create a writer
             let mut tsn = Tsn(100);
             let mut writer = Writer::new(
-                header_page_id,
+                header_page.clone(),
                 Tsn(header_node.tsn.0 + 1),
                 header_node.next_page_id,
                 header_node.free_lists_tree_root_id,
                 header_node.events_tree_root_id,
                 header_node.tags_tree_root_id,
-                header_node.tracking_root_page_id,
+                header_node.tracking_tree_root_id,
                 header_node.next_position,
                 VERBOSE,
                 db.page_size,
@@ -3767,17 +3564,16 @@ mod tests {
                 // Get latest header
                 let header_page = db.get_latest_header_page().unwrap();
                 let header_node = header_page.as_header_node().unwrap();
-                let header_page_id = header_page.page_id;
 
                 // Create a new writer
                 let mut writer = Writer::new(
-                    header_page_id,
+                    header_page.clone(),
                     Tsn(header_node.tsn.0 + 1),
                     header_node.next_page_id,
                     header_node.free_lists_tree_root_id,
                     header_node.events_tree_root_id,
                     header_node.tags_tree_root_id,
-                    header_node.tracking_root_page_id,
+                    header_node.tracking_tree_root_id,
                     header_node.next_position,
                     VERBOSE,
                     db.page_size,
@@ -3874,17 +3670,16 @@ mod tests {
             // Get latest header
             let header_page = db.get_latest_header_page().unwrap();
             let header_node = header_page.as_header_node().unwrap();
-            let header_page_id = header_page.page_id;
 
             // Create a writer
             let mut writer = Writer::new(
-                header_page_id,
+                header_page.clone(),
                 Tsn(header_node.tsn.0 + 1),
                 header_node.next_page_id,
                 header_node.free_lists_tree_root_id,
                 header_node.events_tree_root_id,
                 header_node.tags_tree_root_id,
-                header_node.tracking_root_page_id,
+                header_node.tracking_tree_root_id,
                 header_node.next_position,
                 VERBOSE,
                 db.page_size,
@@ -4098,17 +3893,16 @@ mod tests {
                 // Get latest header
                 let header_page = db.get_latest_header_page().unwrap();
                 let header_node = header_page.as_header_node().unwrap();
-                let header_page_id = header_page.page_id;
 
                 // Create a new writer
                 let mut writer = Writer::new(
-                    header_page_id,
+                    header_page.clone(),
                     Tsn(header_node.tsn.0 + 1),
                     header_node.next_page_id,
                     header_node.free_lists_tree_root_id,
                     header_node.events_tree_root_id,
                     header_node.tags_tree_root_id,
-                    header_node.tracking_root_page_id,
+                    header_node.tracking_tree_root_id,
                     header_node.next_position,
                     VERBOSE,
                     db.page_size,
@@ -4854,20 +4648,17 @@ mod tests {
 
             // 2) Read header[0], bump its schema_version, write it back via pager
             let h0 = mvcc.read_page(HEADER_PAGE_ID_0).expect("read header 0");
-            let mut h0 = match &h0.node {
-                Node::Header(node) => node.clone(),
-                _ => panic!("Page 0 is not a header"),
-            };
-            h0.schema_version = DB_SCHEMA_VERSION + 1;
+            let mut n0 = h0.as_header_node().unwrap().clone();
+            n0.schema_version = DB_SCHEMA_VERSION + 1;
 
             // Recreate a Page with modified header and write it
-            let page = Page::new(HEADER_PAGE_ID_0, Node::Header(h0));
+            let page = Page::new(HEADER_PAGE_ID_0, Node::Header(n0));
             {
-                let mut ws = mvcc.writer_state.lock().unwrap();
-                serialize_page_into(&mut ws.scratch, &page.node, mvcc.zero_fill_pages)
+                let mut buf = mvcc.page_buf.lock().unwrap();
+                serialize_page_into(&mut buf, &page.node, mvcc.zero_fill_pages)
                     .expect("serialize header page");
                 mvcc.pager
-                    .write_page(page.page_id, &ws.scratch)
+                    .write_page(page.page_id, &buf)
                     .expect("write modified header 0");
             }
 
@@ -5060,7 +4851,7 @@ mod high_level_mvcc_tests {
         let free_lists_tree_root_id_before = header_before.free_lists_tree_root_id;
         let events_tree_root_id_before = header_before.events_tree_root_id;
         let tags_tree_root_id_before = header_before.tags_tree_root_id;
-        let tracking_root_page_id_before = header_before.tracking_root_page_id;
+        let tracking_root_page_id_before = header_before.tracking_tree_root_id;
 
         let free_root_node_before = free_root_before.node.clone();
         let events_root_node_before = events_root_before.node.clone();
@@ -5095,7 +4886,7 @@ mod high_level_mvcc_tests {
         assert_eq!(tags_tree_root_id_before, header_after.tags_tree_root_id);
         assert_eq!(
             tracking_root_page_id_before,
-            header_after.tracking_root_page_id
+            header_after.tracking_tree_root_id
         );
 
         let free_root_after = uma

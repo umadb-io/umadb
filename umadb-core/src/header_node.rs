@@ -23,7 +23,7 @@ pub struct HeaderNode {
     pub next_position: Position,
     /// On-disk schema version for the header node
     pub schema_version: u32,
-    pub tracking_root_page_id: PageID,
+    pub tracking_tree_root_id: PageID,
 }
 
 impl Default for HeaderNode {
@@ -36,7 +36,7 @@ impl Default for HeaderNode {
             next_page_id: PageID(0),
             next_position: Position(0),
             schema_version: crate::db::DB_SCHEMA_VERSION,
-            tracking_root_page_id: PageID(0),
+            tracking_tree_root_id: PageID(0),
         }
     }
 }
@@ -47,7 +47,7 @@ impl HeaderNode {
     pub fn calc_serialized_size(&self) -> usize {
         let mut required_buf = 52;
         let mut flags = HeaderFlags::empty();
-        if self.tracking_root_page_id != PageID(0) {
+        if self.tracking_tree_root_id != PageID(0) {
             flags |= HeaderFlags::HAS_TRACKING_ROOT_ID;
             required_buf += 8;
         }
@@ -73,7 +73,7 @@ impl HeaderNode {
 
         // 3. Determine dynamic flags
         let mut flags = HeaderFlags::empty();
-        if self.tracking_root_page_id != PageID(0) {
+        if self.tracking_tree_root_id != PageID(0) {
             flags |= HeaderFlags::HAS_TRACKING_ROOT_ID;
         }
 
@@ -84,7 +84,7 @@ impl HeaderNode {
 
             // Write optional fields
             if flags.contains(HeaderFlags::HAS_TRACKING_ROOT_ID) {
-                cursor.write_all(&self.tracking_root_page_id.0.to_le_bytes())?;
+                cursor.write_all(&self.tracking_tree_root_id.0.to_le_bytes())?;
             }
         }
 
@@ -163,7 +163,7 @@ impl HeaderNode {
             tags_tree_root_id: PageID(tags_root_id),
             next_position: Position(next_position),
             schema_version,
-            tracking_root_page_id: PageID(tracking_tree_root_id),
+            tracking_tree_root_id: PageID(tracking_tree_root_id),
         })
     }
 }
@@ -182,7 +182,7 @@ mod tests {
             tags_tree_root_id: PageID(321),
             next_position: Position(9876543210),
             schema_version: crate::db::DB_SCHEMA_VERSION,
-            tracking_root_page_id: PageID(0),
+            tracking_tree_root_id: PageID(0),
         };
 
         assert_eq!(52, header_node.calc_serialized_size());
@@ -237,8 +237,8 @@ mod tests {
         assert_eq!(header_node.next_position, deserialized.next_position);
         assert_eq!(header_node.schema_version, deserialized.schema_version);
         assert_eq!(
-            header_node.tracking_root_page_id,
-            deserialized.tracking_root_page_id
+            header_node.tracking_tree_root_id,
+            deserialized.tracking_tree_root_id
         );
     }
 
@@ -253,7 +253,7 @@ mod tests {
             tags_tree_root_id: PageID(321),
             next_position: Position(9876543210),
             schema_version: crate::db::DB_SCHEMA_VERSION,
-            tracking_root_page_id: PageID(953),
+            tracking_tree_root_id: PageID(953),
         };
 
         assert_eq!(62, header_node.calc_serialized_size());
@@ -314,8 +314,8 @@ mod tests {
         assert_eq!(header_node.next_position, deserialized.next_position);
         assert_eq!(header_node.schema_version, deserialized.schema_version);
         assert_eq!(
-            header_node.tracking_root_page_id,
-            deserialized.tracking_root_page_id
+            header_node.tracking_tree_root_id,
+            deserialized.tracking_tree_root_id
         );
     }
 }
@@ -335,7 +335,7 @@ mod header_node_legacy_tests {
             tags_tree_root_id: PageID(5),
             next_position: Position(6),
             schema_version: crate::db::DB_SCHEMA_VERSION,
-            tracking_root_page_id: PageID(0),
+            tracking_tree_root_id: PageID(0),
         };
         let mut bytes52 = [0u8; 52];
         header_node.serialize_into(&mut bytes52).unwrap();

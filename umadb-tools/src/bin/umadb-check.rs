@@ -153,7 +153,7 @@ fn real_main() -> DcbResult<()> {
                                 event_leaf_page_ids.push(page_id);
                             }
                             Node::Header(h) => {
-                                let flags_str = if h.tracking_root_page_id.0 != 0 {
+                                let flags_str = if h.tracking_tree_root_id.0 != 0 {
                                     "HAS_TRACKING_ROOT_ID"
                                 } else {
                                     "none"
@@ -217,7 +217,7 @@ fn real_main() -> DcbResult<()> {
             header.free_lists_tree_root_id,
             header.events_tree_root_id,
             header.tags_tree_root_id,
-            header.tracking_root_page_id
+            header.tracking_tree_root_id
         );
     }
     // Stage 1 results
@@ -233,7 +233,7 @@ fn real_main() -> DcbResult<()> {
         header.next_page_id.0,
         header.next_position.0,
         header.schema_version,
-        if header.tracking_root_page_id.0 != 0 {
+        if header.tracking_tree_root_id.0 != 0 {
             "HAS_TRACKING_ROOT_ID"
         } else {
             "none"

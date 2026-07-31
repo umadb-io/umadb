@@ -222,7 +222,7 @@ fn raise_open_file_limit_inner() {
         };
         if libc::getrlimit(libc::RLIMIT_NOFILE, &mut lim) != 0 {
             eprintln!(
-                "UmaDB: could not read open-file limit (RLIMIT_NOFILE): {}",
+                "UmaDB: could not read open-file limit: {}",
                 std::io::Error::last_os_error()
             );
             return;
@@ -230,7 +230,7 @@ fn raise_open_file_limit_inner() {
         let previous = lim.rlim_cur;
         if lim.rlim_max != libc::RLIM_INFINITY && previous >= lim.rlim_max {
             println!(
-                "UmaDB open-file limit (RLIMIT_NOFILE): soft {previous} already at hard limit {}",
+                "UmaDB open-file limit: soft {previous} already at hard limit {}",
                 lim.rlim_max
             );
             return;
@@ -255,7 +255,7 @@ fn raise_open_file_limit_inner() {
             };
             if libc::setrlimit(libc::RLIMIT_NOFILE, &new) == 0 {
                 println!(
-                    "UmaDB raised open-file limit (RLIMIT_NOFILE): soft {previous} -> {target}"
+                    "UmaDB raised open-file limit: soft {previous} -> {target}"
                 );
                 return;
             }
@@ -263,12 +263,12 @@ fn raise_open_file_limit_inner() {
         if !attempted {
             // Soft limit is already at least as high as anything we'd set.
             println!(
-                "UmaDB open-file limit (RLIMIT_NOFILE): soft {previous} is already sufficient"
+                "UmaDB open-file limit: soft {previous} is already sufficient"
             );
             return;
         }
         eprintln!(
-            "UmaDB: could not raise open-file limit (RLIMIT_NOFILE) from soft {previous}: {}. \
+            "UmaDB: could not raise open-file limit from soft {previous}: {}. \
              Consider raising it manually (e.g. `ulimit -n 262144`).",
             std::io::Error::last_os_error()
         );
