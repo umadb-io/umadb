@@ -28,7 +28,7 @@ def run_bench(config):
     env["DURATION"] = DURATION
     
     print(f"--- Running bench with: PW={config['UMADB_PIPELINED_WRITER']}, Cache={config['UMADB_PAGE_CACHE_MAX_MB']}MB ---")
-    cmd = ["make", "bench-apend-cond-1"]
+    cmd = ["make", "bench-append-cond-1"]
     process = subprocess.Popen(cmd, env=env)
     process.wait()
     
