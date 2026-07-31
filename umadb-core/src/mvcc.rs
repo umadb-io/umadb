@@ -854,38 +854,6 @@ impl Mvcc {
         Ok((prepared_commit, wet_pages))
     }
 
-    pub fn write_and_fsync(&self, writer: &mut Writer) -> DcbResult<()> {
-        // Write all dirty pages (except for the header page) to the file
-        if !writer.dirty.is_empty() {
-            let count = {
-                // let num_dirty = writer.dirty.len();
-                // println!("Number dirty pages: {num_dirty}");
-                // if num_dirty >= 0 {
-                //     self.write_pages_parallel(writer.dirty.values())?
-                // } else {
-                //     self.write_pages(writer.dirty.values())?
-                // }
-                self.write_pages(writer.dirty.values())?
-            };
-            if self.verbose {
-                println!("Wrote {} dirty page(s) to file", count);
-            }
-        }
-
-        // Sync the file to disk
-        self.fsync()?;
-
-        // Mutate the owned header instance and serialize into the pre-allocated buffer
-        // Sync the file to disk
-        self.fsync()?;
-
-        if self.verbose {
-            println!("Committed writer with {:?}", writer.tsn);
-        }
-
-        Ok(())
-    }
-
     pub fn update_page_cache(&self, mut wet_pages: HashMap<PageID, Arc<Page>>) -> DcbResult<()> {
         // Cache the new pages without cloning by draining dirty pages.
         if let Some(ref page_cache) = self.page_cache {
