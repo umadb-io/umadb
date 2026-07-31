@@ -831,6 +831,26 @@ impl Mvcc {
         for (page_id, page) in drained_pages {
             wet_pages.insert(page_id, Arc::new(page));
         }
+
+        // Advance the writer so it is primed for the NEXT pipelined batch. The
+        // writer is persisted across batches (it is the sole authority on future
+        // DB state and cannot be re-derived from the header, which lags behind by
+        // one in-flight batch), so the bookkeeping that `Mvcc::writer()` used to do
+        // per batch must be done here instead:
+        //  - flip to the header slot we just generated (headers are double-buffered),
+        //  - bump the TSN. Every committed batch MUST have a strictly greater TSN:
+        //    `get_latest_header_page` picks the higher-TSN slot, `reader()`'s TOCTOU
+        //    guard assumes the TSN advances when a writer commits, and page
+        //    reclamation gates reuse on the freed TSN vs. the smallest live reader
+        //    TSN. Note frees were already stamped with the pre-bump TSN above.
+        //  - clear the per-page deserialization cache. It is a `PageID -> content`
+        //    cache that is only sound while a page ID's content is immutable — true
+        //    within a single batch, but false across batches once a freed page ID is
+        //    reused, which would otherwise return stale nodes for that ID.
+        writer.header_page_id = alternate_header_page_id;
+        writer.tsn = Tsn(writer.tsn.0 + 1);
+        writer.deserialized.clear();
+
         Ok((prepared_commit, wet_pages))
     }
 
@@ -1235,15 +1255,26 @@ impl Writer {
     }
 
     pub fn find_reusable_page_ids(&mut self, mvcc: &Mvcc) -> DcbResult<()> {
+        // Find the smallest live reader TSN (O(log n): the leftmost key of the multiset)
+        let smallest_reader_tsn = mvcc.reader_tsns.min();
+        self.find_reusable_page_ids_snap(mvcc, smallest_reader_tsn)
+    }
+
+    /// Snapshot-aware variant used by the pipelined writer thread. It reads free-list
+    /// pages through an `MvccSnapshot` so it can see the previous in-flight batch's
+    /// not-yet-durable `wet_pages`, and takes the smallest live reader TSN explicitly
+    /// (the caller reads it from the base `Mvcc`).
+    pub fn find_reusable_page_ids_snap<T: MvccSnapshot>(
+        &mut self,
+        mvcc: &T,
+        smallest_reader_tsn: Option<Tsn>,
+    ) -> DcbResult<()> {
         let verbose = self.verbose;
         let mut reusable_page_ids: VecDeque<(PageID, Tsn)> = VecDeque::new();
         // Get free page IDs
         if verbose {
             println!("Finding reusable page IDs for TSN {:?}...", self.tsn);
         }
-
-        // Find the smallest live reader TSN (O(log n): the leftmost key of the multiset)
-        let smallest_reader_tsn = mvcc.reader_tsns.min();
         if verbose {
             println!("Smallest reader TSN: {smallest_reader_tsn:?}");
         }

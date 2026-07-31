@@ -8,7 +8,7 @@ publish = false
 
 [dependencies]
 umadb-dcb = { path = "../umadb-dcb" }
-umadb-core = { path = "../umadb-core" }
+umadb-core = { path = "../umadb-core", features = ["test-utils"] }
 umadb-client = { path = "../umadb-client" }
 umadb-server = { path = "../umadb-server", features = ["test-utils"] }
 umadb-proto = { path = "../umadb-proto" }

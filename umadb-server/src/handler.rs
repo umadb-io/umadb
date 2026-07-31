@@ -6,7 +6,7 @@ use tokio::sync::mpsc::Receiver;
 use tokio::sync::watch::Sender;
 use umadb_core::common::{PageID, Position};
 use umadb_core::db::{clone_dcb_error, is_integrity_error, is_invalid_argument_error, process_append_request, read_conditional, shadow_for_batch_abort, UmaDb};
-use umadb_core::mvcc::{spawn_commit_io, Mvcc, StorageOptions, WriterSnapshot};
+use umadb_core::mvcc::{spawn_commit_io, Mvcc, StorageOptions, Writer, WriterSnapshot};
 use umadb_core::page::Page;
 use umadb_dcb::{DcbAppendCondition, DcbError, DcbEvent, DcbQuery, DcbResult, DcbSequencedEvent, TrackingInfo};
 use crate::APPEND_BATCH_MAX_EVENTS;
@@ -183,8 +183,28 @@ fn writer_thread(
     let mut wet_pages: HashMap<PageID, Arc<Page>> = HashMap::new();
     let mut inflight_io: Option<InflightCommit> = None;
 
-    // Helper closure to avoid duplicating the acknowledgment logic
-    let acknowledge_inflight = |inflight: InflightCommit| {
+    // The writer is persisted across batches. Batch N is written to disk in the
+    // background while we build batch N+1, so batch N+1's starting state (tree
+    // roots, `next_page_id`, `next_position`, TSN) cannot be re-derived from the
+    // header — the header still reflects the last acknowledged batch, one behind
+    // the in-flight one. Re-deriving it (the old `mvcc.writer()` per batch) made
+    // two batches allocate the same page IDs and corrupted the trees. Instead we
+    // keep a single `active_writer` and let each batch continue where the previous
+    // one left off; `prepare_commit` advances it (TSN, header slot, clears the
+    // per-page cache) so it is primed for the next batch.
+    let mut active_writer = match mvcc.writer() {
+        Ok(w) => w,
+        Err(e) => {
+            eprintln!("Fatal error initializing writer thread: {e:?}");
+            return;
+        }
+    };
+
+    // Acknowledge a completed in-flight commit: wait for its disk I/O, then on
+    // success publish its pages to the cache, reply to clients and bump the head.
+    // Returns whether the I/O succeeded — a failure means `active_writer` was built
+    // on top of a batch that never became durable, so the caller must roll back.
+    let acknowledge_inflight = |inflight: InflightCommit, mvcc: &Mvcc| -> bool {
         match inflight.io_rx.blocking_recv() {
             Ok(Ok(())) => {
                 let _ = mvcc.update_page_cache(inflight.wet_pages_to_cache);
@@ -192,17 +212,33 @@ fn writer_thread(
                     let _ = tx.send(res);
                 }
                 let _ = head_watch_tx.send(inflight.new_head);
+                true
             }
             Ok(Err(db_err)) => {
                 for tx in inflight.responders {
                     let _ = tx.send(Err(clone_dcb_error(&db_err)));
                 }
+                false
             }
             Err(_) => {
                 // Background thread panicked or dropped
                 for tx in inflight.responders {
                     let _ = tx.send(Err(DcbError::InternalError("Disk I/O thread failed".into())));
                 }
+                false
+            }
+        }
+    };
+
+    // Reset the writer to the latest durable state after an I/O failure discards
+    // the in-flight batch (and the not-yet-durable batch we built on top of it).
+    let rollback = |active_writer: &mut Writer, wet_pages: &mut HashMap<PageID, Arc<Page>>| {
+        wet_pages.clear();
+        match mvcc.writer() {
+            Ok(w) => *active_writer = w,
+            Err(e) => {
+                // The durable state itself is unreadable; nothing safe to do but stop.
+                eprintln!("Fatal error rolling back writer after I/O failure: {e:?}");
             }
         }
     };
@@ -237,18 +273,23 @@ fn writer_thread(
                 } => {
                     let mut total_events = events.len();
 
-                    let mut writer = match mvcc.writer() {
-                        Ok(writer) => writer,
-                        Err(err) => {
-                            let _ = response_tx.send(Err(err));
-                            continue;
-                        }
-                    };
-
                     let snapshot = WriterSnapshot {
                         base_mvcc: mvcc,
                         wet_pages: &wet_pages,
                     };
+
+                    // Refresh the set of reusable (freed and now-reclaimable) page
+                    // IDs for this batch. The old `mvcc.writer()` did this per batch;
+                    // with a persisted writer we must do it explicitly, reading the
+                    // free-list through the snapshot so it sees the previous batch's
+                    // not-yet-durable pages, and gating on the smallest live reader
+                    // TSN so we never reuse a page a live reader can still see.
+                    if let Err(e) = active_writer
+                        .find_reusable_page_ids_snap(&snapshot, mvcc.reader_tsns.min())
+                    {
+                        let _ = response_tx.send(Err(clone_dcb_error(&e)));
+                        continue;
+                    }
 
                     let mut responders = vec![response_tx];
                     let mut results = Vec::new();
@@ -256,7 +297,7 @@ fn writer_thread(
                     let mut abort_err = None;
 
                     let result = process_append_request(
-                        events, condition, tracking_info, &snapshot, &mut writer, cancel, mvcc.page_size,
+                        events, condition, tracking_info, &snapshot, &mut active_writer, cancel, mvcc.page_size,
                     );
 
                     match &result {
@@ -284,7 +325,7 @@ fn writer_thread(
                                 responders.push(response_tx);
 
                                 let res_next = process_append_request(
-                                    events, condition, tracking_info, &snapshot, &mut writer, cancel, mvcc.page_size,
+                                    events, condition, tracking_info, &snapshot, &mut active_writer, cancel, mvcc.page_size,
                                 );
 
                                 match &res_next {
@@ -308,10 +349,23 @@ fn writer_thread(
                     // We finished building Batch N+1. Before we can commit it,
                     // we MUST wait for Batch N to finish writing to disk.
                     if let Some(inflight) = inflight_io.take() {
-                        acknowledge_inflight(inflight);
+                        if !acknowledge_inflight(inflight, mvcc) {
+                            // Batch N's disk I/O failed. Batch N+1 was built on top of
+                            // it, so both are invalid. Reset from durable state, reject
+                            // the in-progress batch, and start fresh.
+                            rollback(&mut active_writer, &mut wet_pages);
+                            for tx in responders {
+                                let _ = tx.send(Err(DcbError::InternalError(
+                                    "batch discarded: preceding commit failed".into(),
+                                )));
+                            }
+                            continue;
+                        }
                     }
 
-                    // Handle aborts for the new batch
+                    // Handle aborts for the new batch. A non-integrity error means the
+                    // writer's in-memory state is now inconsistent (a partial mutation),
+                    // so we must roll back rather than commit anything.
                     if let (Some(failed_at), Some(orig_err)) = (abort_idx, abort_err) {
                         let shadow = shadow_for_batch_abort(&orig_err);
                         for (i, tx) in responders.into_iter().enumerate() {
@@ -321,13 +375,14 @@ fn writer_thread(
                                 let _ = tx.send(Err(clone_dcb_error(&shadow)));
                             }
                         }
+                        rollback(&mut active_writer, &mut wet_pages);
                         continue;
                     }
 
                     // --- DISPATCH BATCH N+1 ---
-                    match mvcc.prepare_commit(&mut writer, &snapshot) {
+                    match mvcc.prepare_commit(&mut active_writer, &snapshot) {
                         Ok((prepared_commit, new_wet_pages)) => {
-                            let last_committed = writer.next_position.0.saturating_sub(1);
+                            let last_committed = active_writer.next_position.0.saturating_sub(1);
                             let new_head = if last_committed == 0 { None } else { Some(last_committed) };
 
                             wet_pages = new_wet_pages.clone();
@@ -346,6 +401,9 @@ fn writer_thread(
                             for tx in responders {
                                 let _ = tx.send(Err(clone_dcb_error(&e)));
                             }
+                            // prepare_commit may have partially advanced the writer;
+                            // reset from durable state before the next batch.
+                            rollback(&mut active_writer, &mut wet_pages);
                         }
                     }
                 }
@@ -355,13 +413,15 @@ fn writer_thread(
             // The channel is empty, but we have inflight I/O.
             // Wait for the disk to finish so we can acknowledge the clients!
             if let Some(inflight) = inflight_io.take() {
-                acknowledge_inflight(inflight);
+                if !acknowledge_inflight(inflight, mvcc) {
+                    rollback(&mut active_writer, &mut wet_pages);
+                }
             }
         }
     }
 
     // 6. SHUTDOWN REAPING
     if let Some(inflight) = inflight_io.take() {
-        acknowledge_inflight(inflight);
+        acknowledge_inflight(inflight, mvcc);
     }
 }
