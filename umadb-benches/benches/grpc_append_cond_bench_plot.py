@@ -153,4 +153,6 @@ plt.ylim(bottom=y_min)
 
 plt.tight_layout()
 plt.savefig(f"images/UmaDB-append-bench-cond-{EVENTS_PER_REQUEST}-per-request{_with_docker.replace('_', '-')}.png", format="png", dpi=300)
-plt.show()
+
+if "GITHUB_ACTIONS" not in os.environ:
+    plt.show()

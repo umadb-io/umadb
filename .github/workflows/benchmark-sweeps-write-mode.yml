@@ -1,0 +1,39 @@
+name: Benchmark Sweeps - Write Mode
+
+on:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  UV_VERSION: 0.11.7
+
+jobs:
+  append-cond-bench-sweep:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v6
+    - name: Install Protoc
+      uses: arduino/setup-protoc@v3
+      with:
+        repo-token: ${{ secrets.GITHUB_TOKEN }}
+    - uses: actions/setup-python@v6
+      with:
+        python-version: "3.10"
+    - name: Install UV
+      run: make install-uv
+    - name: Install Python tools
+      run: make install-python-tools
+    - name: Run Append Cond Bench Sweep
+      run: |
+        rm -rf images/*
+        uv@${{ env.UV_VERSION }} run python scripts/sweep_append_cond_bench.py
+      env:
+        MAX_THREADS: 64
+        MIN_THREADS: 1
+        INITIAL: 100000
+        DURATION: 15
+    - name: Upload Plots
+      uses: actions/upload-artifact@v4
+      with:
+        name: benchmark-plots
+        path: images/*.png

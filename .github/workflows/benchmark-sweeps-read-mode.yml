@@ -1,10 +1,7 @@
-name: Benchmark Sweeps
+name: Benchmark Sweeps - Read Mode
 
 on:
-  push:
-    branches: [ "main" ]
-  pull_request:
-    branches: [ "main" ]
+  workflow_dispatch:
 
 env:
   CARGO_TERM_COLOR: always

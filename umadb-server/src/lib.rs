@@ -941,23 +941,3 @@ pub async fn start_server<P: AsRef<std::path::Path>>(
     start_server_with_options(options, shutdown_rx).await
 }
 
-#[cfg(any(test, feature = "test-utils"))]
-pub async fn start_server_pipelined_writer<P: AsRef<std::path::Path>>(
-    db_path: P,
-    addr: &str,
-    shutdown_rx: oneshot::Receiver<()>,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let pipelined_writer_default = true;
-    let pipelined_writer = std::env::var("UMADB_PIPELINED_WRITER")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(pipelined_writer_default);
-
-    let options = ServerOptions {
-        listen_addr: addr.to_string(),
-        tls: None,
-        api_key: None,
-        storage: StorageOptions::default().db_path(db_path.as_ref()).pipelined_writer(pipelined_writer),
-    };
-    start_server_with_options(options, shutdown_rx).await
-}
