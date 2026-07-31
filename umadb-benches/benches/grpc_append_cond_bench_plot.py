@@ -138,7 +138,10 @@ plt.xscale('log')
 plt.yscale('log')
 plt.xlabel('Clients')
 plt.ylabel('Total events/sec')
-plt.title(f'UmaDB: Conditional Append Operations{' With Docker' if _with_docker else ''} ({EVENTS_PER_REQUEST} event{"s" if EVENTS_PER_REQUEST > 1 else ""} per request)')
+title_with_docker = "With Docker " if _with_docker else ""
+title_events_per_request = f"({EVENTS_PER_REQUEST} event{'s' if EVENTS_PER_REQUEST > 1 else ''} per request)"
+title_with_pipeline = f"({EVENTS_PER_REQUEST} event{'s' if EVENTS_PER_REQUEST > 1 else ''} per request)"
+plt.title(f"UmaDB: Conditional Append Operations {title_with_docker}{title_events_per_request}")
 # Show y-axis grid lines and x-axis grid lines only at major ticks (the labeled x ticks)
 plt.grid(True, which='both', axis='y', alpha=0.3)
 plt.grid(True, which='major', axis='x', alpha=0.3)
