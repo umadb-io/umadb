@@ -14,3 +14,6 @@ pub mod slice_reader;
 pub mod tags_tree;
 pub mod tags_tree_nodes;
 pub mod tracking_tree_nodes;
+pub mod writer_thread_blocking;
+pub mod writer_thread_request;
+pub mod writer_thread_pipelining;

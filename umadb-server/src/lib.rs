@@ -22,7 +22,7 @@ use std::convert::Infallible;
 use std::future::Future;
 use std::task::{Context, Poll};
 use tonic::server::NamedService;
-use handler::UmaDbRequestHandler;
+use handler::UmaDbServerRequestHandler;
 use umadb_proto::status_from_dcb_error;
 
 mod handler;
@@ -404,7 +404,7 @@ fn readers_concurrency_limit() -> usize {
 
 // gRPC server implementation
 pub struct UmaDbServer {
-    pub(crate) request_handler: UmaDbRequestHandler,
+    pub(crate) request_handler: UmaDbServerRequestHandler,
     shutdown_watch_rx: watch::Receiver<bool>,
     api_key: Option<String>,
     // Limits concurrent blocking read/subscribe batch-scans (see `read_scan_concurrency_limit`).
@@ -417,7 +417,7 @@ impl UmaDbServer {
         api_key: Option<String>,
         storage_options: StorageOptions,
     ) -> DcbResult<Self> {
-        let request_handler = UmaDbRequestHandler::new(storage_options)?;
+        let request_handler = UmaDbServerRequestHandler::new(storage_options)?;
         let readers_semaphore = Arc::new(Semaphore::new(readers_concurrency_limit()));
         Ok(Self {
             request_handler,

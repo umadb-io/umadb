@@ -62,6 +62,7 @@ pub struct StorageOptions {
     pub page_cache_max_pages: usize,
     pub page_cache_max_mb: usize,
     pub zero_fill_pages: bool,
+    pub pipelined_writer: bool,
 }
 
 impl Default for StorageOptions {
@@ -73,6 +74,7 @@ impl Default for StorageOptions {
             page_cache_max_pages: 0,
             page_cache_max_mb: 0,
             zero_fill_pages: true,
+            pipelined_writer: false,
         }
     }
 }
@@ -116,6 +118,13 @@ impl StorageOptions {
     pub fn zero_fill_pages(self, zero_fill_pages: bool) -> Self {
         Self {
             zero_fill_pages,
+            ..self
+        }
+    }
+
+    pub fn pipelined_writer(self, pipelined_writer: bool) -> Self {
+        Self {
+            pipelined_writer,
             ..self
         }
     }
@@ -245,6 +254,15 @@ impl Mvcc {
                 "true"
             } else {
                 "false"
+            }
+        );
+
+        println!(
+            "UmaDB write mode: {}",
+            if options.pipelined_writer {
+                "async pipeline"
+            } else {
+                "synchronous blocking"
             }
         );
 

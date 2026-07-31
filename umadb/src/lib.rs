@@ -82,6 +82,10 @@ pub struct Args {
     /// Zero-fill pages
     #[arg(long = "zero-fill-pages", env = "UMADB_ZERO_FILL_PAGES", default_value = "true", action = clap::ArgAction::Set)]
     zero_fill_pages: bool,
+
+    /// Pipelined writer
+    #[arg(long = "pipelined-writer", env = "UMADB_PIPELINED_WRITER", default_value = "false", action = clap::ArgAction::Set)]
+    pipelined_writer: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -95,6 +99,7 @@ pub struct CliOptions {
     pub page_cache_max_pages: usize,
     pub page_cache_max_mb: usize,
     pub zero_fill_pages: bool,
+    pub pipelined_writer: bool,
 }
 
 impl Default for CliOptions {
@@ -109,6 +114,7 @@ impl Default for CliOptions {
             page_cache_max_pages: 0,
             page_cache_max_mb: 0,
             zero_fill_pages: true,
+            pipelined_writer: false,
         }
     }
 }
@@ -125,6 +131,7 @@ impl CliOptions {
             page_cache_max_pages: args.page_cache_max_pages,
             page_cache_max_mb: args.page_cache_max_mb,
             zero_fill_pages: args.zero_fill_pages,
+            pipelined_writer: args.pipelined_writer,
         }
     }
 }
@@ -149,7 +156,8 @@ impl CliOptions {
             .read_method(self.read_method)
             .page_cache_max_pages(self.page_cache_max_pages)
             .page_cache_max_mb(self.page_cache_max_mb)
-            .zero_fill_pages(self.zero_fill_pages);
+            .zero_fill_pages(self.zero_fill_pages)
+            .pipelined_writer(self.pipelined_writer);
 
         Ok(ServerOptions {
             listen_addr: self.listen_addr.clone(),
