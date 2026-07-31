@@ -25,6 +25,7 @@ use std::thread::sleep;
 use std::time::Duration;
 use umadb_dcb::DcbError::InternalError;
 use umadb_dcb::{DcbError, DcbQuery, DcbResult};
+use tokio::sync::oneshot;
 
 const GET_LATEST_HEADER_RETRIES: usize = 5;
 const GET_LATEST_HEADER_DELAY: Duration = Duration::from_millis(10);
@@ -215,6 +216,11 @@ pub struct Mvcc {
     pub zero_fill_pages: bool,
     read_method: ReadMethod,
     page_cache: Option<Cache<PageID, Arc<Page>>>,
+}
+
+pub struct PreparedCommit {
+    pages_to_write: Vec<(PageID, Vec<u8>)>,
+    header_to_write: (PageID, Vec<u8>)
 }
 
 impl Mvcc {
@@ -614,6 +620,48 @@ impl Mvcc {
         Ok(())
     }
 
+    fn generate_header_bytes(
+        &self,
+        page_id: PageID,
+        tsn: Tsn,
+        free_lists_tree_root_id: PageID,
+        events_tree_root_id: PageID,
+        tags_tree_root_id: PageID,
+        tracking_root_page_id: PageID,
+        next_page_id: PageID,
+        next_position: Position,
+        page_size: usize,
+    ) -> DcbResult<(Vec<u8>, Page)> {
+        let schema_version = {
+            let ws = self.writer_state.lock().unwrap();
+            let headers_idx = if page_id == HEADER_PAGE_ID_0 { 0 } else { 1 };
+            match &ws.headers[headers_idx].node {
+                Node::Header(node) => {
+                    node.schema_version
+                }
+                _ => panic!("Shouldn't get here: header should be a header"),
+            }
+        };
+        let page = Page {
+            page_id,
+            node: Node::Header(
+                HeaderNode {
+                    tsn,
+                    free_lists_tree_root_id,
+                    events_tree_root_id,
+                    tags_tree_root_id,
+                    next_page_id,
+                    next_position,
+                    schema_version,
+                    tracking_root_page_id,
+                }
+            )
+        };
+        let mut buf: Vec<u8> = vec![0u8; page_size];
+        serialize_page_into(&mut buf, &page.node, self.zero_fill_pages)?;
+        Ok((buf, page))
+    }
+
     pub fn reader(&self) -> DcbResult<Reader> {
         // Need to be careful here about time-of-check to time-of-use (TOCTOU).
         loop {
@@ -738,6 +786,54 @@ impl Mvcc {
     //     count
     // }
 
+    pub fn prepare_commit<T: MvccSnapshot>(
+        &self, writer: &mut Writer, mvcc: &T
+    ) -> DcbResult<(PreparedCommit, HashMap<PageID, Arc<Page>>)> {
+
+        writer.process_freed_page_ids(mvcc, self.max_node_size, self.page_size)?;
+
+        let drained_pages = writer.dirty.drain().collect::<Vec<_>>();
+
+        let mut wet_pages = HashMap::new();
+
+        // Generate header bytes.
+        let alternate_header_page_id =
+            if writer.header_page_id == HEADER_PAGE_ID_0 {
+                HEADER_PAGE_ID_1
+            } else {
+                HEADER_PAGE_ID_0
+            };
+        let (next_header_data, header_page) = self.generate_header_bytes(
+            alternate_header_page_id,
+            writer.tsn,
+            writer.free_lists_tree_root_id,
+            writer.events_tree_root_id,
+            writer.tags_tree_root_id,
+            writer.tracking_tree_root_id,
+            writer.next_page_id,
+            writer.next_position,
+            self.page_size,
+        )?;
+        wet_pages.insert(alternate_header_page_id, Arc::new(header_page));
+
+        let mut pages_to_write: Vec<(PageID, Vec<u8>)> = Vec::with_capacity(drained_pages.len());
+        for i in 0..drained_pages.len() {
+            let mut page_buf = vec![0u8; crate::mvcc::DEFAULT_PAGE_SIZE];
+            let (page_id, drained_page) = &drained_pages[i];
+            serialize_page_into(&mut page_buf, &drained_page.node, true)?;
+            pages_to_write.push((page_id.clone(), page_buf))
+        }
+
+        let prepared_commit = PreparedCommit {
+            pages_to_write,
+            header_to_write: (alternate_header_page_id, next_header_data),
+        };
+        for (page_id, page) in drained_pages {
+            wet_pages.insert(page_id, Arc::new(page));
+        }
+        Ok((prepared_commit, wet_pages))
+    }
+
     pub fn write_and_fsync(&self, writer: &mut Writer) -> DcbResult<()> {
         // Write all dirty pages (except for the header page) to the file
         if !writer.dirty.is_empty() {
@@ -760,23 +856,6 @@ impl Mvcc {
         self.fsync()?;
 
         // Mutate the owned header instance and serialize into the pre-allocated buffer
-        let alternate_header_page_id =
-            if writer.header_page_id == HEADER_PAGE_ID_0 {
-                HEADER_PAGE_ID_1
-            } else {
-                HEADER_PAGE_ID_0
-            };
-        self.update_header(
-            alternate_header_page_id,
-            writer.tsn,
-            writer.free_lists_tree_root_id,
-            writer.events_tree_root_id,
-            writer.tags_tree_root_id,
-            writer.tracking_tree_root_id,
-            writer.next_page_id,
-            writer.next_position,
-        )?;
-
         // Sync the file to disk
         self.fsync()?;
 
@@ -787,29 +866,13 @@ impl Mvcc {
         Ok(())
     }
 
-    pub fn update_page_cache(&self, writer: &mut Writer) -> DcbResult<()> {
+    pub fn update_page_cache(&self, mut wet_pages: HashMap<PageID, Arc<Page>>) -> DcbResult<()> {
         // Cache the new pages without cloning by draining dirty pages.
         if let Some(ref page_cache) = self.page_cache {
-            for (page_id, page) in writer.dirty.drain() {
-                page_cache.insert(page_id, Arc::new(page));
+            for (page_id, page) in wet_pages.drain() {
+                page_cache.insert(page_id, page);
             }
-        } else {
-            writer.dirty.clear();
         }
-
-        // Cache the header page.
-        // Mutate the owned header instance and serialize into the pre-allocated buffer
-        let alternate_header_page_idx =
-            if writer.header_page_id == HEADER_PAGE_ID_0 {
-                1
-            } else {
-                0
-            };
-        let header_page = self.writer_state.lock().unwrap().headers[alternate_header_page_idx].clone();
-        if let Some(ref page_cache) = self.page_cache {
-            page_cache.insert(header_page.page_id, Arc::new(header_page));
-        }
-
         Ok(())
     }
 
@@ -927,6 +990,42 @@ impl Mvcc {
     }
 }
 
+
+pub fn spawn_commit_io(
+    mvcc: Arc<Mvcc>,
+    prepared: PreparedCommit
+) -> oneshot::Receiver<DcbResult<()>> {
+    let (tx, rx) = oneshot::channel();
+    std::thread::spawn(move || {
+        let _ = tx.send(do_commit_io(mvcc, prepared));
+    });
+
+    rx
+}
+
+pub fn do_commit_io(
+    mvcc: Arc<Mvcc>,
+    prepared: PreparedCommit
+) -> DcbResult<()> {
+
+    // 1. Write Data Pages
+    for (page_id, page_data) in prepared.pages_to_write {
+        mvcc.pager.write_page(page_id, &page_data)?;
+    }
+
+    // 2. Fsync Data
+    mvcc.fsync()?;
+
+    // 3. Write Header
+    let (page_id, page_data) = prepared.header_to_write;
+    mvcc.pager.write_page(page_id, &page_data)?;
+
+    // 4. Fsync Header
+    mvcc.fsync()?;
+
+    Ok(())
+}
+
 impl MvccSnapshot for Mvcc {
     fn read_page(&self, page_id: PageID) -> DcbResult<Arc<Page>> {
         self.read_page(page_id)
@@ -935,11 +1034,11 @@ impl MvccSnapshot for Mvcc {
 
 pub struct WriterSnapshot<'a> {
     // Fully durable pages.
-    base_mvcc: &'a Mvcc,
+    pub base_mvcc: &'a Mvcc,
 
     // The dirty pages modified in the previous batch
     // that haven't been fully committed/fsynced yet.
-    wet_pages: HashMap<PageID, Arc<Page>>,
+    pub wet_pages: &'a HashMap<PageID, Arc<Page>>,
 }
 
 impl<'a> MvccSnapshot for WriterSnapshot<'a> {

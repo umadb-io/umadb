@@ -1,11 +1,13 @@
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::thread;
 use tokio::sync::{mpsc, oneshot, watch};
 use tokio::sync::mpsc::Receiver;
 use tokio::sync::watch::Sender;
-use umadb_core::common::Position;
+use umadb_core::common::{PageID, Position};
 use umadb_core::db::{clone_dcb_error, is_integrity_error, is_invalid_argument_error, process_append_request, read_conditional, shadow_for_batch_abort, UmaDb};
-use umadb_core::mvcc::{Mvcc, StorageOptions};
+use umadb_core::mvcc::{spawn_commit_io, Mvcc, StorageOptions, WriterSnapshot};
+use umadb_core::page::Page;
 use umadb_dcb::{DcbAppendCondition, DcbError, DcbEvent, DcbQuery, DcbResult, DcbSequencedEvent, TrackingInfo};
 use crate::APPEND_BATCH_MAX_EVENTS;
 
@@ -48,214 +50,13 @@ impl UmaDbRequestHandler {
         // Spawn a thread for processing writer requests.
         let mvcc_for_writer = mvcc.clone();
         let head_tx_writer = head_watch_tx.clone();
-        thread::spawn(move || Self::writer_thread(mvcc_for_writer, writer_request_rx, head_tx_writer));
+        thread::spawn(move || writer_thread(mvcc_for_writer, writer_request_rx, head_tx_writer));
 
         Ok(Self {
             mvcc,
             head_watch_tx,
             writer_request_tx,
         })
-    }
-
-    fn writer_thread(mvcc: Arc<Mvcc>, mut request_rx: Receiver<WriterThreadRequest>, head_watch_tx: Sender<Option<u64>>) {
-        // Process writer requests.
-        let writer_snapshot = mvcc.as_ref();
-        // let previous_batch_result: Option<()>;
-
-        while let Some(request) = request_rx.blocking_recv() {
-            match request {
-                WriterThreadRequest::Append {
-                    events,
-                    condition,
-                    tracking_info,
-                    response_tx,
-                    cancel,
-                } => {
-                    // Batch processing: drain any immediately available requests
-                    // let mut items: Vec<(Vec<DCBEvent>, Option<DCBAppendCondition>)> =
-                    //     Vec::new();
-
-                    let mut total_events = 0;
-                    total_events += events.len();
-                    // items.push((events, condition));
-
-                    let mut writer = match mvcc.writer() {
-                        Ok(writer) => writer,
-                        Err(err) => {
-                            let _ = response_tx.send(Err(err));
-                            continue;
-                        }
-                    };
-
-                    let mut responders: Vec<oneshot::Sender<DcbResult<u64>>> = Vec::new();
-                    let mut results: Vec<DcbResult<u64>> = Vec::new();
-
-                    // Track abort state for non-integrity error within the batch
-                    let mut abort_idx: Option<usize> = None;
-                    let mut abort_err: Option<DcbError> = None;
-
-                    responders.push(response_tx);
-                    let result = process_append_request(
-                        events,
-                        condition,
-                        tracking_info,
-                        writer_snapshot,
-                        &mut writer,
-                        cancel,
-                        mvcc.page_size,
-                    );
-                    // Record result and possibly mark abort
-                    match &result {
-                        Ok(_) => results.push(result),
-                        Err(e) if is_integrity_error(e) => {
-                            results.push(Err(clone_dcb_error(e)))
-                        }
-                        Err(e) if is_invalid_argument_error(e) => {
-                            results.push(Err(clone_dcb_error(e)))
-                        }
-                        Err(e) => {
-                            abort_idx = Some(0);
-                            abort_err = Some(clone_dcb_error(e));
-                            results.push(Err(clone_dcb_error(e)));
-                        }
-                    }
-
-                    // Drain the channel for more pending writer requests without awaiting.
-                    // Important: do not drop a popped request when hitting the batch limit.
-                    // We stop draining BEFORE attempting to recv if we've reached the limit.
-                    loop {
-                        if total_events >= APPEND_BATCH_MAX_EVENTS {
-                            break;
-                        }
-                        // Stop draining if we've already decided to abort
-                        if abort_idx.is_some() {
-                            break;
-                        }
-                        match request_rx.try_recv() {
-                            Ok(WriterThreadRequest::Append {
-                                   events,
-                                   condition,
-                                   tracking_info,
-                                   response_tx,
-                                   cancel,
-                               }) => {
-                                let ev_len = events.len();
-                                let idx_in_batch = responders.len();
-                                responders.push(response_tx);
-                                let res_next = process_append_request(
-                                    events,
-                                    condition,
-                                    tracking_info,
-                                    writer_snapshot,
-                                    &mut writer,
-                                    cancel,
-                                    mvcc.page_size,
-                                );
-                                match &res_next {
-                                    Ok(_) => results.push(res_next),
-                                    Err(e) if is_integrity_error(e) => {
-                                        results.push(Err(clone_dcb_error(e)))
-                                    }
-                                    Err(e) if is_invalid_argument_error(e) => {
-                                        results.push(Err(clone_dcb_error(e)))
-                                    }
-                                    Err(e) => {
-                                        abort_idx = Some(idx_in_batch);
-                                        abort_err = Some(clone_dcb_error(e));
-                                        results.push(Err(clone_dcb_error(e)));
-                                        // Do not accumulate more into the batch
-                                    }
-                                }
-                                total_events += ev_len;
-                            }
-                            Ok(WriterThreadRequest::Shutdown) => {
-                                // Push back the shutdown signal by breaking and letting
-                                // outer loop handle after batch. We'll process the
-                                // current batch first, then break the outer loop on
-                                // the next iteration when the channel is empty.
-                                break;
-                            }
-                            Err(mpsc::error::TryRecvError::Empty) => {
-                                break;
-                            }
-                            Err(mpsc::error::TryRecvError::Disconnected) => break,
-                        }
-                    }
-                    // println!("Total events: {total_events}");
-
-                    if let (Some(failed_at), Some(orig_err)) = (abort_idx, abort_err) {
-                        // Abort batch: skip commit; respond to all items in this batch
-                        let shadow = shadow_for_batch_abort(&orig_err);
-                        for (i, tx) in responders.into_iter().enumerate() {
-                            if i == failed_at {
-                                let _ = tx.send(Err(clone_dcb_error(&orig_err)));
-                            } else {
-                                let _ = tx.send(Err(clone_dcb_error(&shadow)));
-                            }
-                        }
-                        // Do not update head, since nothing was committed
-                        continue;
-                    }
-
-                    let batch_result = match writer.process_freed_page_ids(
-                        writer_snapshot, mvcc.max_node_size, mvcc.page_size
-                    ) {
-                        Ok(_) => {
-                            match mvcc.write_and_fsync(&mut writer) {
-                                Ok(_) => {
-                                    match mvcc.update_page_cache(&mut writer) {
-                                        Ok(_) => Ok(results),
-                                        Err(err) => Err(err),
-                                    }
-                                },
-                                Err(err) => Err(err)
-                            }
-                        },
-                        Err(err) => Err(err),
-                    };
-
-
-                    // // Single commit at the end of the batch
-                    // let batch_result = match mvcc.commit(&mut writer) {
-                    //     Ok(_) => Ok(results),
-                    //     Err(err) => Err(err),
-                    // };
-
-                    match batch_result {
-                        Ok(results) => {
-                            // Send individual results back to requesters
-                            for (res, tx) in results.into_iter().zip(responders.into_iter())
-                            {
-                                let _ = tx.send(res);
-                            }
-                            // After a successful batch commit, publish the updated head from writer.next_position.
-                            let last_committed = writer.next_position.0.saturating_sub(1);
-                            let new_head = if last_committed == 0 {
-                                None
-                            } else {
-                                Some(last_committed)
-                            };
-                            let _ = head_watch_tx.send(new_head);
-                        }
-                        Err(e) => {
-                            // If the batch failed as a whole (e.g., commit failed), propagate the SAME error to all responders.
-                            // DCBError is not Clone (contains io::Error), so reconstruct a best-effort copy by using its Display text
-                            // for Io and cloning data for other variants.
-                            let total = responders.len();
-                            let mut iter = responders.into_iter();
-                            for _ in 0..total {
-                                if let Some(tx) = iter.next() {
-                                    let _ = tx.send(Err(clone_dcb_error(&e)));
-                                }
-                            }
-                        }
-                    }
-                }
-                WriterThreadRequest::Shutdown => {
-                    break;
-                }
-            }
-        }
     }
 
     pub fn read(
@@ -362,5 +163,205 @@ impl Clone for UmaDbRequestHandler {
             head_watch_tx: self.head_watch_tx.clone(),
             writer_request_tx: self.writer_request_tx.clone(),
         }
+    }
+}
+
+struct InflightCommit {
+    io_rx: oneshot::Receiver<DcbResult<()>>,
+    responders: Vec<oneshot::Sender<DcbResult<u64>>>,
+    results: Vec<DcbResult<u64>>,
+    new_head: Option<u64>,
+    wet_pages_to_cache: HashMap<PageID, Arc<Page>>,
+}
+
+fn writer_thread(
+    mvcc_arc: Arc<Mvcc>,
+    mut request_rx: Receiver<WriterThreadRequest>,
+    head_watch_tx: Sender<Option<u64>>,
+) {
+    let mvcc = mvcc_arc.as_ref();
+    let mut wet_pages: HashMap<PageID, Arc<Page>> = HashMap::new();
+    let mut inflight_io: Option<InflightCommit> = None;
+
+    // Helper closure to avoid duplicating the acknowledgment logic
+    let acknowledge_inflight = |inflight: InflightCommit| {
+        match inflight.io_rx.blocking_recv() {
+            Ok(Ok(())) => {
+                let _ = mvcc.update_page_cache(inflight.wet_pages_to_cache);
+                for (res, tx) in inflight.results.into_iter().zip(inflight.responders.into_iter()) {
+                    let _ = tx.send(res);
+                }
+                let _ = head_watch_tx.send(inflight.new_head);
+            }
+            Ok(Err(db_err)) => {
+                for tx in inflight.responders {
+                    let _ = tx.send(Err(clone_dcb_error(&db_err)));
+                }
+            }
+            Err(_) => {
+                // Background thread panicked or dropped
+                for tx in inflight.responders {
+                    let _ = tx.send(Err(DcbError::InternalError("Disk I/O thread failed".into())));
+                }
+            }
+        }
+    };
+
+    loop {
+        // 1. FETCH WORK OR WAIT FOR I/O
+        // If we have inflight I/O, we CANNOT block on the request channel.
+        let first_request = if inflight_io.is_some() {
+            match request_rx.try_recv() {
+                Ok(req) => Some(req),
+                Err(mpsc::error::TryRecvError::Empty) => None,
+                Err(mpsc::error::TryRecvError::Disconnected) => break,
+            }
+        } else {
+            // No inflight I/O, it is safe to sleep until a request arrives.
+            match request_rx.blocking_recv() {
+                Some(req) => Some(req),
+                None => break,
+            }
+        };
+
+        if let Some(request) = first_request {
+            // --- WE HAVE A REQUEST (CPU PHASE) ---
+            match request {
+                WriterThreadRequest::Shutdown => break,
+                WriterThreadRequest::Append {
+                    events,
+                    condition,
+                    tracking_info,
+                    response_tx,
+                    cancel,
+                } => {
+                    let mut total_events = events.len();
+
+                    let mut writer = match mvcc.writer() {
+                        Ok(writer) => writer,
+                        Err(err) => {
+                            let _ = response_tx.send(Err(err));
+                            continue;
+                        }
+                    };
+
+                    let snapshot = WriterSnapshot {
+                        base_mvcc: mvcc,
+                        wet_pages: &wet_pages,
+                    };
+
+                    let mut responders = vec![response_tx];
+                    let mut results = Vec::new();
+                    let mut abort_idx = None;
+                    let mut abort_err = None;
+
+                    let result = process_append_request(
+                        events, condition, tracking_info, &snapshot, &mut writer, cancel, mvcc.page_size,
+                    );
+
+                    match &result {
+                        Ok(_) => results.push(result),
+                        Err(e) if is_integrity_error(e) => results.push(Err(clone_dcb_error(e))),
+                        Err(e) if is_invalid_argument_error(e) => results.push(Err(clone_dcb_error(e))),
+                        Err(e) => {
+                            abort_idx = Some(0);
+                            abort_err = Some(clone_dcb_error(e));
+                            results.push(Err(clone_dcb_error(e)));
+                        }
+                    }
+
+                    // DRAIN CHANNEL FOR GROUP COMMIT
+                    loop {
+                        if total_events >= APPEND_BATCH_MAX_EVENTS || abort_idx.is_some() {
+                            break;
+                        }
+                        match request_rx.try_recv() {
+                            Ok(WriterThreadRequest::Append {
+                                   events, condition, tracking_info, response_tx, cancel,
+                               }) => {
+                                let ev_len = events.len();
+                                let idx_in_batch = responders.len();
+                                responders.push(response_tx);
+
+                                let res_next = process_append_request(
+                                    events, condition, tracking_info, &snapshot, &mut writer, cancel, mvcc.page_size,
+                                );
+
+                                match &res_next {
+                                    Ok(_) => results.push(res_next),
+                                    Err(e) if is_integrity_error(e) => results.push(Err(clone_dcb_error(e))),
+                                    Err(e) if is_invalid_argument_error(e) => results.push(Err(clone_dcb_error(e))),
+                                    Err(e) => {
+                                        abort_idx = Some(idx_in_batch);
+                                        abort_err = Some(clone_dcb_error(e));
+                                        results.push(Err(clone_dcb_error(e)));
+                                    }
+                                }
+                                total_events += ev_len;
+                            }
+                            Ok(WriterThreadRequest::Shutdown) => break,
+                            Err(_) => break,
+                        }
+                    }
+
+                    // --- PIPELINE BARRIER ---
+                    // We finished building Batch N+1. Before we can commit it,
+                    // we MUST wait for Batch N to finish writing to disk.
+                    if let Some(inflight) = inflight_io.take() {
+                        acknowledge_inflight(inflight);
+                    }
+
+                    // Handle aborts for the new batch
+                    if let (Some(failed_at), Some(orig_err)) = (abort_idx, abort_err) {
+                        let shadow = shadow_for_batch_abort(&orig_err);
+                        for (i, tx) in responders.into_iter().enumerate() {
+                            if i == failed_at {
+                                let _ = tx.send(Err(clone_dcb_error(&orig_err)));
+                            } else {
+                                let _ = tx.send(Err(clone_dcb_error(&shadow)));
+                            }
+                        }
+                        continue;
+                    }
+
+                    // --- DISPATCH BATCH N+1 ---
+                    match mvcc.prepare_commit(&mut writer, &snapshot) {
+                        Ok((prepared_commit, new_wet_pages)) => {
+                            let last_committed = writer.next_position.0.saturating_sub(1);
+                            let new_head = if last_committed == 0 { None } else { Some(last_committed) };
+
+                            wet_pages = new_wet_pages.clone();
+
+                            let io_rx = spawn_commit_io(Arc::clone(&mvcc_arc), prepared_commit);
+
+                            inflight_io = Some(InflightCommit {
+                                io_rx,
+                                responders,
+                                results,
+                                new_head,
+                                wet_pages_to_cache: new_wet_pages,
+                            });
+                        }
+                        Err(e) => {
+                            for tx in responders {
+                                let _ = tx.send(Err(clone_dcb_error(&e)));
+                            }
+                        }
+                    }
+                }
+            }
+        } else {
+            // --- IDLE PHASE ---
+            // The channel is empty, but we have inflight I/O.
+            // Wait for the disk to finish so we can acknowledge the clients!
+            if let Some(inflight) = inflight_io.take() {
+                acknowledge_inflight(inflight);
+            }
+        }
+    }
+
+    // 6. SHUTDOWN REAPING
+    if let Some(inflight) = inflight_io.take() {
+        acknowledge_inflight(inflight);
     }
 }
