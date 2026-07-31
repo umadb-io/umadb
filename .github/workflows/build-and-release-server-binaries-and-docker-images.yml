@@ -30,11 +30,11 @@ jobs:
             rust_target: x86_64-unknown-linux-gnu
           - os: ubuntu-latest
             rust_target: aarch64-unknown-linux-gnu
-          # Linux MUSL
-          - os: ubuntu-latest
-            rust_target: x86_64-unknown-linux-musl
-          - os: ubuntu-latest
-            rust_target: aarch64-unknown-linux-musl
+#          # Linux MUSL
+#          - os: ubuntu-latest
+#            rust_target: x86_64-unknown-linux-musl
+#          - os: ubuntu-latest
+#            rust_target: aarch64-unknown-linux-musl
           # macOS
           - os: macos-latest
             rust_target: x86_64-apple-darwin
@@ -125,15 +125,15 @@ jobs:
         run: |
           mkdir -p ./binaries/linux/amd64
           mkdir -p ./binaries/linux/arm64
-
-          # Extract Linux x86_64 MUSL binary
-          tar xzf artifacts/umadb-x86_64-unknown-linux-musl/umadb-x86_64-unknown-linux-musl.tar.gz -C ./binaries/linux/amd64
+          
+          # Extract Linux x86_64 GNU binary
+          tar xzf artifacts/umadb-x86_64-unknown-linux-gnu/umadb-x86_64-unknown-linux-gnu.tar.gz -C ./binaries/linux/amd64
           chmod +x ./binaries/linux/amd64/umadb
 
-          # Extract Linux aarch64 MUSL binary
-          tar xzf artifacts/umadb-aarch64-unknown-linux-musl/umadb-aarch64-unknown-linux-musl.tar.gz -C ./binaries/linux/arm64
+          # Extract Linux aarch64 GNU binary
+          tar xzf artifacts/umadb-aarch64-unknown-linux-gnu/umadb-aarch64-unknown-linux-gnu.tar.gz -C ./binaries/linux/arm64
           chmod +x ./binaries/linux/arm64/umadb
-
+          
           # List binaries
           ls -lh ./binaries/linux/amd64
           ls -lh ./binaries/linux/arm64

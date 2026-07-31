@@ -451,8 +451,8 @@ self-signed-cert:
       -addext "subjectAltName = DNS:localhost,IP:127.0.0.1"
 
 build-local-docker-arm64:
-	make build-cross-umadb-aarch64-unknown-linux-musl
+	make build-cross-umadb-aarch64-unknown-linux-gnu
 	mkdir -p binaries/linux/arm64
-	cp target/aarch64-unknown-linux-musl/release/umadb binaries/linux/arm64/
+	cp target/aarch64-unknown-linux-gnu/release/umadb binaries/linux/arm64/
 	docker build --build-arg TARGETPLATFORM=linux/arm64 -t umadb:local .
 	rm -r binaries/linux/arm64

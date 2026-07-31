@@ -6,7 +6,8 @@ use tokio::sync::watch::Sender;
 use umadb_dcb::{DcbError, DcbResult};
 use crate::common::PageID;
 use crate::db::{clone_dcb_error, is_integrity_error, is_invalid_argument_error, process_append_request, shadow_for_batch_abort};
-use crate::mvcc::{spawn_commit_io, Mvcc, Writer, WriterSnapshot};
+use crate::io_shell::io_shell::IoJob;
+use crate::mvcc::{Mvcc, Writer, WriterSnapshot};
 use crate::page::Page;
 use crate::writer_thread_request::WriterThreadRequest;
 
@@ -21,6 +22,7 @@ struct InflightCommit {
 
 
 pub fn writer_thread_pipelining(
+    io_tx: mpsc::UnboundedSender<IoJob>,
     mvcc_arc: Arc<Mvcc>,
     mut request_rx: Receiver<WriterThreadRequest>,
     head_watch_tx: Sender<Option<u64>>,
@@ -234,7 +236,11 @@ pub fn writer_thread_pipelining(
 
                             wet_pages = new_wet_pages.clone();
 
-                            let io_rx = spawn_commit_io(Arc::clone(&mvcc_arc), prepared_commit);
+                            // INSTANTLY FIRE OFF TO THE IO_URING THREAD
+                            let (tx, io_rx) = tokio::sync::oneshot::channel();
+                            let _ = io_tx.send((prepared_commit, tx)); // io_tx is the Sender to the background thread
+
+                            // let io_rx = spawn_commit_io(Arc::clone(&mvcc_arc), prepared_commit);
 
                             inflight_io = Some(InflightCommit {
                                 io_rx,

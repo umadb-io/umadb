@@ -1,24 +1,11 @@
-# ============================================================
-# 1. Base image for CA certificates
-# ============================================================
-FROM ubuntu:22.04 AS base
-RUN apt-get update && \
-    apt-get install -y ca-certificates && \
-    rm -rf /var/lib/apt/lists/*
-
-# ============================================================
-# 2. Final image (scratch, fully static)
-# ============================================================
-FROM scratch AS final
+# Use Google's Debian 13 distroless image (contains glibc 2.39+)
+FROM gcr.io/distroless/cc-debian13:latest
 
 WORKDIR /data
 
-# Copy binary, use TARGETPLATFORM to select the correct binary
+# Use your existing pre-compiled Rust binary injection
 ARG TARGETPLATFORM
 COPY ./binaries/${TARGETPLATFORM}/umadb /umadb
-
-# Copy CA certificates from base
-COPY --from=base /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
 
 EXPOSE 50051
 

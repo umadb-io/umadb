@@ -3,6 +3,7 @@ use std::thread;
 use tokio::sync::{mpsc, oneshot, watch};
 use umadb_core::common::{Position};
 use umadb_core::db::{read_conditional, UmaDb};
+use umadb_core::io_shell::io_shell;
 use umadb_core::mvcc::{Mvcc, StorageOptions};
 use umadb_core::writer_thread_blocking::writer_thread_blocking;
 use umadb_core::writer_thread_pipelining::writer_thread_pipelining;
@@ -39,7 +40,29 @@ impl UmaDbServerRequestHandler {
         let mvcc_for_writer = mvcc.clone();
         let head_tx_writer = head_watch_tx.clone();
         if pipelined_writer_option {
-            thread::spawn(move || writer_thread_pipelining(mvcc_for_writer, writer_request_rx, head_tx_writer, APPEND_BATCH_MAX_EVENTS));
+
+            // Inside your database startup function:
+            let (io_tx, io_rx) = tokio::sync::mpsc::unbounded_channel();
+
+            #[cfg(target_os = "linux")]
+            {
+                println!("UmaDB writing with io_uring");
+                let file_path = mvcc.db_path.clone();
+                let page_size = mvcc.page_size;
+                std::thread::spawn(move || {
+                    io_shell::start_io_uring_thread(file_path, page_size, io_rx);
+                });
+            }
+
+            #[cfg(not(target_os = "linux"))]
+            {
+                let mvcc_clone = Arc::clone(&mvcc);
+                std::thread::spawn(move || {
+                    io_shell::start_blocking_io_thread(mvcc_clone, io_rx);
+                });
+            }
+
+            thread::spawn(move || writer_thread_pipelining(io_tx, mvcc_for_writer, writer_request_rx, head_tx_writer, APPEND_BATCH_MAX_EVENTS));
         } else {
             thread::spawn(move || writer_thread_blocking(mvcc_for_writer, writer_request_rx, head_tx_writer, APPEND_BATCH_MAX_EVENTS));
         }

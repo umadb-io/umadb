@@ -22,7 +22,6 @@ use std::thread::sleep;
 use std::time::Duration;
 use umadb_dcb::DcbError::InternalError;
 use umadb_dcb::{DcbError, DcbResult};
-use tokio::sync::oneshot;
 
 const GET_LATEST_HEADER_RETRIES: usize = 5;
 const GET_LATEST_HEADER_DELAY: Duration = Duration::from_millis(10);
@@ -202,6 +201,7 @@ pub trait MvccSnapshot {
 
 // Main MVCC structure
 pub struct Mvcc {
+    pub db_path: PathBuf,
     pub pager: Pager,
     pub reader_tsns: Arc<ReaderTsnRegistry>,
     pub page_size: usize,
@@ -214,8 +214,8 @@ pub struct Mvcc {
 }
 
 pub struct PreparedCommit {
-    header_to_write: (PageID, Vec<u8>),
-    pages_to_write: Vec<(PageID, Vec<u8>)>,
+    pub header_to_write: (PageID, Vec<u8>),
+    pub pages_to_write: Vec<(PageID, Vec<u8>)>,
 }
 
 impl Mvcc {
@@ -274,6 +274,7 @@ impl Mvcc {
         };
 
         let mvcc = Self {
+            db_path: options.db_path,
             pager,
             reader_tsns: Arc::new(ReaderTsnRegistry::default()),
             page_size: options.page_size,
@@ -768,42 +769,6 @@ impl Mvcc {
 
         Ok(page)
     }
-}
-
-
-pub fn spawn_commit_io(
-    mvcc: Arc<Mvcc>,
-    prepared: PreparedCommit
-) -> oneshot::Receiver<DcbResult<()>> {
-    let (tx, rx) = oneshot::channel();
-    std::thread::spawn(move || {
-        let _ = tx.send(do_commit_io(mvcc, prepared));
-    });
-
-    rx
-}
-
-pub fn do_commit_io(
-    mvcc: Arc<Mvcc>,
-    prepared: PreparedCommit
-) -> DcbResult<()> {
-
-    // 1. Write Data Pages
-    for (page_id, page_data) in prepared.pages_to_write {
-        mvcc.pager.write_page(page_id, &page_data)?;
-    }
-
-    // 2. Fsync Data
-    mvcc.fsync()?;
-
-    // 3. Write Header
-    let (page_id, page_data) = prepared.header_to_write;
-    mvcc.pager.write_page(page_id, &page_data)?;
-
-    // 4. Fsync Header
-    mvcc.fsync()?;
-
-    Ok(())
 }
 
 impl MvccSnapshot for Mvcc {

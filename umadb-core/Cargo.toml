@@ -26,6 +26,10 @@ nix = { version = "0.30", features = ["fs"] }
 fs2 = "0.4"
 moka = { version = "0.12", features = ["sync"] }
 
+[target.'cfg(target_os = "linux")'.dependencies]
+tokio-uring = "0.5.0"
+futures = { workspace = true }
+
 [dev-dependencies]
 tempfile = { workspace = true }
 serial_test = { workspace = true }

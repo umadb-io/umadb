@@ -35,6 +35,14 @@ pub fn start_bench_server(db_path: String, addr: String) -> BenchServerHandle {
         // Start Docker container
         let (tx, rx) = oneshot::channel::<()>();
 
+        let pipelined_writer: String = std::env::var("UMADB_PIPELINED_WRITER")
+            .ok()
+            .unwrap_or("false".to_string());
+
+        let page_cache_max_mb: String = std::env::var("UMADB_PAGE_CACHE_MAX_MB")
+            .ok()
+            .unwrap_or("0".to_string());
+
         let child = Command::new("docker")
             .args([
                 "run",
@@ -45,6 +53,11 @@ pub fn start_bench_server(db_path: String, addr: String) -> BenchServerHandle {
                 &format!("{}:50051", port),
                 "--volume",
                 &format!("{}:/data", db_path),
+                "-e",
+                &format!("UMADB_PIPELINED_WRITER={}", pipelined_writer),
+                "-e",
+                &format!("UMADB_PAGE_CACHE_MAX_MB={}", page_cache_max_mb),
+                // "umadb:local",
                 "umadb/umadb:latest",
             ])
             .spawn()

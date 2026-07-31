@@ -20,8 +20,26 @@ fn get_events_per_request() -> usize {
         .unwrap_or(10)
 }
 
+fn get_initial_events() -> Option<usize> {
+    std::env::var("INITIAL")
+        .ok()
+        .and_then(|s| s.parse().ok())
+}
+
+fn get_duration() -> Option<u64> {
+    std::env::var("DURATION")
+        .ok()
+        .and_then(|s| s.parse().ok())
+}
+
 fn get_max_threads() -> Option<usize> {
     std::env::var("MAX_THREADS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+}
+
+fn get_min_threads() -> Option<usize> {
+    std::env::var("MIN_THREADS")
         .ok()
         .and_then(|s| s.parse().ok())
 }
@@ -62,16 +80,18 @@ pub fn grpc_append_cond_benchmark(c: &mut Criterion) {
     let events_per_request = get_events_per_request();
 
     let all_threads = [1usize, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024];
+    let min_threads = get_min_threads();
     let max_threads = get_max_threads();
     let thread_counts: Vec<usize> = all_threads
         .iter()
         .copied()
         .filter(|&t| max_threads.map_or(true, |max| t <= max))
+        .filter(|&t| min_threads.map_or(true, |min| t >= min))
         .collect();
 
     for &threads in &thread_counts {
         // Initialize DB and server with 10_000 events (as requested)
-        let initial_events = 1_000_000usize;
+        let initial_events = get_initial_events().unwrap_or(1_000_000usize);
         let (_tmp_dir, db_path, last_init_pos) = init_db_with_events(initial_events);
 
         // Find a free localhost port
@@ -96,7 +116,7 @@ pub fn grpc_append_cond_benchmark(c: &mut Criterion) {
         );
         let mut group = c.benchmark_group(&group_name);
         group.sample_size(200);
-        group.measurement_time(Duration::from_secs(20));
+        group.measurement_time(Duration::from_secs(get_duration().unwrap_or(20)));
 
         // Number of events appended per iteration per client
         let events_per_request = get_events_per_request();
