@@ -13,7 +13,7 @@ CONFIGS = [
 
 # Default benchmark parameters
 EVENTS_PER_REQUEST = os.environ.get("EVENTS_PER_REQUEST", "1")
-MAX_THREADS = os.environ.get("MAX_THREADS", "64")
+MAX_THREADS = os.environ.get("MAX_THREADS", "1024")
 MIN_THREADS = os.environ.get("MIN_THREADS", "1")
 INITIAL = os.environ.get("INITIAL", "100000")
 DURATION = os.environ.get("DURATION", "15")
