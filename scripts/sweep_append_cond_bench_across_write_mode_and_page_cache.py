@@ -44,7 +44,7 @@ def main():
         Path("images").mkdir(exist_ok=True)
         if run_bench(config):
             if "GITHUB_ACTIONS" in os.environ:
-                Path("images").move(f"images-pw-{config['UMADB_PIPELINED_WRITER']}-cache-{config['UMADB_PAGE_CACHE_MAX_MB']}")
+                Path("images").rename(f"images-pw-{config['UMADB_PIPELINED_WRITER']}-cache-{config['UMADB_PAGE_CACHE_MAX_MB']}")
         else:
             success = False
             
