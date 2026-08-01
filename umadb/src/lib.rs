@@ -2,7 +2,7 @@ use clap::{CommandFactory, FromArgMatches, Parser};
 use std::io::IsTerminal;
 use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
-use umadb_server::{DEFAULT_PAGE_SIZE, ServerTlsOptions, start_server_with_options, server_uptime};
+use umadb_server::{DEFAULT_PAGE_SIZE, ServerTlsOptions, server_uptime, start_server_with_options};
 pub use umadb_server::{ReadMethod, ServerOptions, StorageOptions};
 
 /// Parses an iterator of string arguments into CliOptions.
@@ -169,7 +169,7 @@ impl CliOptions {
 }
 
 pub fn start_server_with_cli_options(opts: CliOptions) -> Result<(), Box<dyn std::error::Error>> {
-    let _ = server_uptime();  // Need to access to initialize.
+    let _ = server_uptime(); // Need to access to initialize.
     let rt = build_server_runtime()?;
 
     print_banner();
@@ -254,7 +254,6 @@ fn spawn_shutdown_on_signal() -> (oneshot::Receiver<()>, JoinHandle<()>) {
 
     (rx, task)
 }
-
 
 #[cfg(test)]
 mod tests {

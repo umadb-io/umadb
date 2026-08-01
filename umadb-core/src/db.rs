@@ -8,9 +8,9 @@ use crate::tags_tree::{TagsTreeIterator, tags_tree_insert};
 use crate::tags_tree_nodes::{TagHash, get_tag_key_width};
 use crate::tracking_tree_nodes::{TrackingInternalNode, TrackingLeafNode};
 use itertools::Itertools;
+use rustc_hash::FxHashMap;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
-use rustc_hash::FxHashMap;
 use umadb_dcb::{
     DcbAppendCondition, DcbError, DcbEvent, DcbEventStoreSync, DcbQuery, DcbReadResponseSync,
     DcbResult, DcbSequencedEvent, TrackingInfo,
@@ -103,8 +103,14 @@ impl UmaDb {
             if abort_idx.is_some() {
                 break;
             }
-            let res =
-                process_append_request(events, condition, tracking, mvcc.as_ref(), &mut writer, None);
+            let res = process_append_request(
+                events,
+                condition,
+                tracking,
+                mvcc.as_ref(),
+                &mut writer,
+                None,
+            );
             match &res {
                 Ok(_) => results.push(res),
                 Err(e) if is_integrity_error(e) => results.push(Err(clone_dcb_error(e))),
@@ -216,8 +222,14 @@ impl DcbEventStoreSync for UmaDb {
         }
         let mvcc = &self.mvcc;
         let mut writer = mvcc.writer()?;
-        let result =
-            process_append_request(events, condition, tracking_info, mvcc.as_ref(), &mut writer, None);
+        let result = process_append_request(
+            events,
+            condition,
+            tracking_info,
+            mvcc.as_ref(),
+            &mut writer,
+            None,
+        );
         if result.is_ok() {
             mvcc.commit(&mut writer)?;
         }
@@ -231,7 +243,12 @@ struct ReadResponse {
 }
 
 /// Ensure tracking constraint and update/insert the position into leaf without splitting.
-fn tracking_upsert<T: MvccSnapshot>(mvcc: &T, writer: &mut Writer, source: &str, pos: Position) -> DcbResult<()> {
+fn tracking_upsert<T: MvccSnapshot>(
+    mvcc: &T,
+    writer: &mut Writer,
+    source: &str,
+    pos: Position,
+) -> DcbResult<()> {
     // Enforce maximum key length (1-byte length field in tracking nodes)
     let key_len = source.len();
     if key_len > u8::MAX as usize {
@@ -840,11 +857,8 @@ pub fn process_append_request<T: MvccSnapshot>(
                         Ok(Some(last_recorded_position)) => Ok(last_recorded_position),
                         Ok(None) => {
                             // Propagate an integrity error for this item but continue with others
-                            let msg = format!(
-                                "condition: {:?} matched: {:?}, ",
-                                cond.clone(),
-                                matched,
-                            );
+                            let msg =
+                                format!("condition: {:?} matched: {:?}, ", cond.clone(), matched,);
                             Err(DcbError::IntegrityError(msg))
                         }
                         Err(err) => {
@@ -1099,7 +1113,6 @@ mod tests {
         DcbAppendCondition, DcbError, DcbEvent, DcbEventStoreSync, DcbQuery, DcbQueryItem,
     };
     use uuid::Uuid;
-
 
     #[test]
     #[serial]

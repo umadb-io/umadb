@@ -30,7 +30,9 @@ pub fn header_node_benchmarks(c: &mut Criterion) {
             unsafe {
                 v.set_len(52);
             }
-            black_box(&HEADER).serialize_into(black_box(&mut v)).unwrap();
+            black_box(&HEADER)
+                .serialize_into(black_box(&mut v))
+                .unwrap();
             black_box(v)
         })
     });
@@ -49,7 +51,9 @@ pub fn header_node_benchmarks(c: &mut Criterion) {
         |b| {
             let mut buf = [0u8; 52];
             b.iter(|| {
-                black_box(&HEADER).serialize_into(black_box(&mut buf)).unwrap();
+                black_box(&HEADER)
+                    .serialize_into(black_box(&mut buf))
+                    .unwrap();
                 black_box(&buf);
             })
         },
@@ -109,7 +113,9 @@ pub fn header_node_benchmarks(c: &mut Criterion) {
     group.bench_function(BenchmarkId::new("round_trip", header_size_bytes), |b| {
         b.iter(|| {
             let mut bytes = [0u8; 52];
-            black_box(&HEADER).serialize_into(black_box(&mut bytes)).unwrap();
+            black_box(&HEADER)
+                .serialize_into(black_box(&mut bytes))
+                .unwrap();
             // Black-box the bytes to prevent the compiler from fusing serialize+deserialize
             let node = HeaderNode::from_slice(black_box(&bytes)).unwrap();
             black_box(node)

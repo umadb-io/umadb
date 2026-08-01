@@ -33,11 +33,7 @@ impl Page {
     }
 
     /// Serialized page (header + body) into `buf`, optionally zero-filling unused tail bytes.
-    pub fn serialize_into(
-        &self,
-        buf: &mut [u8],
-        zero_fill_remainder: bool,
-    ) -> DcbResult<()> {
+    pub fn serialize_into(&self, buf: &mut [u8], zero_fill_remainder: bool) -> DcbResult<()> {
         serialize_page_into(buf, &self.node, zero_fill_remainder)?;
         Ok(())
     }

@@ -4,25 +4,23 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::LazyLock;
 use std::time::Instant;
-use tokio::sync::{mpsc, oneshot, watch, Semaphore};
+use tokio::sync::{Semaphore, mpsc, oneshot, watch};
 
 use tokio_stream::wrappers::ReceiverStream;
 use tonic::transport::{Identity, ServerTlsConfig};
-use tonic::{transport::Server, Request, Response, Status};
+use tonic::{Request, Response, Status, transport::Server};
 pub use umadb_core::mvcc::{
-    Mvcc, ReadMethod, StorageOptions, DEFAULT_DB_FILENAME, DEFAULT_PAGE_SIZE,
+    DEFAULT_DB_FILENAME, DEFAULT_PAGE_SIZE, Mvcc, ReadMethod, StorageOptions,
 };
-use umadb_dcb::{
-    DcbError, DcbEvent, DcbQuery, DcbResult, TrackingInfo,
-};
+use umadb_dcb::{DcbError, DcbEvent, DcbQuery, DcbResult, TrackingInfo};
 
-use tonic::codegen::http;
-use tonic::transport::server::TcpIncoming;
+use handler::UmaDbServerRequestHandler;
 use std::convert::Infallible;
 use std::future::Future;
 use std::task::{Context, Poll};
+use tonic::codegen::http;
 use tonic::server::NamedService;
-use handler::UmaDbServerRequestHandler;
+use tonic::transport::server::TcpIncoming;
 use umadb_proto::status_from_dcb_error;
 
 mod handler;
@@ -254,17 +252,13 @@ fn raise_open_file_limit_inner() {
                 rlim_max: lim.rlim_max,
             };
             if libc::setrlimit(libc::RLIMIT_NOFILE, &new) == 0 {
-                println!(
-                    "UmaDB raised open-file limit: soft {previous} -> {target}"
-                );
+                println!("UmaDB raised open-file limit: soft {previous} -> {target}");
                 return;
             }
         }
         if !attempted {
             // Soft limit is already at least as high as anything we'd set.
-            println!(
-                "UmaDB open-file limit: soft {previous} is already sufficient"
-            );
+            println!("UmaDB open-file limit: soft {previous} is already sufficient");
             return;
         }
         eprintln!(
@@ -304,13 +298,13 @@ pub async fn start_server_with_options(
     let (srv_shutdown_tx, srv_shutdown_rx) = watch::channel(false);
 
     // Construct the actual gRPC server implementation.
-    let dcb_server = match UmaDbServer::new(srv_shutdown_rx, options.api_key.clone(), options.storage)
-    {
-        Ok(server) => server,
-        Err(err) => {
-            return Err(Box::new(err));
-        }
-    };
+    let dcb_server =
+        match UmaDbServer::new(srv_shutdown_rx, options.api_key.clone(), options.storage) {
+            Ok(server) => server,
+            Err(err) => {
+                return Err(Box::new(err));
+            }
+        };
 
     println!(
         "UmaDB has {:?} events",
@@ -940,8 +934,10 @@ pub async fn start_server<P: AsRef<std::path::Path>>(
         listen_addr: addr.to_string(),
         tls: None,
         api_key: None,
-        storage: StorageOptions::default().db_path(db_path.as_ref()).pipelined_writer(pipelined_writer).page_cache_max_mb(page_cache_max_mb),
+        storage: StorageOptions::default()
+            .db_path(db_path.as_ref())
+            .pipelined_writer(pipelined_writer)
+            .page_cache_max_mb(page_cache_max_mb),
     };
     start_server_with_options(options, shutdown_rx).await
 }
-

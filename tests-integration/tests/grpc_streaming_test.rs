@@ -1,10 +1,10 @@
 use futures::StreamExt;
+use serial_test::serial;
 use std::net::TcpListener;
 use umadb_client::{AsyncUmaDbClient, UmaDbClient, cancel_all_stream_responses};
 use umadb_core::mvcc::DEFAULT_PAGE_SIZE;
 use umadb_dcb::{DcbError, DcbEvent, DcbEventStoreAsync};
 use umadb_server::start_server;
-use serial_test::serial;
 
 fn allocate_grpc_addr() -> (String, String) {
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind ephemeral port");

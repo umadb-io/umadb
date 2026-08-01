@@ -1,6 +1,6 @@
 use crate::common::Position;
 use crate::common::{PageID, Tsn};
-use crate::db::{DB_SCHEMA_VERSION};
+use crate::db::DB_SCHEMA_VERSION;
 use crate::events_tree_nodes::EventLeafNode;
 use crate::free_lists_tree_nodes::{
     FreeListInternalNode, FreeListLeafNode, FreeListLeafValue, FreeListTsnLeafNode,
@@ -12,6 +12,7 @@ use crate::pager::Pager;
 use crate::tags_tree_nodes::TagsLeafNode;
 use crate::tags_tree_nodes::set_tag_key_width;
 use moka::sync::Cache;
+use rustc_hash::{FxBuildHasher, FxHashMap};
 use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::collections::VecDeque;
@@ -20,7 +21,6 @@ use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 use std::thread::sleep;
 use std::time::Duration;
-use rustc_hash::{FxBuildHasher, FxHashMap};
 use umadb_dcb::DcbError::InternalError;
 use umadb_dcb::{DcbError, DcbResult};
 
@@ -303,37 +303,33 @@ impl Mvcc {
             let initial_next_page_id = PageID(5);
             let initial_next_position = Position(1);
             // Write header 0.
-            let header0 = Page{
+            let header0 = Page {
                 page_id: HEADER_PAGE_ID_0,
-                node: Node::Header(
-                    HeaderNode {
-                        tsn: initial_tsn,
-                        free_lists_tree_root_id: initial_free_lists_tree_root_id,
-                        events_tree_root_id: initial_events_tree_root_id,
-                        tags_tree_root_id: initial_tags_tree_root_id,
-                        next_page_id: initial_next_page_id,
-                        next_position: initial_next_position,
-                        schema_version: DB_SCHEMA_VERSION,
-                        tracking_tree_root_id: PageID(0),
-                    }
-                )
+                node: Node::Header(HeaderNode {
+                    tsn: initial_tsn,
+                    free_lists_tree_root_id: initial_free_lists_tree_root_id,
+                    events_tree_root_id: initial_events_tree_root_id,
+                    tags_tree_root_id: initial_tags_tree_root_id,
+                    next_page_id: initial_next_page_id,
+                    next_position: initial_next_position,
+                    schema_version: DB_SCHEMA_VERSION,
+                    tracking_tree_root_id: PageID(0),
+                }),
             };
             mvcc.write_header(&header0)?;
             // Write header 1.
-            let header1 = Page{
+            let header1 = Page {
                 page_id: HEADER_PAGE_ID_1,
-                node: Node::Header(
-                    HeaderNode {
-                        tsn: initial_tsn,
-                        free_lists_tree_root_id: initial_free_lists_tree_root_id,
-                        events_tree_root_id: initial_events_tree_root_id,
-                        tags_tree_root_id: initial_tags_tree_root_id,
-                        next_page_id: initial_next_page_id,
-                        next_position: initial_next_position,
-                        schema_version: DB_SCHEMA_VERSION,
-                        tracking_tree_root_id: PageID(0),
-                    }
-                )
+                node: Node::Header(HeaderNode {
+                    tsn: initial_tsn,
+                    free_lists_tree_root_id: initial_free_lists_tree_root_id,
+                    events_tree_root_id: initial_events_tree_root_id,
+                    tags_tree_root_id: initial_tags_tree_root_id,
+                    next_page_id: initial_next_page_id,
+                    next_position: initial_next_position,
+                    schema_version: DB_SCHEMA_VERSION,
+                    tracking_tree_root_id: PageID(0),
+                }),
             };
             mvcc.write_header(&header1)?;
 
@@ -398,8 +394,8 @@ impl Mvcc {
                         .is_ok();
                     if !sixteen_ok {
                         return Err(DcbError::InitializationError(
-                            "Tag key width is too small for schema version.".to_string())
-                        );
+                            "Tag key width is too small for schema version.".to_string(),
+                        ));
                     }
                 }
             }
@@ -408,25 +404,55 @@ impl Mvcc {
         // Check we can read all the root pages.
         let page = mvcc.read_page(HEADER_PAGE_ID_0)?;
         if !matches!(page.node, Node::Header(_)) {
-            return Err(DcbError::DatabaseCorrupted(format!("Page {} is not a header page", HEADER_PAGE_ID_0.0)))
+            return Err(DcbError::DatabaseCorrupted(format!(
+                "Page {} is not a header page",
+                HEADER_PAGE_ID_0.0
+            )));
         };
         if !matches!(mvcc.read_page(HEADER_PAGE_ID_1)?.node, Node::Header(_)) {
-            return Err(DcbError::DatabaseCorrupted(format!("Page {} is not a header page", HEADER_PAGE_ID_1.0)))
+            return Err(DcbError::DatabaseCorrupted(format!(
+                "Page {} is not a header page",
+                HEADER_PAGE_ID_1.0
+            )));
         };
         let header_page = mvcc.get_latest_header_page()?;
         let header_node = header_page.as_header_node()?;
-        if !matches!(mvcc.read_page(header_node.free_lists_tree_root_id)?.node, Node::FreeListInternal(_) | Node::FreeListLeaf(_)) {
-            return Err(DcbError::DatabaseCorrupted(format!("Page {} is not a free list page", header_node.free_lists_tree_root_id.0)))
+        if !matches!(
+            mvcc.read_page(header_node.free_lists_tree_root_id)?.node,
+            Node::FreeListInternal(_) | Node::FreeListLeaf(_)
+        ) {
+            return Err(DcbError::DatabaseCorrupted(format!(
+                "Page {} is not a free list page",
+                header_node.free_lists_tree_root_id.0
+            )));
         };
-        if !matches!(mvcc.read_page(header_node.tags_tree_root_id)?.node, Node::TagsInternal(_) | Node::TagsLeaf(_)) {
-            return Err(DcbError::DatabaseCorrupted(format!("Page {} is not a tags tree page", header_node.tags_tree_root_id.0)))
+        if !matches!(
+            mvcc.read_page(header_node.tags_tree_root_id)?.node,
+            Node::TagsInternal(_) | Node::TagsLeaf(_)
+        ) {
+            return Err(DcbError::DatabaseCorrupted(format!(
+                "Page {} is not a tags tree page",
+                header_node.tags_tree_root_id.0
+            )));
         };
-        if !matches!(mvcc.read_page(header_node.events_tree_root_id)?.node, Node::EventInternal(_) | Node::EventLeaf(_)) {
-            return Err(DcbError::DatabaseCorrupted(format!("Page {} is not a event tree page", header_node.events_tree_root_id.0)))
+        if !matches!(
+            mvcc.read_page(header_node.events_tree_root_id)?.node,
+            Node::EventInternal(_) | Node::EventLeaf(_)
+        ) {
+            return Err(DcbError::DatabaseCorrupted(format!(
+                "Page {} is not a event tree page",
+                header_node.events_tree_root_id.0
+            )));
         };
         if header_node.tracking_tree_root_id != PageID(0) {
-            if !matches!(mvcc.read_page(header_node.tracking_tree_root_id)?.node, Node::TrackingInternal(_) | Node::TrackingLeaf(_)) {
-                return Err(DcbError::DatabaseCorrupted(format!("Page {} is not a tracking tree page", header_node.tracking_tree_root_id.0)))
+            if !matches!(
+                mvcc.read_page(header_node.tracking_tree_root_id)?.node,
+                Node::TrackingInternal(_) | Node::TrackingLeaf(_)
+            ) {
+                return Err(DcbError::DatabaseCorrupted(format!(
+                    "Page {} is not a tracking tree page",
+                    header_node.tracking_tree_root_id.0
+                )));
             };
         }
         Ok(mvcc)
@@ -616,12 +642,14 @@ impl Mvcc {
     // }
 
     pub fn prepare_commit<T: MvccSnapshot>(
-        &self, writer: &mut Writer, mvcc: &T
+        &self,
+        writer: &mut Writer,
+        mvcc: &T,
     ) -> DcbResult<(PreparedCommit, FxHashMap<PageID, Arc<Page>>)> {
-
         writer.process_freed_page_ids(mvcc, self.max_node_size, self.page_size)?;
 
-        let mut wet_pages = FxHashMap::with_capacity_and_hasher(writer.dirty.len() + 1, Default::default());
+        let mut wet_pages =
+            FxHashMap::with_capacity_and_hasher(writer.dirty.len() + 1, Default::default());
 
         // Copy-on-write the header page.
         let dirty_header = writer.cow_header_page()?;
@@ -629,7 +657,11 @@ impl Mvcc {
 
         // Serialize the header.
         let mut serialized_header: Vec<u8> = vec![0u8; writer.page_size];
-        serialize_page_into(&mut serialized_header, &dirty_header.node, self.zero_fill_pages)?;
+        serialize_page_into(
+            &mut serialized_header,
+            &dirty_header.node,
+            self.zero_fill_pages,
+        )?;
 
         // Prepare the commit.
         let mut prepared_commit = PreparedCommit {
@@ -642,7 +674,9 @@ impl Mvcc {
             // Serialize the dirty page.
             let mut serialized_page = vec![0u8; DEFAULT_PAGE_SIZE];
             serialize_page_into(&mut serialized_page, &page.node, true)?;
-            prepared_commit.pages_to_write.push((page_id.clone(), serialized_page));
+            prepared_commit
+                .pages_to_write
+                .push((page_id.clone(), serialized_page));
 
             // Remember the "wet" page for the writer snapshot.
             wet_pages.insert(page_id, Arc::new(page));
@@ -696,9 +730,7 @@ impl Mvcc {
 
         // Write all dirty pages (except for the header page) to the file
         if !writer.dirty.is_empty() {
-            let count = {
-                self.write_pages(writer.dirty.values())?
-            };
+            let count = { self.write_pages(writer.dirty.values())? };
             if self.verbose {
                 println!("Wrote {} dirty page(s) to file", count);
             }
@@ -1131,7 +1163,12 @@ impl Writer {
         Ok(())
     }
 
-    pub fn process_freed_page_ids<T: MvccSnapshot>(&mut self, snapshot: &T, max_node_size: usize, page_size: usize) -> DcbResult<()> {
+    pub fn process_freed_page_ids<T: MvccSnapshot>(
+        &mut self,
+        snapshot: &T,
+        max_node_size: usize,
+        page_size: usize,
+    ) -> DcbResult<()> {
         while !self.reused_page_ids.is_empty() || !self.freed_page_ids.is_empty() {
             // Remove reused page IDs from free lists.
             while let Some((reused_page_id, tsn)) = self.reused_page_ids.pop_front() {
@@ -1145,7 +1182,13 @@ impl Writer {
                 self.dirty.remove(&freed_page_id);
 
                 // Insert the page ID in the freed list tree
-                self.insert_freed_page_id(snapshot, self.tsn, freed_page_id, max_node_size, page_size)?;
+                self.insert_freed_page_id(
+                    snapshot,
+                    self.tsn,
+                    freed_page_id,
+                    max_node_size,
+                    page_size,
+                )?;
             }
         }
         Ok(())
@@ -1257,7 +1300,8 @@ impl Writer {
                         "Expected TSN-subtree root_id to be set".to_string(),
                     ));
                 }
-                let new_root_id = self.tsn_subtree_insert(snapshot, tsn_root_id, freed_page_id, max_node_size)?;
+                let new_root_id =
+                    self.tsn_subtree_insert(snapshot, tsn_root_id, freed_page_id, max_node_size)?;
                 if new_root_id != tsn_root_id {
                     // Now mutate the freelist leaf to update root_id
                     let dirty_leaf_page = self.get_mut_dirty(dirty_leaf_page_id)?;
@@ -1312,7 +1356,8 @@ impl Writer {
                 let mut tsn_root_id = tsn_leaf_id;
                 // Insert remaining ids via general insert, root may change
                 for pid in page_ids.into_iter().filter(|p| !initial_ids.contains(p)) {
-                    tsn_root_id = self.tsn_subtree_insert(snapshot, tsn_root_id, pid, max_node_size)?;
+                    tsn_root_id =
+                        self.tsn_subtree_insert(snapshot, tsn_root_id, pid, max_node_size)?;
                 }
                 // Now mutate the freelist leaf to clear inline and set root
                 let dirty_leaf_page = self.get_mut_dirty(dirty_leaf_page_id)?;
@@ -2182,27 +2227,24 @@ impl Writer {
     }
 
     pub fn cow_header_page(&self) -> DcbResult<Page> {
-        let alternate_header_page_id =
-            if self.header_page.page_id == HEADER_PAGE_ID_0 {
-                HEADER_PAGE_ID_1
-            } else {
-                HEADER_PAGE_ID_0
-            };
+        let alternate_header_page_id = if self.header_page.page_id == HEADER_PAGE_ID_0 {
+            HEADER_PAGE_ID_1
+        } else {
+            HEADER_PAGE_ID_0
+        };
         let header_node = self.header_page.as_header_node()?;
         let page = Page {
             page_id: alternate_header_page_id,
-            node: Node::Header(
-                HeaderNode {
-                    tsn: self.tsn,
-                    free_lists_tree_root_id: self.free_lists_tree_root_id,
-                    events_tree_root_id: self.events_tree_root_id,
-                    tags_tree_root_id: self.tags_tree_root_id,
-                    next_page_id: self.next_page_id,
-                    next_position: self.next_position,
-                    schema_version: header_node.schema_version,
-                    tracking_tree_root_id: self.tracking_tree_root_id,
-                }
-            )
+            node: Node::Header(HeaderNode {
+                tsn: self.tsn,
+                free_lists_tree_root_id: self.free_lists_tree_root_id,
+                events_tree_root_id: self.events_tree_root_id,
+                tags_tree_root_id: self.tags_tree_root_id,
+                next_page_id: self.next_page_id,
+                next_position: self.next_position,
+                schema_version: header_node.schema_version,
+                tracking_tree_root_id: self.tracking_tree_root_id,
+            }),
         };
         Ok(page)
     }
@@ -2336,10 +2378,7 @@ mod tests {
             assert_eq!(0, db.reader_tsns.live_reader_count());
             let reader = db.reader().unwrap();
             assert_eq!(1, db.reader_tsns.live_reader_count());
-            assert_eq!(
-                vec![Tsn(0)],
-                db.reader_tsns.live_tsns_sorted()
-            );
+            assert_eq!(vec![Tsn(0)], db.reader_tsns.live_tsns_sorted());
             assert_eq!(PageID(0), reader.header_page_id);
             assert_eq!(Tsn(0), reader.tsn);
         }
@@ -2348,19 +2387,13 @@ mod tests {
         // Multiple nested readers
         {
             let reader1 = db.reader().unwrap();
-            assert_eq!(
-                vec![Tsn(0)],
-                db.reader_tsns.live_tsns_sorted()
-            );
+            assert_eq!(vec![Tsn(0)], db.reader_tsns.live_tsns_sorted());
             assert_eq!(PageID(0), reader1.header_page_id);
             assert_eq!(Tsn(0), reader1.tsn);
 
             {
                 let reader2 = db.reader().unwrap();
-                assert_eq!(
-                    vec![Tsn(0), Tsn(0)],
-                    db.reader_tsns.live_tsns_sorted()
-                );
+                assert_eq!(vec![Tsn(0), Tsn(0)], db.reader_tsns.live_tsns_sorted());
                 assert_eq!(PageID(0), reader2.header_page_id);
                 assert_eq!(Tsn(0), reader2.tsn);
 
@@ -2389,10 +2422,7 @@ mod tests {
         // Reader after writer
         {
             let reader = db.reader().unwrap();
-            assert_eq!(
-                vec![Tsn(1)],
-                db.reader_tsns.live_tsns_sorted()
-            );
+            assert_eq!(vec![Tsn(1)], db.reader_tsns.live_tsns_sorted());
             assert_eq!(PageID(1), reader.header_page_id);
             assert_eq!(Tsn(1), reader.tsn);
         }
@@ -2425,7 +2455,13 @@ mod tests {
             let free_page_id = writer.alloc_page_id();
             assert_eq!(PageID(5), free_page_id);
             writer
-                .insert_freed_page_id(&db, writer.tsn, free_page_id, db.max_node_size, db.page_size)
+                .insert_freed_page_id(
+                    &db,
+                    writer.tsn,
+                    free_page_id,
+                    db.max_node_size,
+                    db.page_size,
+                )
                 .unwrap();
 
             // Check the dirty page IDs
@@ -2458,7 +2494,13 @@ mod tests {
             let free_page_id = writer.alloc_page_id();
             assert_eq!(PageID(5), free_page_id);
             writer
-                .insert_freed_page_id(&db, writer.tsn, free_page_id, db.max_node_size, db.page_size)
+                .insert_freed_page_id(
+                    &db,
+                    writer.tsn,
+                    free_page_id,
+                    db.max_node_size,
+                    db.page_size,
+                )
                 .unwrap();
 
             // Check the dirty page IDs
@@ -2491,7 +2533,13 @@ mod tests {
             let free_page_id = writer.alloc_page_id();
             assert_eq!(PageID(5), free_page_id);
             writer
-                .insert_freed_page_id(&db, writer.tsn, free_page_id, db.max_node_size, db.page_size)
+                .insert_freed_page_id(
+                    &db,
+                    writer.tsn,
+                    free_page_id,
+                    db.max_node_size,
+                    db.page_size,
+                )
                 .unwrap();
 
             // Check the dirty page IDs
@@ -3146,7 +3194,13 @@ mod tests {
                 // Insert the page ID
                 inserted_tsn = writer.tsn;
                 writer
-                    .insert_freed_page_id(&db, inserted_tsn, inserted_page_id, db.max_node_size, db.page_size)
+                    .insert_freed_page_id(
+                        &db,
+                        inserted_tsn,
+                        inserted_page_id,
+                        db.max_node_size,
+                        db.page_size,
+                    )
                     .unwrap();
 
                 // Commit the transaction
@@ -3235,12 +3289,16 @@ mod tests {
             while !has_split_leaf {
                 // Allocate and insert the first page ID
                 let page_id1 = writer.alloc_page_id();
-                writer.insert_freed_page_id(&db, tsn, page_id1, db.max_node_size, db.page_size).unwrap();
+                writer
+                    .insert_freed_page_id(&db, tsn, page_id1, db.max_node_size, db.page_size)
+                    .unwrap();
                 inserted.push((tsn, page_id1));
 
                 // Allocate and insert second page ID
                 let page_id2 = writer.alloc_page_id();
-                writer.insert_freed_page_id(&db, tsn, page_id2, db.max_node_size, db.page_size).unwrap();
+                writer
+                    .insert_freed_page_id(&db, tsn, page_id2, db.max_node_size, db.page_size)
+                    .unwrap();
                 inserted.push((tsn, page_id2));
 
                 // Increment TSN for next iteration
@@ -3366,7 +3424,13 @@ mod tests {
                     // Allocate and insert second page ID
                     let page_id2 = writer.alloc_page_id();
                     writer
-                        .insert_freed_page_id(&db, writer.tsn, page_id2, db.max_node_size, db.page_size)
+                        .insert_freed_page_id(
+                            &db,
+                            writer.tsn,
+                            page_id2,
+                            db.max_node_size,
+                            db.page_size,
+                        )
                         .unwrap();
                     inserted.push((writer.tsn, page_id2));
 
@@ -3498,12 +3562,16 @@ mod tests {
 
                     // Allocate and insert the first page ID
                     let page_id1 = writer.alloc_page_id();
-                    writer.insert_freed_page_id(&db, tsn, page_id1, db.max_node_size, db.page_size).unwrap();
+                    writer
+                        .insert_freed_page_id(&db, tsn, page_id1, db.max_node_size, db.page_size)
+                        .unwrap();
                     inserted.push((tsn, page_id1));
 
                     // Allocate and insert second page ID
                     let page_id2 = writer.alloc_page_id();
-                    writer.insert_freed_page_id(&db, tsn, page_id2, db.max_node_size, db.page_size).unwrap();
+                    writer
+                        .insert_freed_page_id(&db, tsn, page_id2, db.max_node_size, db.page_size)
+                        .unwrap();
                     inserted.push((tsn, page_id2));
 
                     // Check if we've split the leaf
@@ -3665,12 +3733,16 @@ mod tests {
             while !has_split_internal {
                 // Allocate and insert the first page ID
                 let page_id1 = writer.alloc_page_id();
-                writer.insert_freed_page_id(&db, tsn, page_id1, db.max_node_size, db.page_size).unwrap();
+                writer
+                    .insert_freed_page_id(&db, tsn, page_id1, db.max_node_size, db.page_size)
+                    .unwrap();
                 inserted.push((tsn, page_id1));
 
                 // Allocate and insert second page ID
                 let page_id2 = writer.alloc_page_id();
-                writer.insert_freed_page_id(&db, tsn, page_id2, db.max_node_size, db.page_size).unwrap();
+                writer
+                    .insert_freed_page_id(&db, tsn, page_id2, db.max_node_size, db.page_size)
+                    .unwrap();
                 inserted.push((tsn, page_id2));
 
                 // Increment TSN for next iteration
@@ -3822,12 +3894,16 @@ mod tests {
 
                     // Allocate and insert the first page ID
                     let page_id1 = writer.alloc_page_id();
-                    writer.insert_freed_page_id(&db, tsn, page_id1, db.max_node_size, db.page_size).unwrap();
+                    writer
+                        .insert_freed_page_id(&db, tsn, page_id1, db.max_node_size, db.page_size)
+                        .unwrap();
                     inserted.push((tsn, page_id1));
 
                     // Allocate and insert second page ID
                     let page_id2 = writer.alloc_page_id();
-                    writer.insert_freed_page_id(&db, tsn, page_id2, db.max_node_size, db.page_size).unwrap();
+                    writer
+                        .insert_freed_page_id(&db, tsn, page_id2, db.max_node_size, db.page_size)
+                        .unwrap();
                     inserted.push((tsn, page_id2));
 
                     // Check if we've split an internal node
@@ -3990,12 +4066,16 @@ mod tests {
 
                     // Allocate and insert the first page ID
                     let page_id1 = writer.alloc_page_id();
-                    writer.insert_freed_page_id(&db, tsn, page_id1, db.max_node_size, db.page_size).unwrap();
+                    writer
+                        .insert_freed_page_id(&db, tsn, page_id1, db.max_node_size, db.page_size)
+                        .unwrap();
                     inserted.push((tsn, page_id1));
 
                     // Allocate and insert second page ID
                     let page_id2 = writer.alloc_page_id();
-                    writer.insert_freed_page_id(&db, tsn, page_id2, db.max_node_size, db.page_size).unwrap();
+                    writer
+                        .insert_freed_page_id(&db, tsn, page_id2, db.max_node_size, db.page_size)
+                        .unwrap();
                     inserted.push((tsn, page_id2));
 
                     // Check if we've split an internal node
@@ -4055,7 +4135,9 @@ mod tests {
             let mut inserted_count: usize = 0;
             loop {
                 let pid = writer.alloc_page_id();
-                writer.insert_freed_page_id(&db, tsn, pid, db.max_node_size, db.page_size).unwrap();
+                writer
+                    .insert_freed_page_id(&db, tsn, pid, db.max_node_size, db.page_size)
+                    .unwrap();
                 inserted_count += 1;
                 let dirty_page_id = {
                     let mut keys = writer.dirty.keys();
@@ -4074,16 +4156,22 @@ mod tests {
 
             // The next insert for the same TSN should succeed by creating a TSN-subtree
             let pid5 = writer.alloc_page_id();
-            writer.insert_freed_page_id(&db, tsn, pid5, db.max_node_size, db.page_size).unwrap();
+            writer
+                .insert_freed_page_id(&db, tsn, pid5, db.max_node_size, db.page_size)
+                .unwrap();
             inserted_count += 1;
 
             // Insert two more page IDs for the same TSN into the TSN-subtree
             let pid6 = writer.alloc_page_id();
-            writer.insert_freed_page_id(&db, tsn, pid6, db.max_node_size, db.page_size).unwrap();
+            writer
+                .insert_freed_page_id(&db, tsn, pid6, db.max_node_size, db.page_size)
+                .unwrap();
             inserted_count += 1;
 
             let pid7 = writer.alloc_page_id();
-            writer.insert_freed_page_id(&db, tsn, pid7, db.max_node_size, db.page_size).unwrap();
+            writer
+                .insert_freed_page_id(&db, tsn, pid7, db.max_node_size, db.page_size)
+                .unwrap();
             inserted_count += 1;
 
             // Verify that the leaf now points to a TSN-subtree for this TSN, and that the TSN-subtree root is an internal node (leaf split)
@@ -4126,7 +4214,9 @@ mod tests {
                     "guard hit while waiting for TSN-subtree internal split"
                 );
                 let pid = writer.alloc_page_id();
-                writer.insert_freed_page_id(&db, tsn, pid, db.max_node_size, db.page_size).unwrap();
+                writer
+                    .insert_freed_page_id(&db, tsn, pid, db.max_node_size, db.page_size)
+                    .unwrap();
                 extra_inserts += 1;
 
                 // Refresh tsn_root_id from the FreeList leaf since the root may change when it splits
@@ -4146,13 +4236,8 @@ mod tests {
                 }
                 assert_ne!(PageID(0), tsn_root_id);
 
-                let root_node_owned = {
-                    writer
-                        .get_page_ref(&db, tsn_root_id)
-                        .unwrap()
-                        .node
-                        .clone()
-                };
+                let root_node_owned =
+                    { writer.get_page_ref(&db, tsn_root_id).unwrap().node.clone() };
                 match root_node_owned {
                     Node::FreeListTsnInternal(internal_root) => {
                         // If the first child is also an internal node, then the previous internal split promoted a new root
@@ -4181,7 +4266,9 @@ mod tests {
 
             // Now add another PageID to the internal->internal->leaf.
             let pid = writer.alloc_page_id();
-            writer.insert_freed_page_id(&db, tsn, pid, db.max_node_size, db.page_size).unwrap();
+            writer
+                .insert_freed_page_id(&db, tsn, pid, db.max_node_size, db.page_size)
+                .unwrap();
             extra_inserts += 1;
 
             // Verify all page IDs are discoverable via find_reusable_page_ids
@@ -4250,11 +4337,15 @@ mod tests {
             }
             // Insert them all for the same TSN in random order
             for pid in &pids {
-                writer.insert_freed_page_id(&db, tsn, *pid, db.max_node_size, db.page_size).unwrap();
+                writer
+                    .insert_freed_page_id(&db, tsn, *pid, db.max_node_size, db.page_size)
+                    .unwrap();
             }
             // Insert a duplicate of the first ID and ensure it is ignored
             let dup = pids[0];
-            writer.insert_freed_page_id(&db, tsn, dup, db.max_node_size, db.page_size).unwrap();
+            writer
+                .insert_freed_page_id(&db, tsn, dup, db.max_node_size, db.page_size)
+                .unwrap();
 
             // Verify via reusable_page_ids
             writer.find_reusable_page_ids(&db).unwrap();
@@ -4312,7 +4403,8 @@ mod tests {
             let mut inline_ids = Vec::new();
             loop {
                 let pid = writer.alloc_page_id();
-                let res = writer.insert_freed_page_id(&db, tsn, pid, db.max_node_size, db.page_size);
+                let res =
+                    writer.insert_freed_page_id(&db, tsn, pid, db.max_node_size, db.page_size);
                 if res.is_err() {
                     panic!("unexpected error inserting into inline");
                 }
@@ -4346,7 +4438,9 @@ mod tests {
             }
 
             for pid in &extra_ids {
-                writer.insert_freed_page_id(&db, tsn, *pid, db.max_node_size, db.page_size).unwrap();
+                writer
+                    .insert_freed_page_id(&db, tsn, *pid, db.max_node_size, db.page_size)
+                    .unwrap();
             }
 
             // Verify no duplicates and all ids present

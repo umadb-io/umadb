@@ -1,16 +1,18 @@
+use crate::APPEND_BATCH_MAX_EVENTS;
+use rustc_hash::FxHashMap;
 use std::sync::Arc;
 use std::thread;
-use rustc_hash::FxHashMap;
 use tokio::sync::{mpsc, oneshot, watch};
-use umadb_core::common::{Position};
-use umadb_core::db::{read_conditional, UmaDb};
+use umadb_core::common::Position;
+use umadb_core::db::{UmaDb, read_conditional};
 use umadb_core::io_shell::io_shell;
 use umadb_core::mvcc::{Mvcc, StorageOptions};
 use umadb_core::writer_thread_blocking::writer_thread_blocking;
 use umadb_core::writer_thread_pipelining::writer_thread_pipelining;
 use umadb_core::writer_thread_request::WriterThreadRequest;
-use umadb_dcb::{DcbAppendCondition, DcbError, DcbEvent, DcbQuery, DcbResult, DcbSequencedEvent, TrackingInfo};
-use crate::APPEND_BATCH_MAX_EVENTS;
+use umadb_dcb::{
+    DcbAppendCondition, DcbError, DcbEvent, DcbQuery, DcbResult, DcbSequencedEvent, TrackingInfo,
+};
 
 // Thread-safe request handler
 pub struct UmaDbServerRequestHandler {
@@ -41,7 +43,6 @@ impl UmaDbServerRequestHandler {
         let mvcc_for_writer = mvcc.clone();
         let head_tx_writer = head_watch_tx.clone();
         if pipelined_writer_option {
-
             // Create a channel to communicate with the async I/O shell.
             let (io_tx, io_rx) = tokio::sync::mpsc::unbounded_channel();
 
@@ -63,9 +64,24 @@ impl UmaDbServerRequestHandler {
                 });
             }
 
-            thread::spawn(move || writer_thread_pipelining(io_tx, mvcc_for_writer, writer_request_rx, head_tx_writer, APPEND_BATCH_MAX_EVENTS));
+            thread::spawn(move || {
+                writer_thread_pipelining(
+                    io_tx,
+                    mvcc_for_writer,
+                    writer_request_rx,
+                    head_tx_writer,
+                    APPEND_BATCH_MAX_EVENTS,
+                )
+            });
         } else {
-            thread::spawn(move || writer_thread_blocking(mvcc_for_writer, writer_request_rx, head_tx_writer, APPEND_BATCH_MAX_EVENTS));
+            thread::spawn(move || {
+                writer_thread_blocking(
+                    mvcc_for_writer,
+                    writer_request_rx,
+                    head_tx_writer,
+                    APPEND_BATCH_MAX_EVENTS,
+                )
+            });
         }
 
         Ok(Self {
@@ -167,7 +183,10 @@ impl UmaDbServerRequestHandler {
 
     #[allow(dead_code)]
     async fn shutdown(&self) {
-        let _ = self.writer_request_tx.send(WriterThreadRequest::Shutdown).await;
+        let _ = self
+            .writer_request_tx
+            .send(WriterThreadRequest::Shutdown)
+            .await;
     }
 }
 

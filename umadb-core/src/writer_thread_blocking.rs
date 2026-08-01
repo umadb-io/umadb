@@ -1,11 +1,19 @@
+use crate::db::{
+    UmaDb, clone_dcb_error, is_integrity_error, is_invalid_argument_error, process_append_request,
+    shadow_for_batch_abort,
+};
+use crate::mvcc::Mvcc;
+use crate::writer_thread_request::WriterThreadRequest;
 use std::sync::Arc;
 use tokio::sync::{mpsc, oneshot, watch};
 use umadb_dcb::{DcbError, DcbResult};
-use crate::db::{clone_dcb_error, is_integrity_error, is_invalid_argument_error, process_append_request, shadow_for_batch_abort, UmaDb};
-use crate::mvcc::Mvcc;
-use crate::writer_thread_request::WriterThreadRequest;
 
-pub fn writer_thread_blocking(mvcc: Arc<Mvcc>, mut request_rx: mpsc::Receiver<WriterThreadRequest>, head_watch_tx: watch::Sender<Option<u64>>, append_batch_max_events: usize) {
+pub fn writer_thread_blocking(
+    mvcc: Arc<Mvcc>,
+    mut request_rx: mpsc::Receiver<WriterThreadRequest>,
+    head_watch_tx: watch::Sender<Option<u64>>,
+    append_batch_max_events: usize,
+) {
     let db = UmaDb::from_arc(mvcc);
 
     // Process writer requests.
@@ -54,12 +62,8 @@ pub fn writer_thread_blocking(mvcc: Arc<Mvcc>, mut request_rx: mpsc::Receiver<Wr
                 // Record result and possibly mark abort
                 match &result {
                     Ok(_) => results.push(result),
-                    Err(e) if is_integrity_error(e) => {
-                        results.push(Err(clone_dcb_error(e)))
-                    }
-                    Err(e) if is_invalid_argument_error(e) => {
-                        results.push(Err(clone_dcb_error(e)))
-                    }
+                    Err(e) if is_integrity_error(e) => results.push(Err(clone_dcb_error(e))),
+                    Err(e) if is_invalid_argument_error(e) => results.push(Err(clone_dcb_error(e))),
                     Err(e) => {
                         abort_idx = Some(0);
                         abort_err = Some(clone_dcb_error(e));
@@ -80,12 +84,12 @@ pub fn writer_thread_blocking(mvcc: Arc<Mvcc>, mut request_rx: mpsc::Receiver<Wr
                     }
                     match request_rx.try_recv() {
                         Ok(WriterThreadRequest::Append {
-                               events,
-                               condition,
-                               tracking_info,
-                               response_tx,
-                               cancel,
-                           }) => {
+                            events,
+                            condition,
+                            tracking_info,
+                            response_tx,
+                            cancel,
+                        }) => {
                             let ev_len = events.len();
                             let idx_in_batch = responders.len();
                             responders.push(response_tx);
@@ -152,8 +156,7 @@ pub fn writer_thread_blocking(mvcc: Arc<Mvcc>, mut request_rx: mpsc::Receiver<Wr
                 match batch_result {
                     Ok(results) => {
                         // Send individual results back to requesters
-                        for (res, tx) in results.into_iter().zip(responders.into_iter())
-                        {
+                        for (res, tx) in results.into_iter().zip(responders.into_iter()) {
                             let _ = tx.send(res);
                         }
                         // After a successful batch commit, publish the updated head from writer.next_position.

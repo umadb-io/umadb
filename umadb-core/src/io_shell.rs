@@ -1,10 +1,10 @@
 #[cfg(target_os = "linux")]
 pub mod io_shell {
-    use umadb_dcb::{DcbError, DcbResult};
-    use crate::mvcc::{PreparedCommit};
+    use crate::mvcc::PreparedCommit;
+    use std::path::PathBuf;
     use tokio::sync::{mpsc, oneshot};
     use tokio_uring::fs::File;
-    use std::path::PathBuf;
+    use umadb_dcb::{DcbError, DcbResult};
 
     pub type IoJob = (PreparedCommit, oneshot::Sender<DcbResult<()>>);
 
@@ -38,7 +38,6 @@ pub mod io_shell {
         page_size_u64: u64,
         prepared: PreparedCommit,
     ) -> DcbResult<()> {
-
         // 1. SUBMIT ALL DATA PAGES CONCURRENTLY
         let mut writes = Vec::with_capacity(prepared.pages_to_write.len());
         for (page_id, page_data) in prepared.pages_to_write {
@@ -73,18 +72,15 @@ pub mod io_shell {
 
 #[cfg(not(target_os = "linux"))]
 pub mod io_shell {
-    use tokio::sync::{mpsc, oneshot};
-    use std::sync::Arc;
-    use umadb_dcb::DcbResult;
     use crate::mvcc::{Mvcc, PreparedCommit};
+    use std::sync::Arc;
+    use tokio::sync::{mpsc, oneshot};
+    use umadb_dcb::DcbResult;
 
     // The exact same job signature as the io_uring version
     pub type IoJob = (PreparedCommit, oneshot::Sender<DcbResult<()>>);
 
-    pub fn start_blocking_io_thread(
-        mvcc: Arc<Mvcc>,
-        mut io_rx: mpsc::UnboundedReceiver<IoJob>,
-    ) {
+    pub fn start_blocking_io_thread(mvcc: Arc<Mvcc>, mut io_rx: mpsc::UnboundedReceiver<IoJob>) {
         // Just a simple, infinite blocking loop on this dedicated OS thread
         while let Some((prepared, response_tx)) = io_rx.blocking_recv() {
             let result = do_blocking_commit(&mvcc, prepared);
@@ -94,10 +90,7 @@ pub mod io_shell {
         }
     }
 
-    fn do_blocking_commit(
-        mvcc: &Mvcc,
-        prepared: PreparedCommit,
-    ) -> DcbResult<()> {
+    fn do_blocking_commit(mvcc: &Mvcc, prepared: PreparedCommit) -> DcbResult<()> {
         // 1. Write Data Pages sequentially
         for (page_id, page_data) in prepared.pages_to_write {
             mvcc.pager.write_page(page_id, &page_data)?;

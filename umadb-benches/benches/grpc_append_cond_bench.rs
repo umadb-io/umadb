@@ -21,15 +21,11 @@ fn get_events_per_request() -> usize {
 }
 
 fn get_initial_events() -> Option<usize> {
-    std::env::var("INITIAL")
-        .ok()
-        .and_then(|s| s.parse().ok())
+    std::env::var("INITIAL").ok().and_then(|s| s.parse().ok())
 }
 
 fn get_duration() -> Option<u64> {
-    std::env::var("DURATION")
-        .ok()
-        .and_then(|s| s.parse().ok())
+    std::env::var("DURATION").ok().and_then(|s| s.parse().ok())
 }
 
 fn get_max_threads() -> Option<usize> {

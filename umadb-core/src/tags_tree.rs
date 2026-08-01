@@ -5,8 +5,8 @@ use crate::page::Page;
 use crate::tags_tree_nodes::{
     TagHash, TagInternalNode, TagLeafNode, TagsInternalNode, TagsLeafNode, TagsLeafValue,
 };
-use std::sync::Arc;
 use rustc_hash::FxHashMap;
+use std::sync::Arc;
 use umadb_dcb::{DcbError, DcbResult};
 
 /// Insert a Position into the tags tree at the given TagHash key.

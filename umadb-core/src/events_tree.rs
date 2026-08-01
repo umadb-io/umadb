@@ -8,8 +8,8 @@ use crate::events_tree_nodes::{
 use crate::mvcc::{Mvcc, MvccSnapshot, Writer};
 use crate::node::Node;
 use crate::page::{PAGE_HEADER_SIZE, Page};
-use std::sync::Arc;
 use rustc_hash::FxHashMap;
+use std::sync::Arc;
 use umadb_dcb::{DcbError, DcbResult};
 
 // Helpers for storing large event data across overflow pages

@@ -1,16 +1,18 @@
-use std::sync::Arc;
-use rustc_hash::FxHashMap;
-use tokio::sync::{mpsc, oneshot};
-use tokio::sync::mpsc::Receiver;
-use tokio::sync::watch::Sender;
-use umadb_dcb::{DcbError, DcbResult};
 use crate::common::PageID;
-use crate::db::{clone_dcb_error, is_integrity_error, is_invalid_argument_error, process_append_request, shadow_for_batch_abort};
+use crate::db::{
+    clone_dcb_error, is_integrity_error, is_invalid_argument_error, process_append_request,
+    shadow_for_batch_abort,
+};
 use crate::io_shell::io_shell::IoJob;
 use crate::mvcc::{Mvcc, Writer, WriterSnapshot};
 use crate::page::Page;
 use crate::writer_thread_request::WriterThreadRequest;
-
+use rustc_hash::FxHashMap;
+use std::sync::Arc;
+use tokio::sync::mpsc::Receiver;
+use tokio::sync::watch::Sender;
+use tokio::sync::{mpsc, oneshot};
+use umadb_dcb::{DcbError, DcbResult};
 
 struct InflightCommit {
     io_rx: oneshot::Receiver<DcbResult<()>>,
@@ -19,7 +21,6 @@ struct InflightCommit {
     new_head: Option<u64>,
     wet_pages_to_cache: FxHashMap<PageID, Arc<Page>>,
 }
-
 
 pub fn writer_thread_pipelining(
     io_tx: mpsc::UnboundedSender<IoJob>,
@@ -57,7 +58,11 @@ pub fn writer_thread_pipelining(
         match inflight.io_rx.blocking_recv() {
             Ok(Ok(())) => {
                 let _ = mvcc.update_page_cache(inflight.wet_pages_to_cache);
-                for (res, tx) in inflight.results.into_iter().zip(inflight.responders.into_iter()) {
+                for (res, tx) in inflight
+                    .results
+                    .into_iter()
+                    .zip(inflight.responders.into_iter())
+                {
                     let _ = tx.send(res);
                 }
                 let _ = head_watch_tx.send(inflight.new_head);
@@ -72,7 +77,9 @@ pub fn writer_thread_pipelining(
             Err(_) => {
                 // Background thread panicked or dropped
                 for tx in inflight.responders {
-                    let _ = tx.send(Err(DcbError::InternalError("Disk I/O thread failed".into())));
+                    let _ = tx.send(Err(DcbError::InternalError(
+                        "Disk I/O thread failed".into(),
+                    )));
                 }
                 false
             }
@@ -133,8 +140,8 @@ pub fn writer_thread_pipelining(
                     // free-list through the snapshot so it sees the previous batch's
                     // not-yet-durable pages, and gating on the smallest live reader
                     // TSN so we never reuse a page a live reader can still see.
-                    if let Err(e) = active_writer
-                        .find_reusable_page_ids_snap(&snapshot, mvcc.reader_tsns.min())
+                    if let Err(e) =
+                        active_writer.find_reusable_page_ids_snap(&snapshot, mvcc.reader_tsns.min())
                     {
                         let _ = response_tx.send(Err(clone_dcb_error(&e)));
                         continue;
@@ -146,13 +153,20 @@ pub fn writer_thread_pipelining(
                     let mut abort_err = None;
 
                     let result = process_append_request(
-                        events, condition, tracking_info, &snapshot, &mut active_writer, cancel,
+                        events,
+                        condition,
+                        tracking_info,
+                        &snapshot,
+                        &mut active_writer,
+                        cancel,
                     );
 
                     match &result {
                         Ok(_) => results.push(result),
                         Err(e) if is_integrity_error(e) => results.push(Err(clone_dcb_error(e))),
-                        Err(e) if is_invalid_argument_error(e) => results.push(Err(clone_dcb_error(e))),
+                        Err(e) if is_invalid_argument_error(e) => {
+                            results.push(Err(clone_dcb_error(e)))
+                        }
                         Err(e) => {
                             abort_idx = Some(0);
                             abort_err = Some(clone_dcb_error(e));
@@ -167,20 +181,33 @@ pub fn writer_thread_pipelining(
                         }
                         match request_rx.try_recv() {
                             Ok(WriterThreadRequest::Append {
-                                   events, condition, tracking_info, response_tx, cancel,
-                               }) => {
+                                events,
+                                condition,
+                                tracking_info,
+                                response_tx,
+                                cancel,
+                            }) => {
                                 let ev_len = events.len();
                                 let idx_in_batch = responders.len();
                                 responders.push(response_tx);
 
                                 let res_next = process_append_request(
-                                    events, condition, tracking_info, &snapshot, &mut active_writer, cancel,
+                                    events,
+                                    condition,
+                                    tracking_info,
+                                    &snapshot,
+                                    &mut active_writer,
+                                    cancel,
                                 );
 
                                 match &res_next {
                                     Ok(_) => results.push(res_next),
-                                    Err(e) if is_integrity_error(e) => results.push(Err(clone_dcb_error(e))),
-                                    Err(e) if is_invalid_argument_error(e) => results.push(Err(clone_dcb_error(e))),
+                                    Err(e) if is_integrity_error(e) => {
+                                        results.push(Err(clone_dcb_error(e)))
+                                    }
+                                    Err(e) if is_invalid_argument_error(e) => {
+                                        results.push(Err(clone_dcb_error(e)))
+                                    }
                                     Err(e) => {
                                         abort_idx = Some(idx_in_batch);
                                         abort_err = Some(clone_dcb_error(e));
@@ -232,7 +259,11 @@ pub fn writer_thread_pipelining(
                     match mvcc.prepare_commit(&mut active_writer, &snapshot) {
                         Ok((prepared_commit, new_wet_pages)) => {
                             let last_committed = active_writer.next_position.0.saturating_sub(1);
-                            let new_head = if last_committed == 0 { None } else { Some(last_committed) };
+                            let new_head = if last_committed == 0 {
+                                None
+                            } else {
+                                Some(last_committed)
+                            };
 
                             wet_pages = new_wet_pages.clone();
 

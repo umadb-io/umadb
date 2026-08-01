@@ -686,8 +686,9 @@ fn run_server_from_args(py: Python<'_>, args: Vec<String>) -> PyResult<()> {
         .map_err(|err| ServerStartError::new_err(err.to_string()))?;
 
     // Convert any runtime error directly to a ServerStartError
-    let run_result =
-        py.detach(move || umadb_cli::start_server_with_cli_options(options).map_err(|err| err.to_string()));
+    let run_result = py.detach(move || {
+        umadb_cli::start_server_with_cli_options(options).map_err(|err| err.to_string())
+    });
 
     run_result.map_err(ServerStartError::new_err)
 }
