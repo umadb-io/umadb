@@ -20,6 +20,7 @@ use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 use std::thread::sleep;
 use std::time::Duration;
+use rustc_hash::FxBuildHasher;
 use umadb_dcb::DcbError::InternalError;
 use umadb_dcb::{DcbError, DcbResult};
 
@@ -210,7 +211,7 @@ pub struct Mvcc {
     pub verbose: bool,
     pub zero_fill_pages: bool,
     read_method: ReadMethod,
-    page_cache: Option<Cache<PageID, Arc<Page>>>,
+    page_cache: Option<Cache<PageID, Arc<Page>, FxBuildHasher>>,
 }
 
 pub struct PreparedCommit {
@@ -260,14 +261,18 @@ impl Mvcc {
                     .weigher(|_page_id, page: &Arc<Page>| {
                         page_approx_deserialized_bytes(page.as_ref()).min(u32::MAX as usize) as u32
                     })
-                    .build(),
+                    .build_with_hasher(FxBuildHasher::default()),
             )
         } else if options.page_cache_max_pages > 0 {
             println!(
                 "UmaDB page cache max pages: {}",
                 options.page_cache_max_pages
             );
-            Some(Cache::new(options.page_cache_max_pages as u64))
+            Some(
+                Cache::builder()
+                    .max_capacity(options.page_cache_max_pages as u64)
+                    .build_with_hasher(FxBuildHasher::default()),
+            )
         } else {
             println!("UmaDB page cache not enabled");
             None
