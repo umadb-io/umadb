@@ -27,7 +27,7 @@ jobs:
       run: make install-python-tools
     - name: Run Append Cond Bench Sweep
       run: |
-        rm -rf images/*
+        rm -rf images
         uv@${{ env.UV_VERSION }} run python scripts/sweep_append_cond_bench_across_write_mode_and_page_cache.py
       env:
         MAX_THREADS: 64
@@ -38,4 +38,4 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: benchmark-plots
-        path: images/*.png
+        path: images*/*.png
