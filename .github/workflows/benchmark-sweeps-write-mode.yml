@@ -30,7 +30,7 @@ jobs:
         rm -rf images
         uv@${{ env.UV_VERSION }} run python scripts/sweep_append_cond_bench_across_write_mode_and_page_cache.py
       env:
-        MAX_THREADS: 64
+        MAX_THREADS: 1024
         MIN_THREADS: 1
         INITIAL: 100000
         DURATION: 15
