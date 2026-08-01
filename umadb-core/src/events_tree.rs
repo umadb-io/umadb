@@ -8,8 +8,8 @@ use crate::events_tree_nodes::{
 use crate::mvcc::{Mvcc, MvccSnapshot, Writer};
 use crate::node::Node;
 use crate::page::{PAGE_HEADER_SIZE, Page};
-use std::collections::HashMap;
 use std::sync::Arc;
+use rustc_hash::FxHashMap;
 use umadb_dcb::{DcbError, DcbResult};
 
 // Helpers for storing large event data across overflow pages
@@ -57,7 +57,7 @@ fn write_overflow_chain(writer: &mut Writer, data: &[u8]) -> DcbResult<PageID> {
 
 fn read_overflow_chain<T: MvccSnapshot>(
     mvcc: &T,
-    dirty: &HashMap<PageID, Page>,
+    dirty: &FxHashMap<PageID, Page>,
     mut page_id: PageID,
 ) -> DcbResult<Vec<u8>> {
     let mut out: Vec<u8> = Vec::new();
@@ -77,7 +77,7 @@ fn read_overflow_chain<T: MvccSnapshot>(
 
 fn with_page<T, F, M: MvccSnapshot>(
     mvcc: &M,
-    dirty: &HashMap<PageID, Page>,
+    dirty: &FxHashMap<PageID, Page>,
     page_id: PageID,
     f: F,
 ) -> DcbResult<T>
@@ -124,7 +124,7 @@ fn data_and_metadata_to_overflow_chain(
 
 fn materialize_event_value<T: MvccSnapshot>(
     mvcc: &T,
-    dirty: &HashMap<PageID, Page>,
+    dirty: &FxHashMap<PageID, Page>,
     value: &EventValue,
 ) -> DcbResult<EventRecord> {
     match value {
@@ -493,7 +493,7 @@ pub fn event_tree_append_event_value<T: MvccSnapshot>(
 
 pub fn event_tree_lookup<T: MvccSnapshot>(
     mvcc: &T,
-    dirty: &HashMap<PageID, Page>,
+    dirty: &FxHashMap<PageID, Page>,
     events_tree_root_id: PageID,
     position: Position,
 ) -> DcbResult<EventRecord> {
@@ -542,9 +542,9 @@ pub fn event_tree_lookup<T: MvccSnapshot>(
 
 pub struct EventIterator<'a, T: MvccSnapshot> {
     pub mvcc: &'a T,
-    pub dirty: &'a HashMap<PageID, Page>,
+    pub dirty: &'a FxHashMap<PageID, Page>,
     pub stack: Vec<(PageID, Option<usize>)>,
-    pub page_cache: HashMap<PageID, Arc<Page>>,
+    pub page_cache: FxHashMap<PageID, Arc<Page>>,
     pub start: Option<Position>, // inclusive position, better for binary search
     pub backwards: bool,
 }
@@ -552,7 +552,7 @@ pub struct EventIterator<'a, T: MvccSnapshot> {
 impl<'a, T: MvccSnapshot> EventIterator<'a, T> {
     pub fn new(
         mvcc: &'a T,
-        dirty: &'a HashMap<PageID, Page>,
+        dirty: &'a FxHashMap<PageID, Page>,
         events_tree_root_id: PageID,
         start: Option<Position>,
         backwards: bool,
@@ -562,7 +562,7 @@ impl<'a, T: MvccSnapshot> EventIterator<'a, T> {
             mvcc,
             dirty,
             stack: vec![next_position],
-            page_cache: HashMap::new(),
+            page_cache: FxHashMap::default(),
             start,
             backwards,
         }
@@ -1243,7 +1243,7 @@ mod tests {
         let events_tree_root_id = reader.events_tree_root_id;
         let reader_tsn = reader.tsn;
 
-        let dirty = HashMap::new();
+        let dirty = FxHashMap::default();
         let mut events_iterator = EventIterator::new(&db, &dirty, events_tree_root_id, None, false);
 
         // Ensure the reader's tsn is registered while the iterator is alive
@@ -1279,7 +1279,7 @@ mod tests {
         }
 
         // Additionally, validate lookup_event for each appended position using the existing reader in the iterator
-        let dirty = HashMap::new();
+        let dirty = FxHashMap::default();
         for (pos, expected_rec) in copy_inserted.iter() {
             let found = event_tree_lookup(&db, &dirty, events_tree_root_id, *pos).unwrap();
             assert_eq!(expected_rec, &found);
@@ -1373,7 +1373,7 @@ mod tests {
             let reader = db.reader().unwrap();
             let events_tree_root_id = reader.events_tree_root_id;
             let reader_tsn = reader.tsn;
-            let dirty = HashMap::new();
+            let dirty = FxHashMap::default();
             let mut events_iterator =
                 EventIterator::new(&db, &dirty, events_tree_root_id, Some(from), false);
 
@@ -1493,7 +1493,7 @@ mod tests {
             let reader = db.reader().unwrap();
             let events_tree_root_id = reader.events_tree_root_id;
             let reader_tsn = reader.tsn;
-            let dirty = HashMap::new();
+            let dirty = FxHashMap::default();
             let mut events_iterator =
                 EventIterator::new(&db, &dirty, events_tree_root_id, Some(from), true);
 
@@ -1572,7 +1572,7 @@ mod tests {
 
         // Lookup should return identical payload
         let reader = db.reader().unwrap();
-        let dirty = HashMap::new();
+        let dirty = FxHashMap::default();
         let got = event_tree_lookup(&db, &dirty, reader.events_tree_root_id, pos).unwrap();
         assert_eq!(event, got);
 
@@ -1624,7 +1624,7 @@ mod tests {
 
         // Lookup
         let reader = db.reader().unwrap();
-        let dirty = HashMap::new();
+        let dirty = FxHashMap::default();
         let got = event_tree_lookup(&db, &dirty, reader.events_tree_root_id, pos).unwrap();
         assert_eq!(event, got);
 
@@ -1675,7 +1675,7 @@ mod tests {
 
         // Read back through the materialization path and confirm metadata survives.
         let reader = db.reader().unwrap();
-        let dirty = HashMap::new();
+        let dirty = FxHashMap::default();
         let got = event_tree_lookup(&db, &dirty, reader.events_tree_root_id, pos).unwrap();
         assert_eq!(event, got);
         assert_eq!(metadata, got.metadata);
@@ -1719,7 +1719,7 @@ mod tests {
         // Read back through the materialization path and confirm both data and
         // metadata survive the split/overflow chain.
         let reader = db.reader().unwrap();
-        let dirty = HashMap::new();
+        let dirty = FxHashMap::default();
         let got = event_tree_lookup(&db, &dirty, reader.events_tree_root_id, pos).unwrap();
         assert_eq!(event, got);
         assert_eq!(data, got.data);
@@ -1779,7 +1779,7 @@ mod tests {
         db.commit(&mut writer).unwrap();
 
         let reader = db.reader().unwrap();
-        let dirty = HashMap::new();
+        let dirty = FxHashMap::default();
         let got = event_tree_lookup(&db, &dirty, reader.events_tree_root_id, pos).unwrap();
         assert_eq!(event, got);
         assert_eq!(data, got.data);
@@ -1816,7 +1816,7 @@ mod tests {
         // must not resolve to a stored event.
         db.commit(&mut writer).unwrap();
         let reader = db.reader().unwrap();
-        let dirty = HashMap::new();
+        let dirty = FxHashMap::default();
         assert!(
             event_tree_lookup(&db, &dirty, reader.events_tree_root_id, pos).is_err(),
             "rejected event must not be retrievable"
@@ -1853,7 +1853,7 @@ mod tests {
         // must not resolve to a stored event.
         db.commit(&mut writer).unwrap();
         let reader = db.reader().unwrap();
-        let dirty = HashMap::new();
+        let dirty = FxHashMap::default();
         assert!(
             event_tree_lookup(&db, &dirty, reader.events_tree_root_id, pos).is_err(),
             "rejected event must not be retrievable"
@@ -1937,7 +1937,7 @@ mod tests {
     //         // Lookup phase
     //         let reader = db.reader().unwrap();
     //         let start_lookup = std::time::Instant::now();
-    //         let dirty = HashMap::new();
+    //         let dirty = FxHashMap::default();
     //         for &pos in &positions {
     //             let rec = event_tree_lookup(&db, &dirty, reader.events_tree_root_id, pos).unwrap();
     //             std::hint::black_box(&rec);
@@ -1994,7 +1994,7 @@ mod tests {
 
         // 2. Iterate backwards from the end (start = None)
         let reader = db.reader().unwrap();
-        let dirty = HashMap::new();
+        let dirty = FxHashMap::default();
         let mut events_iterator = EventIterator::new(
             &db,
             &dirty,

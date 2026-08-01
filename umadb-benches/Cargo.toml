@@ -22,7 +22,7 @@ pprof = { version = "0.15.0", features = ["criterion", "flamegraph"] }
 uuid = { version = "1.23.0", features = ["v4"] }
 clap = { version = "4.6.0", features = ["derive"] }
 ahash = "0.8"
-rustc-hash = "2.1"
+rustc-hash = { workspace = true }
 dashmap = "6"
 parking_lot = "0.12"
 serde = { version = "1.0", features = ["derive"] }

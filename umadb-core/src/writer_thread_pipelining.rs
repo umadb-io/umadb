@@ -1,5 +1,5 @@
-use std::collections::HashMap;
 use std::sync::Arc;
+use rustc_hash::FxHashMap;
 use tokio::sync::{mpsc, oneshot};
 use tokio::sync::mpsc::Receiver;
 use tokio::sync::watch::Sender;
@@ -17,7 +17,7 @@ struct InflightCommit {
     responders: Vec<oneshot::Sender<DcbResult<u64>>>,
     results: Vec<DcbResult<u64>>,
     new_head: Option<u64>,
-    wet_pages_to_cache: HashMap<PageID, Arc<Page>>,
+    wet_pages_to_cache: FxHashMap<PageID, Arc<Page>>,
 }
 
 
@@ -29,7 +29,7 @@ pub fn writer_thread_pipelining(
     append_batch_max_events: usize,
 ) {
     let mvcc = mvcc_arc.as_ref();
-    let mut wet_pages: HashMap<PageID, Arc<Page>> = HashMap::new();
+    let mut wet_pages: FxHashMap<PageID, Arc<Page>> = FxHashMap::default();
     let mut inflight_io: Option<InflightCommit> = None;
 
     // The writer is persisted across batches. Batch N is written to disk in the
@@ -81,7 +81,7 @@ pub fn writer_thread_pipelining(
 
     // Reset the writer to the latest durable state after an I/O failure discards
     // the in-flight batch (and the not-yet-durable batch we built on top of it).
-    let rollback = |active_writer: &mut Writer, wet_pages: &mut HashMap<PageID, Arc<Page>>| {
+    let rollback = |active_writer: &mut Writer, wet_pages: &mut FxHashMap<PageID, Arc<Page>>| {
         wet_pages.clear();
         match mvcc.writer() {
             Ok(w) => *active_writer = w,

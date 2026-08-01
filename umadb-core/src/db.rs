@@ -10,6 +10,7 @@ use crate::tracking_tree_nodes::{TrackingInternalNode, TrackingLeafNode};
 use itertools::Itertools;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
+use rustc_hash::FxHashMap;
 use umadb_dcb::{
     DcbAppendCondition, DcbError, DcbEvent, DcbEventStoreSync, DcbQuery, DcbReadResponseSync,
     DcbResult, DcbSequencedEvent, TrackingInfo,
@@ -161,7 +162,7 @@ impl DcbEventStoreSync for UmaDb {
         // Delegate to read_conditional
         let events = read_conditional(
             mvcc,
-            &HashMap::new(),
+            &FxHashMap::default(),
             reader.events_tree_root_id,
             reader.tags_tree_root_id,
             q,
@@ -514,7 +515,7 @@ fn unconditional_append_event_values<T: MvccSnapshot>(
 /// filtering by tag and type matches, and then looking up the event record.
 pub fn read_conditional<T: MvccSnapshot>(
     mvcc: &T,
-    dirty: &HashMap<PageID, Page>,
+    dirty: &FxHashMap<PageID, Page>,
     events_tree_root_id: PageID,
     tags_tree_root_id: PageID,
     query: DcbQuery,
@@ -942,7 +943,7 @@ pub fn tag_to_hash(tag: &str) -> TagHash {
 
 pub fn is_request_idempotent<T: MvccSnapshot>(
     mvcc: &T,
-    dirty: &HashMap<PageID, Page>,
+    dirty: &FxHashMap<PageID, Page>,
     events_tree_root_id: PageID,
     tags_tree_root_id: PageID,
     events: &Vec<DcbEvent>,
@@ -1093,7 +1094,6 @@ mod tests {
     use crate::mvcc::{DEFAULT_PAGE_SIZE, StorageOptions};
     use crate::page::Page;
     use serial_test::serial;
-    use std::collections::HashMap;
     use tempfile::tempdir;
     use umadb_dcb::{
         DcbAppendCondition, DcbError, DcbEvent, DcbEventStoreSync, DcbQuery, DcbQueryItem,
@@ -1187,7 +1187,7 @@ mod tests {
         let base_event = DcbEvent::new().event_type("T").data([0u8]);
 
         // Keep track of every key we send and the expected value (position)
-        let mut observed: HashMap<String, u64> = HashMap::new();
+        let mut observed: FxHashMap<String, u64> = FxHashMap::default();
 
         // Insert keys until we observe that the root's first child is also an internal node,
         // which only happens after the root internal itself has split and a new root was created.
@@ -1240,7 +1240,7 @@ mod tests {
         }
 
         // Now, for each source, increment the position by 1000 and verify updates are visible
-        let mut updated: HashMap<String, u64> = HashMap::new();
+        let mut updated: FxHashMap<String, u64> = FxHashMap::default();
         for (k, prev_pos) in &observed {
             let new_pos = *prev_pos + 1000;
             uma.append(
@@ -1337,7 +1337,7 @@ mod tests {
     ) -> DcbResult<Vec<DcbSequencedEvent>> {
         super::read_conditional(
             mvcc,
-            &HashMap::<PageID, Page>::new(),
+            &FxHashMap::default(),
             events_tree_root_id,
             tags_tree_root_id,
             query,

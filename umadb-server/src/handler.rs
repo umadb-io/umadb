@@ -1,5 +1,6 @@
 use std::sync::Arc;
 use std::thread;
+use rustc_hash::FxHashMap;
 use tokio::sync::{mpsc, oneshot, watch};
 use umadb_core::common::{Position};
 use umadb_core::db::{read_conditional, UmaDb};
@@ -94,7 +95,7 @@ impl UmaDbServerRequestHandler {
 
         let events = read_conditional(
             self.mvcc.as_ref(),
-            &std::collections::HashMap::new(),
+            &FxHashMap::default(),
             reader.events_tree_root_id,
             reader.tags_tree_root_id,
             q,

@@ -5,8 +5,8 @@ use crate::page::Page;
 use crate::tags_tree_nodes::{
     TagHash, TagInternalNode, TagLeafNode, TagsInternalNode, TagsLeafNode, TagsLeafValue,
 };
-use std::collections::HashMap;
 use std::sync::Arc;
+use rustc_hash::FxHashMap;
 use umadb_dcb::{DcbError, DcbResult};
 
 /// Insert a Position into the tags tree at the given TagHash key.
@@ -597,14 +597,14 @@ pub fn tags_tree_insert<T: MvccSnapshot>(
 // Iterator over positions for a given tag in the tags tree
 pub struct TagsTreeIterator<'a, T: MvccSnapshot> {
     db: &'a T,
-    dirty: &'a HashMap<PageID, Page>,
+    dirty: &'a FxHashMap<PageID, Page>,
     tags_root_id: PageID,
     tag: TagHash,
     start: Option<Position>,
     backwards: bool,
     // New traversal machinery similar to EventIterator
     stack: Vec<(PageID, Option<usize>)>,
-    page_cache: HashMap<PageID, Arc<Page>>,
+    page_cache: FxHashMap<PageID, Arc<Page>>,
     // Current batch of positions (from a single page)
     batch: Vec<Position>,
     batch_index: usize,
@@ -620,7 +620,7 @@ enum IterState {
 impl<'a, T: MvccSnapshot> TagsTreeIterator<'a, T> {
     pub fn new(
         db: &'a T,
-        dirty: &'a HashMap<PageID, Page>,
+        dirty: &'a FxHashMap<PageID, Page>,
         tags_root_id: PageID,
         tag: TagHash,
         start: Option<Position>,
@@ -634,7 +634,7 @@ impl<'a, T: MvccSnapshot> TagsTreeIterator<'a, T> {
             start,
             backwards,
             stack: Vec::new(),
-            page_cache: HashMap::new(),
+            page_cache: FxHashMap::default(),
             batch: Vec::new(),
             batch_index: 0,
             state: IterState::NotStarted,
@@ -964,7 +964,7 @@ mod tests {
         backwards: bool,
     ) -> DcbResult<Vec<Position>> {
         // Reuse the iterator to traverse and collect all positions for the tag
-        let dirty = HashMap::new();
+        let dirty = FxHashMap::default();
         let iter = TagsTreeIterator::new(mvcc, &dirty, tags_root_id, tag, Some(from), backwards);
         Ok(iter.collect())
     }
@@ -1744,7 +1744,7 @@ mod tests {
         db.commit(&mut writer).unwrap();
 
         let reader = db.reader().unwrap();
-        let dirty = HashMap::new();
+        let dirty = FxHashMap::default();
 
         // from first -> all positions
         let after_first = inserted[0];

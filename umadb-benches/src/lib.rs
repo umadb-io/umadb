@@ -626,12 +626,12 @@ mod memory_tests {
     use super::bench_api::{comprehensive_full_page_samples, comprehensive_page_samples};
     use memory_stats::memory_stats;
     use std::cmp::Ordering;
-    use std::collections::HashMap;
     use std::env;
     use std::hint::black_box;
     use std::process::Command;
     use std::str;
     use std::sync::Arc;
+    use rustc_hash::FxHashMap;
     use sysinfo::{Pid, Process, ProcessesToUpdate, System};
     use umadb_core::page::page_approx_deserialized_bytes;
 
@@ -704,7 +704,7 @@ mod memory_tests {
     }
 
     fn representative_page_by_type() -> Vec<umadb_core::page::Page> {
-        let mut pages_by_type: HashMap<&'static str, umadb_core::page::Page> = HashMap::new();
+        let mut pages_by_type: FxHashMap<&'static str, umadb_core::page::Page> = FxHashMap::default();
 
         for page in comprehensive_page_samples() {
             let key = page.node.type_name();

@@ -3,13 +3,13 @@ use memmap2::{Mmap, MmapOptions};
 // use memmap2::{Advice, MmapOptions};
 use fs2::FileExt as Fs2FileExt;
 use nix::fcntl;
-use std::collections::HashMap;
 use std::fs::{File, OpenOptions};
 use std::io;
 use std::os::fd::{AsRawFd, RawFd};
 use std::os::unix::fs::FileExt;
 use std::path::Path;
 use std::sync::{Arc, RwLock};
+use rustc_hash::FxHashMap;
 use umadb_dcb::{DcbError, DcbResult};
 
 // Pager for file I/O
@@ -22,7 +22,7 @@ pub struct Pager {
     // Number of logical database pages contained in a single mmap window.
     mmap_pages_per_map: usize,
     // Cache of memory maps, keyed by map identifier (floor(page_id / mmap_pages_per_map)).
-    mmaps: RwLock<HashMap<u64, Arc<Mmap>>>,
+    mmaps: RwLock<FxHashMap<u64, Arc<Mmap>>>,
     no_fsync: bool,
 }
 
@@ -104,7 +104,7 @@ impl Pager {
             page_size,
             is_file_new,
             mmap_pages_per_map,
-            mmaps: RwLock::new(HashMap::new()),
+            mmaps: RwLock::new(FxHashMap::default()),
             // no_fsync: std::env::var("UMADB_NO_FSYNC").ok().is_some(),
             no_fsync: false,
         })

@@ -20,7 +20,7 @@ use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 use std::thread::sleep;
 use std::time::Duration;
-use rustc_hash::FxBuildHasher;
+use rustc_hash::{FxBuildHasher, FxHashMap};
 use umadb_dcb::DcbError::InternalError;
 use umadb_dcb::{DcbError, DcbResult};
 
@@ -617,11 +617,11 @@ impl Mvcc {
 
     pub fn prepare_commit<T: MvccSnapshot>(
         &self, writer: &mut Writer, mvcc: &T
-    ) -> DcbResult<(PreparedCommit, HashMap<PageID, Arc<Page>>)> {
+    ) -> DcbResult<(PreparedCommit, FxHashMap<PageID, Arc<Page>>)> {
 
         writer.process_freed_page_ids(mvcc, self.max_node_size, self.page_size)?;
 
-        let mut wet_pages = HashMap::with_capacity(writer.dirty.len() + 1);
+        let mut wet_pages = FxHashMap::with_capacity_and_hasher(writer.dirty.len() + 1, Default::default());
 
         // Copy-on-write the header page.
         let dirty_header = writer.cow_header_page()?;
@@ -674,7 +674,7 @@ impl Mvcc {
         Ok((prepared_commit, wet_pages))
     }
 
-    pub fn update_page_cache(&self, mut wet_pages: HashMap<PageID, Arc<Page>>) -> DcbResult<()> {
+    pub fn update_page_cache(&self, mut wet_pages: FxHashMap<PageID, Arc<Page>>) -> DcbResult<()> {
         // Cache the new pages without cloning by draining dirty pages.
         if let Some(ref page_cache) = self.page_cache {
             for (page_id, page) in wet_pages.drain() {
@@ -788,7 +788,7 @@ pub struct WriterSnapshot<'a> {
 
     // The dirty pages modified in the previous batch
     // that haven't been fully committed/fsynced yet.
-    pub wet_pages: &'a HashMap<PageID, Arc<Page>>,
+    pub wet_pages: &'a FxHashMap<PageID, Arc<Page>>,
 }
 
 impl<'a> MvccSnapshot for WriterSnapshot<'a> {
@@ -815,8 +815,8 @@ pub struct Writer {
     pub next_position: Position,
     pub reusable_page_ids: VecDeque<(PageID, Tsn)>,
     pub freed_page_ids: VecDeque<PageID>,
-    pub deserialized: HashMap<PageID, Arc<Page>>,
-    pub dirty: HashMap<PageID, Page>,
+    pub deserialized: FxHashMap<PageID, Arc<Page>>,
+    pub dirty: FxHashMap<PageID, Page>,
     pub reused_page_ids: VecDeque<(PageID, Tsn)>,
     pub verbose: bool,
     pub page_size: usize,
@@ -848,8 +848,8 @@ impl Writer {
             next_position,
             reusable_page_ids: VecDeque::new(),
             freed_page_ids: VecDeque::new(),
-            deserialized: HashMap::new(),
-            dirty: HashMap::new(),
+            deserialized: FxHashMap::default(),
+            dirty: HashMap::default(),
             reused_page_ids: VecDeque::new(),
             verbose,
             page_size,

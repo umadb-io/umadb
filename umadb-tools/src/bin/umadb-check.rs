@@ -1,7 +1,8 @@
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap};
 use std::env;
 use std::os::unix::fs::FileExt;
 use std::path::PathBuf;
+use rustc_hash::FxHashMap;
 use umadb_core::common::{PageID, Position};
 use umadb_core::db::{read_conditional, tag_to_hash};
 use umadb_core::mvcc::{DEFAULT_PAGE_SIZE, Mvcc, StorageOptions};
@@ -446,8 +447,8 @@ fn real_main() -> DcbResult<()> {
     let mut start = Some(Position(1));
     let mut total_events_read: u64 = 0;
     // Cache of events by position for Stage 4 analysis
-    let mut events_by_position: HashMap<u64, DcbEvent> = HashMap::new();
-    let empty_dirty: HashMap<PageID, Page> = HashMap::new();
+    let mut events_by_position: FxHashMap<u64, DcbEvent> = FxHashMap::default();
+    let empty_dirty = FxHashMap::default();
     loop {
         // Read a batch of events sequentially using empty query (all events)
         match read_conditional(
@@ -770,7 +771,7 @@ fn real_main() -> DcbResult<()> {
         fn analyze_entries(
             entries: &Vec<([u8; TAG_HASH_LEN], Vec<u64>)>,
             used_w: usize,
-            events_by_position: &HashMap<u64, DcbEvent>,
+            events_by_position: &FxHashMap<u64, DcbEvent>,
         ) -> (usize, usize, usize, Vec<String>) {
             let mut total_positions = 0usize;
             let mut pos_with_event = 0usize;
