@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use futures::Stream;
 use futures::ready;
-use std::collections::{HashMap, VecDeque};
+use std::collections::VecDeque;
 use std::fs;
 use std::path::PathBuf;
 use std::pin::Pin;
@@ -21,6 +21,7 @@ use umadb_dcb::{
 
 use futures::FutureExt;
 use futures::future::BoxFuture;
+use rustc_hash::FxHashMap;
 use std::sync::{Arc, Mutex, Once, OnceLock};
 use std::time::Duration;
 use tokio::sync::watch;
@@ -809,7 +810,7 @@ impl DcbSubscriptionSync for SyncClientSubscription {
 #[derive(Clone, Default)]
 struct StreamRegistry {
     next_id: Arc<AtomicU64>,
-    active: Arc<Mutex<HashMap<u64, StreamCancelHandle>>>,
+    active: Arc<Mutex<FxHashMap<u64, StreamCancelHandle>>>,
 }
 
 impl StreamRegistry {
@@ -837,7 +838,7 @@ impl StreamRegistry {
 
 /// Deregisters a single stream from its [`StreamRegistry`] when dropped.
 struct StreamGuard {
-    active: Arc<Mutex<HashMap<u64, StreamCancelHandle>>>,
+    active: Arc<Mutex<FxHashMap<u64, StreamCancelHandle>>>,
     id: u64,
 }
 

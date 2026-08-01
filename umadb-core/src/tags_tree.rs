@@ -599,7 +599,7 @@ pub struct TagsTreeIterator<'a, T: MvccSnapshot> {
     db: &'a T,
     dirty: &'a FxHashMap<PageID, Page>,
     tags_root_id: PageID,
-    tag: TagHash,
+    tag_hash: TagHash,
     start: Option<Position>,
     backwards: bool,
     // New traversal machinery similar to EventIterator
@@ -622,7 +622,7 @@ impl<'a, T: MvccSnapshot> TagsTreeIterator<'a, T> {
         db: &'a T,
         dirty: &'a FxHashMap<PageID, Page>,
         tags_root_id: PageID,
-        tag: TagHash,
+        tag_hash: TagHash,
         start: Option<Position>,
         backwards: bool,
     ) -> Self {
@@ -630,7 +630,7 @@ impl<'a, T: MvccSnapshot> TagsTreeIterator<'a, T> {
             db,
             dirty,
             tags_root_id,
-            tag,
+            tag_hash: tag_hash,
             start,
             backwards,
             stack: Vec::new(),
@@ -676,7 +676,7 @@ impl<'a, T: MvccSnapshot> Iterator for TagsTreeIterator<'a, T> {
 impl<'a, T: MvccSnapshot> TagsTreeIterator<'a, T> {
     // Return next batch (positions from a single page). Returns false if no more batches.
     fn next_batch(&mut self) -> bool {
-        let tag = self.tag;
+        let tag = self.tag_hash;
         let from = self.start;
         match self.state {
             IterState::NotStarted => {

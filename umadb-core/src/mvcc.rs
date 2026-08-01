@@ -14,7 +14,6 @@ use crate::tags_tree_nodes::set_tag_key_width;
 use moka::sync::Cache;
 use rustc_hash::{FxBuildHasher, FxHashMap};
 use std::collections::BTreeMap;
-use std::collections::HashMap;
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
@@ -881,7 +880,7 @@ impl Writer {
             reusable_page_ids: VecDeque::new(),
             freed_page_ids: VecDeque::new(),
             deserialized: FxHashMap::default(),
-            dirty: HashMap::default(),
+            dirty: FxHashMap::default(),
             reused_page_ids: VecDeque::new(),
             verbose,
             page_size,

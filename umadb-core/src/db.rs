@@ -8,8 +8,8 @@ use crate::tags_tree::{TagsTreeIterator, tags_tree_insert};
 use crate::tags_tree_nodes::{TagHash, get_tag_key_width};
 use crate::tracking_tree_nodes::{TrackingInternalNode, TrackingLeafNode};
 use itertools::Itertools;
-use rustc_hash::FxHashMap;
-use std::collections::{HashMap, HashSet, VecDeque};
+use rustc_hash::{FxHashMap, FxHashSet};
+use std::collections::VecDeque;
 use std::sync::Arc;
 use umadb_dcb::{
     DcbAppendCondition, DcbError, DcbEvent, DcbEventStoreSync, DcbQuery, DcbReadResponseSync,
@@ -506,8 +506,7 @@ fn unconditional_append_event_values<T: MvccSnapshot>(
         match &inline_value {
             EventValue::Inline(record) => {
                 for tag in record.tags.iter() {
-                    let tag_hash: TagHash = tag_to_hash(tag);
-                    tags_tree_insert(mvcc, writer, tag_hash, position)?;
+                    tags_tree_insert(mvcc, writer, tag_to_hash(tag), position)?;
                 }
             }
             EventValue::Overflow { .. } => {
@@ -637,8 +636,9 @@ pub fn read_conditional<T: MvccSnapshot>(
     }
 
     // Invert query: tag -> list of query item indices that require this tag
-    let mut tag_qiis: HashMap<String, Vec<usize>> = HashMap::with_capacity(query.items.len() * 2);
-    let mut qi_tags: Vec<HashSet<String>> = Vec::with_capacity(query.items.len());
+    let mut tag_qiis: FxHashMap<String, Vec<usize>> =
+        FxHashMap::with_capacity_and_hasher(query.items.len() * 2, Default::default());
+    let mut qi_tags: Vec<FxHashSet<String>> = Vec::with_capacity(query.items.len());
 
     for (qiid, item) in query.items.iter().enumerate() {
         qi_tags.push(item.tags.iter().cloned().collect());
@@ -678,9 +678,14 @@ pub fn read_conditional<T: MvccSnapshot>(
 
     let mut tag_iters: Vec<PositionTagQiidIterator<_>> = Vec::new();
     for (tag, qiids) in tag_qiis.iter() {
-        let tag_hash: TagHash = tag_to_hash(tag);
-        let positions_iter =
-            TagsTreeIterator::new(mvcc, dirty, tags_tree_root_id, tag_hash, start, backwards); // yields positions for tag
+        let positions_iter = TagsTreeIterator::new(
+            mvcc,
+            dirty,
+            tags_tree_root_id,
+            tag_to_hash(tag),
+            start,
+            backwards,
+        ); // yields positions for tag
         tag_iters.push(PositionTagQiidIterator::new(
             positions_iter,
             tag.clone(),
@@ -700,8 +705,8 @@ pub fn read_conditional<T: MvccSnapshot>(
     {
         inner: I,
         current_pos: Option<Position>,
-        tags: HashSet<String>,
-        qiis: HashSet<usize>,
+        tags: FxHashSet<String>,
+        qiis: FxHashSet<usize>,
         finished: bool,
     }
     impl<I> GroupByPositionIterator<I>
@@ -712,8 +717,8 @@ pub fn read_conditional<T: MvccSnapshot>(
             Self {
                 inner,
                 current_pos: None,
-                tags: HashSet::new(),
-                qiis: HashSet::new(),
+                tags: FxHashSet::default(),
+                qiis: FxHashSet::default(),
                 finished: false,
             }
         }
@@ -722,7 +727,7 @@ pub fn read_conditional<T: MvccSnapshot>(
     where
         I: Iterator<Item = (Position, String, Vec<usize>)>,
     {
-        type Item = (Position, HashSet<String>, HashSet<usize>);
+        type Item = (Position, FxHashSet<String>, FxHashSet<usize>);
         fn next(&mut self) -> Option<Self::Item> {
             if self.finished {
                 return None;

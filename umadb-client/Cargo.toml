@@ -18,3 +18,4 @@ tokio = { workspace = true }
 tonic = { workspace = true }
 async-trait = { workspace = true }
 futures = { workspace = true }
+rustc-hash = { workspace = true }
