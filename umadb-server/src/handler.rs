@@ -41,7 +41,7 @@ impl UmaDbServerRequestHandler {
         let head_tx_writer = head_watch_tx.clone();
         if pipelined_writer_option {
 
-            // Inside your database startup function:
+            // Create a channel to communicate with the async I/O shell.
             let (io_tx, io_rx) = tokio::sync::mpsc::unbounded_channel();
 
             #[cfg(target_os = "linux")]
