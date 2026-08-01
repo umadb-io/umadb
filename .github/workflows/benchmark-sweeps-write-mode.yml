@@ -6,6 +6,8 @@ on:
 env:
   CARGO_TERM_COLOR: always
   UV_VERSION: 0.11.7
+  PYTHONUNBUFFERED: 1
+
 
 jobs:
   append-cond-bench-sweep:

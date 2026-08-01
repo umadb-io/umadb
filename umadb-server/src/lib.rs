@@ -926,17 +926,21 @@ pub async fn start_server<P: AsRef<std::path::Path>>(
     addr: &str,
     shutdown_rx: oneshot::Receiver<()>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let pipelined_writer_default = false;
     let pipelined_writer = std::env::var("UMADB_PIPELINED_WRITER")
         .ok()
         .and_then(|s| s.parse().ok())
-        .unwrap_or(pipelined_writer_default);
+        .unwrap_or(false);
+
+    let page_cache_max_mb = std::env::var("UMADB_PAGE_CACHE_MAX_MB")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0);
 
     let options = ServerOptions {
         listen_addr: addr.to_string(),
         tls: None,
         api_key: None,
-        storage: StorageOptions::default().db_path(db_path.as_ref()).pipelined_writer(pipelined_writer),
+        storage: StorageOptions::default().db_path(db_path.as_ref()).pipelined_writer(pipelined_writer).page_cache_max_mb(page_cache_max_mb),
     };
     start_server_with_options(options, shutdown_rx).await
 }
