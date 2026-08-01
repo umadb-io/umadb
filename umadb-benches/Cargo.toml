@@ -99,6 +99,10 @@ harness = false
 name = "reader_tsn_registry_bench"
 harness = false
 
+[[bench]]
+name = "cow_header_bench"
+harness = false
+
 [[bin]]
 name = "throughput_vs_volume"
 path = "src/bin/throughput_vs_volume.rs"
