@@ -21,7 +21,7 @@ exclude = [
   "umadb-benches",
 ]
 [workspace.package]
-version = "0.6.15"
+version = "0.7.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/umadb-io/umadb"
@@ -40,7 +40,7 @@ tokio = { version = "1.50.0", features = ["full"] }
 uuid = { version = "1.23.0", features = ["v4", "v5"] }
 serial_test = "4.0.1"
 rustc-hash = "2.1"
-parking_lot = "0.12"
+parking_lot = "0.12.5"
 
 [workspace.metadata.release]
 push = false
@@ -77,6 +77,5 @@ strip = "none"      # requires a sufficiently recent Rust toolchain
 ## Where to store debug info
 ## - Linux: keep in the binary (off)
 ## - macOS: emit a .dSYM bundle (unpacked) so Instruments/dtrace can find it
-#split-debuginfo = "off"       # Linux
+#split-debuginfo = "off" # Linux
 split-debuginfo = "unpacked" # macOS
-
