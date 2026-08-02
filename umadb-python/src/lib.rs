@@ -166,6 +166,19 @@ impl TrackingInfo {
         self.inner.position
     }
 
+    fn __eq__(&self, other: &Bound<'_, PyAny>) -> bool {
+        // Try to safely extract/downcast the Python object into a TrackingInfo
+        if let Ok(other_tracking) = other.extract::<TrackingInfo>() {
+            // It IS a TrackingInfo, compare the inner values
+            self.inner.source == other_tracking.inner.source &&
+                self.inner.position == other_tracking.inner.position
+        } else {
+            // It is NOT a TrackingInfo (e.g., None, int, str).
+            // They cannot be equal, so we return false.
+            false
+        }
+    }
+
     fn __repr__(&self) -> String {
         format!(
             "Tracking(source='{}', position={})",

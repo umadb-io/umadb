@@ -206,7 +206,12 @@ def main() -> None:
         client.append(events, tracking_info=tracking_info)
         print("    Unexpected: append with same tracking succeeded")
     except IntegrityError as ie:
-        print(f"    Expected failure: {ie}")
+        print(f"    Got the expected failure: {ie}")
+
+    print("    Checking tracking information gets returned with sequenced event...")
+    for sequenced in client.read(start=last):
+        assert sequenced.tracking_info == tracking_info
+        print("        Tracking information was returned with sequenced event")
 
     # Final head position
     final_head = client.head()
