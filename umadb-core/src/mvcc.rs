@@ -20,6 +20,7 @@ use std::sync::Arc;
 // use std::sync::atomic::{AtomicU64, Ordering};
 use arc_swap::ArcSwap;
 use parking_lot::Mutex;
+use std::collections::hash_map::Entry;
 use std::thread::sleep;
 use std::time::Duration;
 use umadb_dcb::DcbError::InternalError;
@@ -1010,22 +1011,21 @@ impl Writer {
     ///
     /// A `DcbResult` containing a reference to the page if found, or an error if the page could not be found.
     pub fn get_page_ref<T: MvccSnapshot>(&mut self, mvcc: &T, page_id: PageID) -> DcbResult<&Page> {
-        // Check the dirty pages first
-        if self.dirty.contains_key(&page_id) {
-            return Ok(self.dirty.get(&page_id).unwrap());
+        // 1. Check dirty pages first (Single lookup using if let)
+        if let Some(page) = self.dirty.get(&page_id) {
+            return Ok(page);
         }
 
-        // Then check deserialized pages
-        if self.deserialized.contains_key(&page_id) {
-            return Ok(self.deserialized.get(&page_id).unwrap());
-        }
+        // 2. Single lookup for deserialized pages (Inserts & returns ref if missing)
+        let page_arc = match self.deserialized.entry(page_id) {
+            Entry::Occupied(entry) => entry.into_mut(),
+            Entry::Vacant(entry) => {
+                let deserialized_page = mvcc.read_page(page_id)?;
+                entry.insert(deserialized_page)
+            }
+        };
 
-        // Need to deserialize the page
-        let deserialized_page = mvcc.read_page(page_id)?;
-        self.insert_deserialized(deserialized_page);
-
-        // Return the deserialized page
-        Ok(self.deserialized.get(&page_id).unwrap())
+        Ok(page_arc)
     }
 
     pub fn get_mut_dirty(&mut self, page_id: PageID) -> DcbResult<&mut Page> {
@@ -1036,19 +1036,18 @@ impl Writer {
         }
     }
 
-    pub fn insert_deserialized(&mut self, page: Arc<Page>) {
-        self.deserialized.insert(page.page_id, page);
-    }
-
     pub fn insert_dirty(&mut self, page: Page) -> DcbResult<()> {
         if self.freed_page_ids.contains(&page.page_id) {
             return Err(DcbError::PageAlreadyFreed(page.page_id.0));
         }
-        if self.dirty.contains_key(&page.page_id) {
-            return Err(DcbError::PageAlreadyDirty(page.page_id.0));
+
+        match self.dirty.entry(page.page_id) {
+            Entry::Occupied(_) => Err(DcbError::PageAlreadyDirty(page.page_id.0)),
+            Entry::Vacant(entry) => {
+                entry.insert(page);
+                Ok(())
+            }
         }
-        self.dirty.insert(page.page_id, page);
-        Ok(())
     }
 
     pub fn alloc_page_id(&mut self) -> PageID {
@@ -1100,20 +1099,16 @@ impl Writer {
     }
 
     pub fn append_freed_page_id(&mut self, page_id: PageID) {
-        let verbose = self.verbose;
-        if !self.freed_page_ids.iter().any(|&id| id == page_id) {
+        if !self.freed_page_ids.contains(&page_id) {
             self.freed_page_ids.push_back(page_id);
-            if verbose {
+
+            if self.verbose {
                 println!("Appended {page_id:?} to freed_page_ids");
             }
-            if self.dirty.contains_key(&page_id) {
-                self.dirty.remove(&page_id);
-                if verbose {
-                    println!("Page ID {page_id:?} was in dirty and was removed");
-                }
-            }
-            if verbose && self.dirty.contains_key(&page_id) {
-                println!("Page ID {page_id:?} is still in dirty!!!!!");
+
+            // 2. Single hash lookup: remove returns Option<Page>
+            if self.dirty.remove(&page_id).is_some() && self.verbose {
+                println!("Page ID {page_id:?} was in dirty and was removed");
             }
         }
     }
