@@ -19,6 +19,7 @@ struct InflightCommit {
     responders: Vec<oneshot::Sender<DcbResult<u64>>>,
     results: Vec<DcbResult<u64>>,
     new_head: Option<u64>,
+    wet_header: Arc<Page>,
     wet_pages_to_cache: FxHashMap<PageID, Arc<Page>>,
 }
 
@@ -58,6 +59,7 @@ pub fn writer_thread_pipelining(
         match inflight.io_rx.blocking_recv() {
             Ok(Ok(())) => {
                 let _ = mvcc.update_page_cache(inflight.wet_pages_to_cache);
+                mvcc.pin_header(inflight.wet_header);
                 for (res, tx) in inflight
                     .results
                     .into_iter()
@@ -257,7 +259,7 @@ pub fn writer_thread_pipelining(
 
                     // --- DISPATCH BATCH N+1 ---
                     match mvcc.prepare_commit(&mut active_writer, &snapshot) {
-                        Ok((prepared_commit, new_wet_pages)) => {
+                        Ok((prepared_commit, new_wet_pages, wet_header)) => {
                             let last_committed = active_writer.next_position.0.saturating_sub(1);
                             let new_head = if last_committed == 0 {
                                 None
@@ -268,7 +270,7 @@ pub fn writer_thread_pipelining(
                             wet_pages = new_wet_pages.clone();
 
                             // INSTANTLY FIRE OFF TO THE IO_URING THREAD
-                            let (tx, io_rx) = tokio::sync::oneshot::channel();
+                            let (tx, io_rx) = oneshot::channel();
                             let _ = io_tx.send((prepared_commit, tx)); // io_tx is the Sender to the background thread
 
                             // let io_rx = spawn_commit_io(Arc::clone(&mvcc_arc), prepared_commit);
@@ -278,6 +280,7 @@ pub fn writer_thread_pipelining(
                                 responders,
                                 results,
                                 new_head,
+                                wet_header,
                                 wet_pages_to_cache: new_wet_pages,
                             });
                         }

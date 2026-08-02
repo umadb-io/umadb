@@ -823,7 +823,7 @@ impl Mvcc {
         &self,
         writer: &mut Writer,
         mvcc: &T,
-    ) -> DcbResult<(PreparedCommit, FxHashMap<PageID, Arc<Page>>)> {
+    ) -> DcbResult<(PreparedCommit, FxHashMap<PageID, Arc<Page>>, Arc<Page>)> {
         writer.process_freed_page_ids(mvcc, self.max_node_size, self.page_size)?;
 
         let mut wet_pages =
@@ -861,8 +861,7 @@ impl Mvcc {
         }
 
         // Remember the "wet" header for the writer snapshot.
-        let next_header = Arc::new(dirty_header);
-        wet_pages.insert(next_header_page_id, next_header.clone());
+        let wet_header = Arc::new(dirty_header);
 
         // Advance the writer so it is primed for the NEXT pipelined batch. The
         // writer is persisted across batches (it is the sole authority on future
@@ -879,21 +878,18 @@ impl Mvcc {
         //    cache that is only sound while a page ID's content is immutable — true
         //    within a single batch, but false across batches once a freed page ID is
         //    reused, which would otherwise return stale nodes for that ID.
-        writer.header_page = next_header;
+        writer.header_page = wet_header.clone();
         writer.tsn = Tsn(writer.tsn.0 + 1);
         writer.deserialized.clear();
 
-        Ok((prepared_commit, wet_pages))
+        Ok((prepared_commit, wet_pages, wet_header))
     }
 
     pub fn update_page_cache(&self, mut wet_pages: FxHashMap<PageID, Arc<Page>>) -> DcbResult<()> {
         // Cache the new pages without cloning by draining dirty pages.
         if let Some(ref page_cache) = self.page_cache {
             for (page_id, page) in wet_pages.drain() {
-                match page_id {
-                    HEADER_PAGE_ID_0 | HEADER_PAGE_ID_1 => self.pin_header(page),
-                    _ => page_cache.insert(page_id, page),
-                }
+                page_cache.insert(page_id, page);
             }
         }
         Ok(())

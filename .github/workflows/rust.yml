@@ -35,6 +35,12 @@ jobs:
       run: make build
     - name: Tests
       run: make test
+    - name: Tests - with page cache
+      run: UMADB_PAGE_CACHE_MAX_MB=1000 make test
+    - name: Tests - pipelined
+      run: UMADB_PIPELINED_WRITER=true make test
+    - name: Tests - pipelined with page cache
+      run: UMADB_PIPELINED_WRITER=true UMADB_PAGE_CACHE_MAX_MB=1000 make test
     - name: Compare actual vs approx memory per page
       run: make test-compare-actual-vs-approx-memory-per-page
     - name: Profile page weigher
