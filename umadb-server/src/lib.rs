@@ -674,6 +674,15 @@ impl umadb_proto::v1::dcb_server::Dcb for UmaDbServer {
         // Convert protobuf query to DCB types
         let query: Option<DcbQuery> = subscribe_request.query.map(|q| q.into());
         let after = subscribe_request.after;
+
+        // Immediately return empty stream if after is u64::MAX.
+        if let Some(u64::MAX) = after {
+            let (_, rx) = mpsc::channel(1); // Dummy channel that immediately closes
+            return Ok(Response::new(
+                Box::pin(ReceiverStream::new(rx)) as Self::SubscribeStream
+            ));
+        }
+
         // Cap requested batch size.
         let batch_size = subscribe_request
             .batch_size
@@ -695,7 +704,7 @@ impl umadb_proto::v1::dcb_server::Dcb for UmaDbServer {
         tokio::spawn(async move {
             // Ensure we can reuse the same query across batches
             let query_clone = query;
-            // Todo: End the subscription if after is Some(u64:MAX).
+
             let mut next_after = after.map(|a| a.saturating_add(1));
             // Create a watch receiver for head updates
             let mut head_rx = request_handler.watch_head();
