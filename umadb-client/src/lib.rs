@@ -21,8 +21,9 @@ use umadb_dcb::{
 
 use futures::FutureExt;
 use futures::future::BoxFuture;
+use parking_lot::Mutex;
 use rustc_hash::FxHashMap;
-use std::sync::{Arc, Mutex, Once, OnceLock};
+use std::sync::{Arc, Once, OnceLock};
 use std::time::Duration;
 use tokio::sync::watch;
 
@@ -819,7 +820,7 @@ impl StreamRegistry {
     fn register(&self, handle: Option<StreamCancelHandle>) -> StreamGuard {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         if let Some(handle) = handle {
-            self.active.lock().unwrap().insert(id, handle);
+            self.active.lock().insert(id, handle);
         }
         StreamGuard {
             active: self.active.clone(),
@@ -829,7 +830,7 @@ impl StreamRegistry {
 
     /// Cancels every currently-active stream and clears the registry.
     fn cancel_all(&self) {
-        let mut lock = self.active.lock().unwrap();
+        let mut lock = self.active.lock();
         for (_id, handle) in lock.drain() {
             handle.cancel();
         }
@@ -844,9 +845,7 @@ struct StreamGuard {
 
 impl Drop for StreamGuard {
     fn drop(&mut self) {
-        if let Ok(mut lock) = self.active.lock() {
-            lock.remove(&self.id);
-        }
+        self.active.lock().remove(&self.id);
     }
 }
 

@@ -11,7 +11,6 @@ use umadb_core::page::Page;
 const HEADER_PAGE_ID_0: PageID = PageID(0);
 const HEADER_PAGE_ID_1: PageID = PageID(1);
 
-
 // Writer transaction
 pub struct Writer {
     pub header_page: Arc<Page>,
@@ -151,7 +150,8 @@ pub fn bench_cow_header(c: &mut Criterion) {
 
     group.bench_function("in_place_update", |b| {
         b.iter(|| {
-            black_box(&writer).update_header_in_place(black_box(Arc::get_mut(&mut preallocated_page).unwrap()));
+            black_box(&writer)
+                .update_header_in_place(black_box(Arc::get_mut(&mut preallocated_page).unwrap()));
         })
     });
 

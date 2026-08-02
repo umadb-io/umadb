@@ -2,8 +2,10 @@ use clap::{CommandFactory, FromArgMatches, Parser};
 use std::io::IsTerminal;
 use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
-use umadb_server::{DEFAULT_PAGE_SIZE, ServerTlsOptions, server_uptime, start_server_with_options};
-pub use umadb_server::{ReadMethod, ServerOptions, StorageOptions};
+use umadb_server::{
+    DEFAULT_PAGE_SIZE, ReadMethod, ServerTlsOptions, server_uptime, start_server_with_options,
+};
+pub use umadb_server::{ServerOptions, StorageOptions};
 
 /// Parses an iterator of string arguments into CliOptions.
 /// Exits the process automatically on `--help` or `--version`.
@@ -80,12 +82,30 @@ pub struct Args {
     page_cache_max_mb: usize,
 
     /// Zero-fill pages
-    #[arg(long = "zero-fill-pages", env = "UMADB_ZERO_FILL_PAGES", default_value = "true", action = clap::ArgAction::Set)]
+    #[arg(
+        long = "zero-fill-pages",
+        env = "UMADB_ZERO_FILL_PAGES",
+        default_value = "true",
+        action = clap::ArgAction::Set,
+    )]
     zero_fill_pages: bool,
 
     /// Pipelined writer
-    #[arg(long = "pipelined-writer", env = "UMADB_PIPELINED_WRITER", default_value = "false", action = clap::ArgAction::Set)]
+    #[arg(
+        long = "pipelined-writer",
+        env = "UMADB_PIPELINED_WRITER",
+        default_value = "false",
+        action = clap::ArgAction::Set,
+    )]
     pipelined_writer: bool,
+
+    /// Maximum number of blocking threads
+    #[arg(
+        long = "max-blocking-threads",
+        env = "UMADB_MAX_BLOCKING_THREADS",
+        default_value = "512"
+    )]
+    max_blocking_threads: usize,
 }
 
 #[derive(Clone, Debug)]
@@ -100,6 +120,7 @@ pub struct CliOptions {
     pub page_cache_max_mb: usize,
     pub zero_fill_pages: bool,
     pub pipelined_writer: bool,
+    pub max_blocking_threads: usize,
 }
 
 impl Default for CliOptions {
@@ -115,6 +136,7 @@ impl Default for CliOptions {
             page_cache_max_mb: 0,
             zero_fill_pages: true,
             pipelined_writer: false,
+            max_blocking_threads: 512,
         }
     }
 }
@@ -132,6 +154,7 @@ impl CliOptions {
             page_cache_max_mb: args.page_cache_max_mb,
             zero_fill_pages: args.zero_fill_pages,
             pipelined_writer: args.pipelined_writer,
+            max_blocking_threads: args.max_blocking_threads,
         }
     }
 }
@@ -158,7 +181,6 @@ impl CliOptions {
             .page_cache_max_mb(self.page_cache_max_mb)
             .zero_fill_pages(self.zero_fill_pages)
             .pipelined_writer(self.pipelined_writer);
-
         Ok(ServerOptions {
             listen_addr: self.listen_addr.clone(),
             tls,
@@ -168,27 +190,31 @@ impl CliOptions {
     }
 }
 
-pub fn start_server_with_cli_options(opts: CliOptions) -> Result<(), Box<dyn std::error::Error>> {
+pub fn start_server_with_cli_options(
+    cli_options: CliOptions,
+) -> Result<(), Box<dyn std::error::Error>> {
     let _ = server_uptime(); // Need to access to initialize.
-    let rt = build_server_runtime()?;
+    let server_options = cli_options.to_server_options()?;
+    let rt = build_server_runtime(&cli_options)?;
 
     print_banner();
 
     rt.block_on(async {
-        let server_options = opts.to_server_options()?;
         let (shutdown_rx, _) = spawn_shutdown_on_signal();
         start_server_with_options(server_options, shutdown_rx).await
     })
 }
 
-fn build_server_runtime() -> Result<tokio::runtime::Runtime, Box<dyn std::error::Error>> {
+fn build_server_runtime(
+    cli_options: &CliOptions,
+) -> Result<tokio::runtime::Runtime, Box<dyn std::error::Error>> {
     Ok(tokio::runtime::Builder::new_multi_thread()
         .worker_threads(
             std::thread::available_parallelism()
                 .map(|n| n.get())
                 .unwrap_or(4),
         )
-        .max_blocking_threads(2048)
+        .max_blocking_threads(cli_options.max_blocking_threads)
         .enable_all()
         .build()?)
 }

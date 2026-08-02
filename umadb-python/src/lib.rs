@@ -1,10 +1,11 @@
+use parking_lot::Mutex;
 use pyo3::exceptions::{PyException, PyPermissionError, PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::PyBytes;
 use pyo3::{IntoPyObjectExt, wrap_pyfunction};
 use pyo3_stub_gen::{create_exception, define_stub_info_gatherer, derive::*};
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::Duration;
 use umadb_client;
 use umadb_dcb;
@@ -19,14 +20,14 @@ create_exception!(umadb, ServerStartError, PyRuntimeError);
 create_exception!(umadb, CancelledByUserError, PyException);
 
 /// Convert `umadb_dcb::DcbError` to Python exception
-fn dcb_error_to_py_err(err: umadb_dcb::DcbError) -> PyErr {
+fn dcb_error_to_py_err(err: DcbError) -> PyErr {
     match err {
-        umadb_dcb::DcbError::InvalidArgument(msg) => PyValueError::new_err(msg),
-        umadb_dcb::DcbError::IntegrityError(msg) => IntegrityError::new_err(msg),
-        umadb_dcb::DcbError::TransportError(msg) => TransportError::new_err(msg),
-        umadb_dcb::DcbError::Corruption(msg) => CorruptionError::new_err(msg),
-        umadb_dcb::DcbError::CancelledByUser() => CancelledByUserError::new_err(()),
-        umadb_dcb::DcbError::AuthenticationError(msg) => AuthenticationError::new_err(msg),
+        DcbError::InvalidArgument(msg) => PyValueError::new_err(msg),
+        DcbError::IntegrityError(msg) => IntegrityError::new_err(msg),
+        DcbError::TransportError(msg) => TransportError::new_err(msg),
+        DcbError::Corruption(msg) => CorruptionError::new_err(msg),
+        DcbError::CancelledByUser() => CancelledByUserError::new_err(()),
+        DcbError::AuthenticationError(msg) => AuthenticationError::new_err(msg),
         other => PyException::new_err(format!("{}", other)),
     }
 }
@@ -277,10 +278,7 @@ impl ReadResponse {
                 let inner = inner.clone();
                 move || {
                     // Call the new timeout method we just exposed on DcbReadResponseSync
-                    inner
-                        .lock()
-                        .unwrap()
-                        .next_timeout(Duration::from_millis(100))
+                    inner.lock().next_timeout(Duration::from_millis(100))
                 }
             });
 
@@ -303,7 +301,7 @@ impl ReadResponse {
     fn head(slf: PyRefMut<Self>, py: Python<'_>) -> PyResult<Option<u64>> {
         let inner = slf.inner.clone();
         drop(slf);
-        let result = py.detach(move || inner.lock().unwrap().head());
+        let result = py.detach(move || inner.lock().head());
         result.map_err(dcb_error_to_py_err)
     }
 
@@ -314,7 +312,7 @@ impl ReadResponse {
     ) -> PyResult<(Vec<SequencedEvent>, Option<u64>)> {
         let inner = slf.inner.clone();
         drop(slf);
-        let result = py.detach(move || inner.lock().unwrap().collect_with_head());
+        let result = py.detach(move || inner.lock().collect_with_head());
         match result {
             Ok((events, head)) => {
                 let py_events: Vec<SequencedEvent> = events
@@ -331,7 +329,7 @@ impl ReadResponse {
     fn next_batch(slf: PyRefMut<Self>, py: Python<'_>) -> PyResult<Vec<SequencedEvent>> {
         let inner = slf.inner.clone();
         drop(slf);
-        let result = py.detach(move || inner.lock().unwrap().next_batch());
+        let result = py.detach(move || inner.lock().next_batch());
         match result {
             Ok(batch) => Ok(batch
                 .into_iter()
@@ -354,7 +352,7 @@ impl ReadResponse {
         // not block on an in-progress read.
         let inner = slf.inner.clone();
         drop(slf);
-        py.detach(move || inner.lock().unwrap().cancel());
+        py.detach(move || inner.lock().cancel());
     }
 }
 
@@ -381,12 +379,7 @@ impl Subscription {
         loop {
             let result = py.detach({
                 let inner = inner.clone();
-                move || {
-                    inner
-                        .lock()
-                        .unwrap()
-                        .next_timeout(Duration::from_millis(100))
-                }
+                move || inner.lock().next_timeout(Duration::from_millis(100))
             });
 
             // Check Python signals.
@@ -410,12 +403,7 @@ impl Subscription {
         loop {
             let result = py.detach({
                 let inner = inner.clone();
-                move || {
-                    inner
-                        .lock()
-                        .unwrap()
-                        .next_batch_timeout(Duration::from_millis(100))
-                }
+                move || inner.lock().next_batch_timeout(Duration::from_millis(100))
             });
 
             // Check Python signals.
@@ -449,7 +437,7 @@ impl Subscription {
         // not block on an in-progress read.
         let inner = slf.inner.clone();
         drop(slf);
-        py.detach(move || inner.lock().unwrap().cancel());
+        py.detach(move || inner.lock().cancel());
     }
 }
 

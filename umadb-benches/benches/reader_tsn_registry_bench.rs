@@ -26,7 +26,7 @@
 use std::collections::BTreeMap;
 use std::hint::black_box;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::thread;
 
 use criterion::measurement::WallTime;
@@ -122,10 +122,10 @@ trait MutexLike<T>: Send + Sync {
     fn with<R>(&self, f: impl FnOnce(&mut T) -> R) -> R;
 }
 
-impl<T: Send> MutexLike<T> for Mutex<T> {
+impl<T: Send> MutexLike<T> for std::sync::Mutex<T> {
     const LABEL: &'static str = "std_mutex_btree_multiset";
     fn new(value: T) -> Self {
-        Mutex::new(value)
+        std::sync::Mutex::new(value)
     }
     fn with<R>(&self, f: impl FnOnce(&mut T) -> R) -> R {
         f(&mut self.lock().unwrap())
@@ -142,7 +142,7 @@ impl<T: Send> MutexLike<T> for parking_lot::Mutex<T> {
     }
 }
 
-type StdMultiset = BTreeMultiset<Mutex<BTreeMap<u64, usize>>>;
+type StdMultiset = BTreeMultiset<std::sync::Mutex<BTreeMap<u64, usize>>>;
 type PlMultiset = BTreeMultiset<parking_lot::Mutex<BTreeMap<u64, usize>>>;
 
 /// Pre-fill a registry with `n` distinct live readers (worst case for the multiset:

@@ -142,7 +142,7 @@ fn real_main() -> DcbResult<()> {
     // Bootstrap: attempt to deserialize header pages 0 and 1 before reading the latest header
     for pid in 0..=1u64 {
         let page_id = PageID(pid);
-        match mvcc.pager.read_page_mmap_slice(page_id) {
+        match mvcc.rw.pager.read_page_mmap_slice(page_id) {
             Ok(mapped) => {
                 let bytes = mapped.as_slice();
                 match Page::deserialize(page_id, bytes) {
@@ -273,7 +273,7 @@ fn real_main() -> DcbResult<()> {
                 }
                 Err(err) => {
                     // Try to peek the page header to guess the node type
-                    let mapped_opt = mvcc.pager.read_page_mmap_slice(page_id).ok();
+                    let mapped_opt = mvcc.rw.pager.read_page_mmap_slice(page_id).ok();
                     let type_hint = mapped_opt
                         .as_ref()
                         .and_then(|m| type_name_from_byte(m.as_slice()[0]));
@@ -314,6 +314,7 @@ fn real_main() -> DcbResult<()> {
     // Extended scan: continue reading pages beyond header.next_page_id up to actual file length
     // Stop when a full page of zeros is encountered or when the file ends.
     let file_len = mvcc
+        .rw
         .pager
         .file
         .metadata()
@@ -337,7 +338,7 @@ fn real_main() -> DcbResult<()> {
             break;
         }
         // Read page content safely without expanding mappings or the file
-        match mvcc.pager.file.read_at(&mut buf[..], offset as u64) {
+        match mvcc.rw.pager.file.read_at(&mut buf[..], offset as u64) {
             Ok(n) => {
                 if n < page_size {
                     if pid == total_pages {

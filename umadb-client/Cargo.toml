@@ -19,3 +19,4 @@ tonic = { workspace = true }
 async-trait = { workspace = true }
 futures = { workspace = true }
 rustc-hash = { workspace = true }
+parking_lot = { workspace = true }

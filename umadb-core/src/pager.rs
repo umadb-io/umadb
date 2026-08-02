@@ -9,8 +9,28 @@ use std::io;
 use std::os::fd::{AsRawFd, RawFd};
 use std::os::unix::fs::FileExt;
 use std::path::Path;
+use std::str::FromStr;
 use std::sync::{Arc, RwLock};
 use umadb_dcb::{DcbError, DcbResult};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ReadMethod {
+    #[default]
+    FileIo,
+    Mmap,
+}
+
+impl FromStr for ReadMethod {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "fileio" => Ok(ReadMethod::FileIo),
+            "mmap" => Ok(ReadMethod::Mmap),
+            _ => Err(format!("Unknown read method: {}", s)),
+        }
+    }
+}
 
 // Pager for file I/O
 #[derive(Debug)]
@@ -132,7 +152,7 @@ impl Pager {
         }
     }
 
-    pub fn read_page(&self, page_id: PageID) -> io::Result<Vec<u8>> {
+    pub fn read_page_from_file(&self, page_id: PageID) -> io::Result<Vec<u8>> {
         let offset = page_id.0 * (self.page_size as u64);
         let mut page = vec![0u8; self.page_size];
         let bytes_read = self.file.read_at(&mut page, offset)?;
@@ -354,7 +374,7 @@ impl Pager {
         })
     }
 
-    pub fn write_page(&self, page_id: PageID, page_data: &[u8]) -> DcbResult<()> {
+    pub fn write_page_data(&self, page_id: PageID, page_data: &[u8]) -> DcbResult<()> {
         // Check the page doesn't overflow the page size.
         if page_data.len() != self.page_size {
             return Err(DcbError::InternalError(format!(
@@ -552,7 +572,7 @@ mod tests {
 
         let data1 = vec![1u8; 100];
 
-        let err = pager.write_page(PageID(0), &data1);
+        let err = pager.write_page_data(PageID(0), &data1);
         assert!(matches!(err, Err(DcbError::InternalError(_))));
     }
 
@@ -565,11 +585,15 @@ mod tests {
         let data1 = vec![1u8; page_size];
         let data2 = (0..page_size).map(|i| (i % 256) as u8).collect::<Vec<_>>();
 
-        pager.write_page(PageID(0), &data1).expect("write page 0");
-        pager.write_page(PageID(1), &data2).expect("write page 1");
+        pager
+            .write_page_data(PageID(0), &data1)
+            .expect("write page 0");
+        pager
+            .write_page_data(PageID(1), &data2)
+            .expect("write page 1");
         pager.fsync().expect("couldn't fsync");
 
-        let r0 = pager.read_page(PageID(0)).expect("read0");
+        let r0 = pager.read_page_from_file(PageID(0)).expect("read0");
         let r0m = pager.read_page_mmap_slice(PageID(0)).expect("read0m");
         assert_eq!(
             r0,
@@ -577,7 +601,7 @@ mod tests {
             "mmap read should match std read for page 0"
         );
 
-        let r1 = pager.read_page(PageID(1)).expect("read1");
+        let r1 = pager.read_page_from_file(PageID(1)).expect("read1");
         let r1m = pager.read_page_mmap_slice(PageID(1)).expect("read1m");
         assert_eq!(
             r1,
@@ -594,7 +618,7 @@ mod tests {
         let pager = Pager::new(&path, page_size).expect("pager new");
 
         let buf = vec![0u8; page_size];
-        pager.write_page(PageID(0), &buf).expect("write p0");
+        pager.write_page_data(PageID(0), &buf).expect("write p0");
         pager.fsync().expect("couldn't fsync");
 
         let err = pager
@@ -620,10 +644,10 @@ mod tests {
 
         // Write two pages
         pager
-            .write_page(PageID(0), &vec![1u8; page_size])
+            .write_page_data(PageID(0), &vec![1u8; page_size])
             .expect("write p0");
         pager
-            .write_page(PageID(1), &vec![2u8; page_size])
+            .write_page_data(PageID(1), &vec![2u8; page_size])
             .expect("write p1");
         pager.fsync().expect("couldn't fsync");
 
@@ -658,7 +682,7 @@ mod tests {
         for p in 0..(ppm as u64 + 1) {
             let fill = if (p % 2) == 0 { 0xAA } else { 0x55 };
             pager
-                .write_page(PageID(p), &vec![fill; page_size])
+                .write_page_data(PageID(p), &vec![fill; page_size])
                 .expect("write page");
         }
         pager.fsync().expect("couldn't fsync");
@@ -687,7 +711,7 @@ mod tests {
 
         for p in 0..num_pages {
             let data = vec![(p % 256) as u8; page_size];
-            pager.write_page(PageID(p), &data).expect("write page");
+            pager.write_page_data(PageID(p), &data).expect("write page");
         }
         pager.fsync().expect("fsync");
 
@@ -720,7 +744,7 @@ mod tests {
 
         // 1. Write one page and read it via mmap
         let data0 = vec![0xAA; page_size];
-        pager.write_page(PageID(0), &data0).expect("write p0");
+        pager.write_page_data(PageID(0), &data0).expect("write p0");
         let r0 = pager.read_page_mmap_slice(PageID(0)).expect("read p0 mmap");
         assert_eq!(r0.as_slice(), &data0[..]);
 
@@ -728,7 +752,7 @@ mod tests {
         let target_page_id = PageID(ppm as u64);
         let data_target = vec![0xBB; page_size];
         pager
-            .write_page(target_page_id, &data_target)
+            .write_page_data(target_page_id, &data_target)
             .expect("write target page");
 
         let r_target = pager
@@ -756,10 +780,10 @@ mod tests {
         for i in 0..3 {
             let page_id = PageID((i * ppm) as u64);
             let data = vec![(i + 1) as u8; page_size];
-            pager.write_page(page_id, &data).expect("write");
+            pager.write_page_data(page_id, &data).expect("write");
 
             let mmap_res = pager.read_page_mmap_slice(page_id).expect("mmap read");
-            let file_res = pager.read_page(page_id).expect("file read");
+            let file_res = pager.read_page_from_file(page_id).expect("file read");
 
             assert_eq!(
                 mmap_res.as_slice(),
@@ -778,7 +802,7 @@ mod tests {
         let pager = Arc::new(Pager::new(&path, page_size).expect("pager new"));
 
         let data = vec![0xCC; page_size];
-        pager.write_page(PageID(0), &data).expect("write p0");
+        pager.write_page_data(PageID(0), &data).expect("write p0");
 
         let mut handles = vec![];
         for _ in 0..10 {

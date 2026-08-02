@@ -93,7 +93,7 @@ pub mod io_shell {
     fn do_blocking_commit(mvcc: &Mvcc, prepared: PreparedCommit) -> DcbResult<()> {
         // 1. Write Data Pages sequentially
         for (page_id, page_data) in prepared.pages_to_write {
-            mvcc.pager.write_page(page_id, &page_data)?;
+            mvcc.rw.pager.write_page_data(page_id, &page_data)?;
         }
 
         // 2. Fsync Data (Barrier)
@@ -101,7 +101,7 @@ pub mod io_shell {
 
         // 3. Write Header
         let (header_id, header_data) = prepared.header_to_write;
-        mvcc.pager.write_page(header_id, &header_data)?;
+        mvcc.rw.pager.write_page_data(header_id, &header_data)?;
 
         // 4. Fsync Header (Barrier)
         mvcc.fsync()?;

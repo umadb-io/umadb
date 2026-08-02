@@ -24,7 +24,7 @@ clap = { version = "4.6.0", features = ["derive"] }
 ahash = "0.8"
 rustc-hash = { workspace = true }
 dashmap = "6"
-parking_lot = "0.12"
+parking_lot = { workspace = true }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 

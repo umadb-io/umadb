@@ -9,9 +9,8 @@ use tokio::sync::{Semaphore, mpsc, oneshot, watch};
 use tokio_stream::wrappers::ReceiverStream;
 use tonic::transport::{Identity, ServerTlsConfig};
 use tonic::{Request, Response, Status, transport::Server};
-pub use umadb_core::mvcc::{
-    DEFAULT_DB_FILENAME, DEFAULT_PAGE_SIZE, Mvcc, ReadMethod, StorageOptions,
-};
+pub use umadb_core::mvcc::{DEFAULT_DB_FILENAME, DEFAULT_PAGE_SIZE, Mvcc, StorageOptions};
+pub use umadb_core::pager::ReadMethod;
 use umadb_dcb::{DcbError, DcbEvent, DcbQuery, DcbResult, TrackingInfo};
 
 use handler::UmaDbServerRequestHandler;

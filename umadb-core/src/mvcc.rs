@@ -1,6 +1,6 @@
 use crate::common::Position;
 use crate::common::{PageID, Tsn};
-use crate::db::DB_SCHEMA_VERSION;
+use crate::db::{DB_SCHEMA_VERSION, clone_dcb_error};
 use crate::events_tree_nodes::EventLeafNode;
 use crate::free_lists_tree_nodes::{
     FreeListInternalNode, FreeListLeafNode, FreeListLeafValue, FreeListTsnLeafNode,
@@ -8,7 +8,7 @@ use crate::free_lists_tree_nodes::{
 use crate::header_node::HeaderNode;
 use crate::node::Node;
 use crate::page::{PAGE_HEADER_SIZE, Page, page_approx_deserialized_bytes, serialize_page_into};
-use crate::pager::Pager;
+use crate::pager::{Pager, ReadMethod};
 use crate::tags_tree_nodes::TagsLeafNode;
 use crate::tags_tree_nodes::set_tag_key_width;
 use moka::sync::Cache;
@@ -16,8 +16,10 @@ use rustc_hash::{FxBuildHasher, FxHashMap};
 use std::collections::BTreeMap;
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
-use std::str::FromStr;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+// use std::sync::atomic::{AtomicU64, Ordering};
+use arc_swap::ArcSwap;
+use parking_lot::Mutex;
 use std::thread::sleep;
 use std::time::Duration;
 use umadb_dcb::DcbError::InternalError;
@@ -30,25 +32,6 @@ const HEADER_PAGE_ID_1: PageID = PageID(1);
 
 pub const DEFAULT_PAGE_SIZE: usize = 4096;
 pub const DEFAULT_DB_FILENAME: &str = "uma.db";
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum ReadMethod {
-    #[default]
-    FileIo,
-    Mmap,
-}
-
-impl FromStr for ReadMethod {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.to_lowercase().as_str() {
-            "fileio" => Ok(ReadMethod::FileIo),
-            "mmap" => Ok(ReadMethod::Mmap),
-            _ => Err(format!("Unknown read method: {}", s)),
-        }
-    }
-}
 
 #[derive(Debug, Clone)]
 pub struct StorageOptions {
@@ -144,14 +127,14 @@ pub struct ReaderTsnRegistry {
 impl ReaderTsnRegistry {
     /// Publish a live reader holding snapshot `tsn` (called from `Mvcc::reader`).
     pub fn register(&self, tsn: Tsn) {
-        let mut counts = self.counts.lock().unwrap();
+        let mut counts = self.counts.lock();
         *counts.entry(tsn).or_insert(0) += 1;
     }
 
     /// Retire a live reader holding snapshot `tsn` (called from `Reader::drop`, and
     /// to roll back a tentative registration in `reader`'s retry loop).
     pub fn unregister(&self, tsn: Tsn) {
-        let mut counts = self.counts.lock().unwrap();
+        let mut counts = self.counts.lock();
         if let Some(count) = counts.get_mut(&tsn) {
             *count -= 1;
             if *count == 0 {
@@ -162,29 +145,25 @@ impl ReaderTsnRegistry {
 
     /// The lowest TSN held by any live reader, or `None` if there are none.
     pub fn min(&self) -> Option<Tsn> {
-        self.counts
-            .lock()
-            .unwrap()
-            .first_key_value()
-            .map(|(&tsn, _)| tsn)
+        self.counts.lock().first_key_value().map(|(&tsn, _)| tsn)
     }
 
     /// Total number of live readers (sum of counts).
     #[cfg(test)]
     pub fn live_reader_count(&self) -> usize {
-        self.counts.lock().unwrap().values().copied().sum()
+        self.counts.lock().values().copied().sum()
     }
 
     /// Whether any live reader currently holds `tsn`.
     #[cfg(test)]
     pub fn contains_tsn(&self, tsn: Tsn) -> bool {
-        self.counts.lock().unwrap().contains_key(&tsn)
+        self.counts.lock().contains_key(&tsn)
     }
 
     /// Live reader TSNs in ascending order, each repeated by its count.
     #[cfg(test)]
     pub fn live_tsns_sorted(&self) -> Vec<Tsn> {
-        let counts = self.counts.lock().unwrap();
+        let counts = self.counts.lock();
         let mut out = Vec::new();
         for (&tsn, &count) in counts.iter() {
             for _ in 0..count {
@@ -195,6 +174,38 @@ impl ReaderTsnRegistry {
     }
 }
 
+pub struct PageRW {
+    pub pager: Pager,
+    read_method: ReadMethod,
+}
+
+impl PageRW {
+    pub fn read_page(&self, page_id: PageID) -> DcbResult<Arc<Page>> {
+        let page = match self.read_method {
+            ReadMethod::Mmap => {
+                let mapped = self.pager.read_page_mmap_slice(page_id)?;
+                Page::deserialize(page_id, mapped.as_slice())?
+            }
+            ReadMethod::FileIo => {
+                let page = self.pager.read_page_from_file(page_id)?;
+                Page::deserialize(page_id, &page)?
+            }
+        };
+        Ok(Arc::new(page))
+    }
+
+    pub fn write_page(
+        &self,
+        page_id: PageID,
+        page: &Page,
+        buf: &mut [u8],
+        zero_fill_pages: bool,
+    ) -> DcbResult<()> {
+        page.serialize_into(buf, zero_fill_pages)?;
+        self.pager.write_page_data(page_id, &buf)
+    }
+}
+
 pub trait MvccSnapshot {
     fn read_page(&self, page_id: PageID) -> DcbResult<Arc<Page>>;
 }
@@ -202,15 +213,20 @@ pub trait MvccSnapshot {
 // Main MVCC structure
 pub struct Mvcc {
     pub db_path: PathBuf,
-    pub pager: Pager,
+    pub rw: PageRW,
     pub reader_tsns: Arc<ReaderTsnRegistry>,
     pub page_size: usize,
     pub max_node_size: usize,
     page_buf: Mutex<Vec<u8>>,
     pub verbose: bool,
     pub zero_fill_pages: bool,
-    read_method: ReadMethod,
     page_cache: Option<Cache<PageID, Arc<Page>, FxBuildHasher>>,
+    pinned_headers: [ArcSwap<Page>; 2],
+    // // Cache monitoring counters
+    // cache_hits: AtomicU64,
+    // cache_misses: AtomicU64,
+    // last_stats_print: AtomicU64, // Stores millis since process start
+    // start_time: Instant,
 }
 
 pub struct PreparedCommit {
@@ -221,6 +237,10 @@ pub struct PreparedCommit {
 impl Mvcc {
     pub fn new(verbose: bool, options: StorageOptions) -> DcbResult<Self> {
         let pager = Pager::new(&options.db_path, options.page_size)?;
+        let rw = PageRW {
+            pager,
+            read_method: options.read_method,
+        };
         println!(
             "UmaDB opened file {}",
             options.db_path.canonicalize()?.display()
@@ -277,20 +297,11 @@ impl Mvcc {
             None
         };
 
-        let mvcc = Self {
-            db_path: options.db_path,
-            pager,
-            reader_tsns: Arc::new(ReaderTsnRegistry::default()),
-            page_size: options.page_size,
-            max_node_size: options.page_size - PAGE_HEADER_SIZE,
-            page_buf: Mutex::new(vec![0u8; options.page_size]),
-            verbose,
-            zero_fill_pages: options.zero_fill_pages,
-            read_method: options.read_method,
-            page_cache,
-        };
+        let reader_tsns = Arc::new(ReaderTsnRegistry::default());
+        let page_buf = Mutex::new(vec![0u8; options.page_size]);
+        let max_node_size = options.page_size - PAGE_HEADER_SIZE;
 
-        if mvcc.pager.is_file_new {
+        if rw.pager.is_file_new {
             // Newly created DB uses 128-bit tag hashes.
             set_tag_key_width(crate::tags_tree_nodes::TAG_HASH_LEN);
 
@@ -302,7 +313,7 @@ impl Mvcc {
             let initial_next_page_id = PageID(5);
             let initial_next_position = Position(1);
             // Write header 0.
-            let header0 = Page {
+            let header0 = Arc::new(Page {
                 page_id: HEADER_PAGE_ID_0,
                 node: Node::Header(HeaderNode {
                     tsn: initial_tsn,
@@ -314,10 +325,9 @@ impl Mvcc {
                     schema_version: DB_SCHEMA_VERSION,
                     tracking_tree_root_id: PageID(0),
                 }),
-            };
-            mvcc.write_header(&header0)?;
+            });
             // Write header 1.
-            let header1 = Page {
+            let header1 = Arc::new(Page {
                 page_id: HEADER_PAGE_ID_1,
                 node: Node::Header(HeaderNode {
                     tsn: initial_tsn,
@@ -329,8 +339,24 @@ impl Mvcc {
                     schema_version: DB_SCHEMA_VERSION,
                     tracking_tree_root_id: PageID(0),
                 }),
+            });
+
+            let mvcc = Self {
+                db_path: options.db_path,
+                rw,
+                reader_tsns,
+                page_size: options.page_size,
+                max_node_size,
+                page_buf,
+                verbose,
+                zero_fill_pages: options.zero_fill_pages,
+                page_cache,
+                pinned_headers: [ArcSwap::new(header0.clone()), ArcSwap::new(header1.clone())],
+                // cache_hits: AtomicU64::new(0),
+                // cache_misses: AtomicU64::new(0),
+                // last_stats_print: AtomicU64::new(0),
+                // start_time: Instant::now(),
             };
-            mvcc.write_header(&header1)?;
 
             // Create and write an empty free lists tree root page.
             let free_list_leaf = FreeListLeafNode {
@@ -361,8 +387,69 @@ impl Mvcc {
 
             // Sync the file to disk.
             mvcc.fsync()?;
+
+            mvcc.write_header(&header1)?;
+            mvcc.write_header(&header0)?;
+
+            // Sync the file to disk.
+            mvcc.fsync()?;
+
+            Ok(mvcc)
         } else {
-            // Existing DB: hydrate headers from disk and set tag key width based on latest header
+            // Existing DB: read headers from disk, repairing corruption if possible.
+            let maybe_header0 = rw.read_page(HEADER_PAGE_ID_0);
+            let maybe_header1 = rw.read_page(HEADER_PAGE_ID_1);
+
+            let (header0, header1) = match maybe_header0 {
+                Ok(header0) => match maybe_header1 {
+                    Ok(header1) => (header0, header1),
+                    Err(_) => {
+                        let mut buf = page_buf.lock();
+                        rw.write_page(
+                            HEADER_PAGE_ID_1,
+                            &header0,
+                            &mut buf,
+                            options.zero_fill_pages,
+                        )?;
+                        (header0.clone(), Arc::new(header0.as_ref().clone()))
+                    }
+                },
+                Err(err_header0) => match maybe_header1 {
+                    Ok(header1) => {
+                        let mut buf = page_buf.lock();
+                        header1.serialize_into(&mut buf, options.zero_fill_pages)?;
+                        rw.write_page(
+                            HEADER_PAGE_ID_0,
+                            &header1,
+                            &mut buf,
+                            options.zero_fill_pages,
+                        )?;
+                        (Arc::new(header1.as_ref().clone()), header1)
+                    }
+                    Err(_) => {
+                        return Err(err_header0);
+                    }
+                },
+            };
+
+            let mvcc = Self {
+                db_path: options.db_path,
+                rw,
+                reader_tsns,
+                page_size: options.page_size,
+                max_node_size,
+                page_buf,
+                verbose,
+                zero_fill_pages: options.zero_fill_pages,
+                page_cache,
+                pinned_headers: [ArcSwap::new(header0), ArcSwap::new(header1)],
+                // cache_hits: AtomicU64::new(0),
+                // cache_misses: AtomicU64::new(0),
+                // last_stats_print: AtomicU64::new(0),
+                // start_time: Instant::now(),
+            };
+
+            // Set tag key width based on latest header.
             if let Ok(header_page) = mvcc.get_latest_header_page() {
                 let header_node = header_page.as_header_node()?;
                 // Don't proceed if this software is too old.
@@ -398,69 +485,57 @@ impl Mvcc {
                     }
                 }
             }
-        }
 
-        // Check we can read all the root pages.
-        let page = mvcc.read_page(HEADER_PAGE_ID_0)?;
-        if !matches!(page.node, Node::Header(_)) {
-            return Err(DcbError::DatabaseCorrupted(format!(
-                "Page {} is not a header page",
-                HEADER_PAGE_ID_0.0
-            )));
-        };
-        if !matches!(mvcc.read_page(HEADER_PAGE_ID_1)?.node, Node::Header(_)) {
-            return Err(DcbError::DatabaseCorrupted(format!(
-                "Page {} is not a header page",
-                HEADER_PAGE_ID_1.0
-            )));
-        };
-        let header_page = mvcc.get_latest_header_page()?;
-        let header_node = header_page.as_header_node()?;
-        if !matches!(
-            mvcc.read_page(header_node.free_lists_tree_root_id)?.node,
-            Node::FreeListInternal(_) | Node::FreeListLeaf(_)
-        ) {
-            return Err(DcbError::DatabaseCorrupted(format!(
-                "Page {} is not a free list page",
-                header_node.free_lists_tree_root_id.0
-            )));
-        };
-        if !matches!(
-            mvcc.read_page(header_node.tags_tree_root_id)?.node,
-            Node::TagsInternal(_) | Node::TagsLeaf(_)
-        ) {
-            return Err(DcbError::DatabaseCorrupted(format!(
-                "Page {} is not a tags tree page",
-                header_node.tags_tree_root_id.0
-            )));
-        };
-        if !matches!(
-            mvcc.read_page(header_node.events_tree_root_id)?.node,
-            Node::EventInternal(_) | Node::EventLeaf(_)
-        ) {
-            return Err(DcbError::DatabaseCorrupted(format!(
-                "Page {} is not a event tree page",
-                header_node.events_tree_root_id.0
-            )));
-        };
-        if header_node.tracking_tree_root_id != PageID(0) {
+            // Check we can read all the root pages.
+            let header_page = mvcc.get_latest_header_page()?;
+            let header_node = header_page.as_header_node()?;
             if !matches!(
-                mvcc.read_page(header_node.tracking_tree_root_id)?.node,
-                Node::TrackingInternal(_) | Node::TrackingLeaf(_)
+                mvcc.read_page(header_node.free_lists_tree_root_id)?.node,
+                Node::FreeListInternal(_) | Node::FreeListLeaf(_)
             ) {
                 return Err(DcbError::DatabaseCorrupted(format!(
-                    "Page {} is not a tracking tree page",
-                    header_node.tracking_tree_root_id.0
+                    "Page {} is not a free list page",
+                    header_node.free_lists_tree_root_id.0
                 )));
             };
+            if !matches!(
+                mvcc.read_page(header_node.tags_tree_root_id)?.node,
+                Node::TagsInternal(_) | Node::TagsLeaf(_)
+            ) {
+                return Err(DcbError::DatabaseCorrupted(format!(
+                    "Page {} is not a tags tree page",
+                    header_node.tags_tree_root_id.0
+                )));
+            };
+            if !matches!(
+                mvcc.read_page(header_node.events_tree_root_id)?.node,
+                Node::EventInternal(_) | Node::EventLeaf(_)
+            ) {
+                return Err(DcbError::DatabaseCorrupted(format!(
+                    "Page {} is not a event tree page",
+                    header_node.events_tree_root_id.0
+                )));
+            };
+            if header_node.tracking_tree_root_id != PageID(0) {
+                if !matches!(
+                    mvcc.read_page(header_node.tracking_tree_root_id)?.node,
+                    Node::TrackingInternal(_) | Node::TrackingLeaf(_)
+                ) {
+                    return Err(DcbError::DatabaseCorrupted(format!(
+                        "Page {} is not a tracking tree page",
+                        header_node.tracking_tree_root_id.0
+                    )));
+                };
+            }
+            println!("UmaDB root pages found");
+            Ok(mvcc)
         }
-        Ok(mvcc)
     }
 
     pub fn get_latest_header_page(&self) -> DcbResult<Arc<Page>> {
         for attempt in 0..GET_LATEST_HEADER_RETRIES {
-            let h0 = self.read_page(HEADER_PAGE_ID_0);
-            let h1 = self.read_page(HEADER_PAGE_ID_1);
+            let h0 = self.read_header(HEADER_PAGE_ID_0);
+            let h1 = self.read_header(HEADER_PAGE_ID_1);
 
             match (h0, h1) {
                 (Ok(page0), Ok(page1)) => {
@@ -509,11 +584,105 @@ impl Mvcc {
     }
 
     fn write_header(&self, page: &Page) -> DcbResult<()> {
-        let mut buf = self.page_buf.lock().unwrap();
-        page.serialize_into(&mut buf, self.zero_fill_pages)?;
-        self.pager.write_page(page.page_id, &buf)?;
-        Ok(())
+        let mut buf = self.page_buf.lock();
+        self.rw
+            .write_page(page.page_id, &page, &mut buf, self.zero_fill_pages)
     }
+
+    pub fn pin_header(&self, page: Arc<Page>) {
+        let header_idx = (page.page_id != HEADER_PAGE_ID_0) as usize;
+        self.pinned_headers[header_idx].store(page);
+    }
+
+    pub fn read_header(&self, page_id: PageID) -> DcbResult<Arc<Page>> {
+        let header_idx = (page_id != HEADER_PAGE_ID_0) as usize;
+        Ok(self.pinned_headers[header_idx].load_full())
+    }
+
+    pub fn read_page(&self, page_id: PageID) -> DcbResult<Arc<Page>> {
+        match page_id {
+            HEADER_PAGE_ID_0 | HEADER_PAGE_ID_1 => Err(InternalError(
+                "Do not read headers with read_page".to_string(),
+            )),
+            _ => {
+                // Try to get the page from the deserialized page cache.
+                if let Some(ref page_cache) = self.page_cache {
+                    let page = page_cache
+                        .try_get_with(page_id, || {
+                            // Init closure, reads once from disk for all blocked waiters.
+                            self.rw.read_page(page_id)
+                        })
+                        .map_err(|err| clone_dcb_error(&err))?;
+                    Ok(page)
+                } else {
+                    Ok(self.rw.read_page(page_id)?)
+                }
+            }
+        }
+    }
+
+    // pub fn read_page(&self, page_id: PageID) -> DcbResult<Arc<Page>> {
+    //     match page_id {
+    //         HEADER_PAGE_ID_0 => return Err(InternalError("Do not read headers with read_page".to_string())),
+    //         HEADER_PAGE_ID_1 => return Err(InternalError("Do not read headers with read_page".to_string())),
+    //         _ => {
+    //             if let Some(ref page_cache) = self.page_cache {
+    //                 // Track whether the closure was actually invoked (a cache miss)
+    //                 let mut was_miss = false;
+    //
+    //                 let page = page_cache
+    //                     .try_get_with(page_id, || {
+    //                         was_miss = true;
+    //                         let page = self.rw.read_page(page_id)?;
+    //
+    //                         println!("Read page: {:?}", page.clone().node.type_name());
+    //                         Ok(page)
+    //                     })
+    //                     .map_err(|err| clone_dcb_error(&err))?;
+    //
+    //                 // 1. Record hit or miss atomically
+    //                 if was_miss {
+    //                     self.cache_misses.fetch_add(1, Ordering::Relaxed);
+    //                 } else {
+    //                     self.cache_hits.fetch_add(1, Ordering::Relaxed);
+    //                 }
+    //
+    //                 // 2. Check if ~1 second has elapsed and print
+    //                 self.maybe_print_cache_stats();
+    //
+    //                 Ok(page)
+    //             } else {
+    //                 Ok(self.rw.read_page(page_id)?)
+    //             }
+    //         }
+    //     }
+    // }
+    //
+    // fn maybe_print_cache_stats(&self) {
+    //     let now_ms = self.start_time.elapsed().as_millis() as u64;
+    //     let last_ms = self.last_stats_print.load(Ordering::Relaxed);
+    //
+    //     // Rate-limit check: Has 1,000ms passed since last print?
+    //     if now_ms >= last_ms + 1000 {
+    //         // Atomic compare-exchange ensures ONLY ONE THREAD prints per second
+    //         if self
+    //             .last_stats_print
+    //             .compare_exchange(last_ms, now_ms, Ordering::SeqCst, Ordering::Relaxed)
+    //             .is_ok()
+    //         {
+    //             let hits = self.cache_hits.swap(0, Ordering::Relaxed);
+    //             let misses = self.cache_misses.swap(0, Ordering::Relaxed);
+    //             let total = hits + misses;
+    //
+    //             if total > 0 {
+    //                 let hit_ratio = (hits as f64 / total as f64) * 100.0;
+    //                 println!(
+    //                     "[CACHE STATS] Last ~1s -> Hits: {hits} | Misses (Disk Reads): {misses} | Total Ops: {total} | Hit Ratio: {hit_ratio:.2}%"
+    //                 );
+    //             }
+    //         }
+    //     }
+    // }
 
     pub fn reader(&self) -> DcbResult<Reader> {
         // Need to be careful here about time-of-check to time-of-use (TOCTOU).
@@ -590,11 +759,11 @@ impl Mvcc {
     where
         I: IntoIterator<Item = &'a Page>,
     {
-        let mut buf = self.page_buf.lock().unwrap();
+        let mut buf = self.page_buf.lock();
         let mut count = 0usize;
         for page in pages {
-            page.serialize_into(&mut buf, self.zero_fill_pages)?;
-            self.pager.write_page(page.page_id, &buf)?;
+            self.rw
+                .write_page(page.page_id, &page, &mut buf, self.zero_fill_pages)?;
             if self.verbose {
                 println!("Wrote {:?} to file", page.page_id);
             }
@@ -603,42 +772,51 @@ impl Mvcc {
         Ok(count)
     }
 
-    // pub fn write_pages_parallel<'a, I>(&self, pages: I) -> DCBResult<usize>
-    // where
-    //     I: IntoIterator<Item = &'a Page> + Send,
-    //     I::IntoIter: Send,
-    // {
-    //     let pages: Vec<&Page> = pages.into_iter().collect();
-    //     if pages.is_empty() {
-    //         return Ok(0);
-    //     }
-    //
-    //     let file = self.pager.writer.clone();
-    //     let page_size = self.page_size;
-    //     let verbose = self.verbose;
-    //
-    //     let count: DCBResult<usize> = pages
-    //         .par_iter()
-    //         .map(|page| -> DCBResult<usize> {
-    //             PAGE_BUF.with(|cell| -> DCBResult<usize> {
-    //                 let mut buf = cell.borrow_mut();
-    //                 if buf.len() != page_size {
-    //                     *buf = vec![0u8; page_size]; // lazy init
-    //                 }
-    //
-    //                 page.serialize_into(&mut buf)?;
-    //                 file.write_at(&buf, page.page_id.0 * page_size as u64)?;
-    //
-    //                 if verbose {
-    //                     println!("Wrote {:?} to file", page.page_id);
-    //                 }
-    //                 Ok(1)
-    //             })
-    //         })
-    //         .try_reduce(|| 0, |a, b| Ok(a + b));
-    //
-    //     count
-    // }
+    pub fn commit(&self, writer: &mut Writer) -> DcbResult<()> {
+        // Process reused and freed page IDs
+        if self.verbose {
+            println!();
+            println!("Commiting writer with {:?}", writer.tsn);
+        }
+
+        writer.process_freed_page_ids(self, self.max_node_size, self.page_size)?;
+
+        // Write all dirty pages (except for the header page) to the file
+        if !writer.dirty.is_empty() {
+            let count = { self.write_pages(writer.dirty.values())? };
+            if self.verbose {
+                println!("Wrote {} dirty page(s) to file", count);
+            }
+        }
+
+        // Sync the file to disk
+        self.fsync()?;
+
+        // Cache the new pages without cloning by draining dirty pages.
+        if let Some(ref page_cache) = self.page_cache {
+            for (page_id, page) in writer.dirty.drain() {
+                page_cache.insert(page_id, Arc::new(page));
+            }
+        } else {
+            writer.dirty.clear();
+        }
+
+        // Mutate and write header page.
+        let next_header_page = writer.cow_header_page()?;
+        self.write_header(&next_header_page)?;
+
+        // Sync the file to disk
+        self.fsync()?;
+
+        // Pin the header page.
+        self.pin_header(Arc::new(next_header_page));
+
+        if self.verbose {
+            println!("Committed writer with {:?}", writer.tsn);
+        }
+
+        Ok(())
+    }
 
     pub fn prepare_commit<T: MvccSnapshot>(
         &self,
@@ -711,99 +889,18 @@ impl Mvcc {
         // Cache the new pages without cloning by draining dirty pages.
         if let Some(ref page_cache) = self.page_cache {
             for (page_id, page) in wet_pages.drain() {
-                page_cache.insert(page_id, page);
+                match page_id {
+                    HEADER_PAGE_ID_0 | HEADER_PAGE_ID_1 => self.pin_header(page),
+                    _ => page_cache.insert(page_id, page),
+                }
             }
         }
-        Ok(())
-    }
-
-    pub fn commit(&self, writer: &mut Writer) -> DcbResult<()> {
-        // Process reused and freed page IDs
-        if self.verbose {
-            println!();
-            println!("Commiting writer with {:?}", writer.tsn);
-        }
-
-        //
-        writer.process_freed_page_ids(self, self.max_node_size, self.page_size)?;
-
-        // Write all dirty pages (except for the header page) to the file
-        if !writer.dirty.is_empty() {
-            let count = { self.write_pages(writer.dirty.values())? };
-            if self.verbose {
-                println!("Wrote {} dirty page(s) to file", count);
-            }
-        }
-
-        // Sync the file to disk
-        self.fsync()?;
-
-        // Cache the new pages without cloning by draining dirty pages.
-        if let Some(ref page_cache) = self.page_cache {
-            for (page_id, page) in writer.dirty.drain() {
-                page_cache.insert(page_id, Arc::new(page));
-            }
-        } else {
-            writer.dirty.clear();
-        }
-
-        // Mutate and write header page.
-        let next_header_page = writer.cow_header_page()?;
-        self.write_header(&next_header_page)?;
-
-        // Sync the file to disk
-        self.fsync()?;
-
-        // Cache the header page.
-        if let Some(ref page_cache) = self.page_cache {
-            page_cache.insert(next_header_page.page_id, Arc::new(next_header_page));
-        }
-
-        if self.verbose {
-            println!("Committed writer with {:?}", writer.tsn);
-        }
-
         Ok(())
     }
 
     pub fn fsync(&self) -> DcbResult<()> {
-        self.pager.fsync()?;
+        self.rw.pager.fsync()?;
         Ok(())
-    }
-
-    pub fn read_page(&self, page_id: PageID) -> DcbResult<Arc<Page>> {
-        // Try to get the page from the deserialized page cache.
-        if let Some(ref page_cache) = self.page_cache {
-            if let Some(page) = page_cache.get(&page_id) {
-                return Ok(page);
-            }
-        }
-
-        // Otherwise deserialize from a serialized page.
-        let page = match self.read_method {
-            ReadMethod::Mmap => {
-                let mapped = self.pager.read_page_mmap_slice(page_id)?;
-                if self.verbose {
-                    println!("Read {page_id:?} from mmap, deserializing...");
-                }
-                Page::deserialize(page_id, mapped.as_slice())?
-            }
-            ReadMethod::FileIo => {
-                let page = self.pager.read_page(page_id)?;
-                if self.verbose {
-                    println!("Read {page_id:?} from file, deserializing...");
-                }
-                Page::deserialize(page_id, &page)?
-            }
-        };
-        let page = Arc::new(page);
-
-        // Cache the newly read page.
-        if let Some(ref page_cache) = self.page_cache {
-            page_cache.insert(page_id, Arc::clone(&page));
-        }
-
-        Ok(page)
     }
 }
 
@@ -2299,7 +2396,7 @@ mod tests {
                     .page_size(4096),
             )
             .unwrap();
-            assert!(db.pager.is_file_new);
+            assert!(db.rw.pager.is_file_new);
         }
 
         {
@@ -2310,7 +2407,7 @@ mod tests {
                     .page_size(4096),
             )
             .unwrap();
-            assert!(!db.pager.is_file_new);
+            assert!(!db.rw.pager.is_file_new);
         }
     }
 
@@ -4710,18 +4807,19 @@ mod tests {
             .expect("must create new db");
 
             // 2) Read header[0], bump its schema_version, write it back via pager
-            let h0 = mvcc.read_page(HEADER_PAGE_ID_0).expect("read header 0");
+            let h0 = mvcc.read_header(HEADER_PAGE_ID_0).expect("read header 0");
             let mut n0 = h0.as_header_node().unwrap().clone();
             n0.schema_version = DB_SCHEMA_VERSION + 1;
 
             // Recreate a Page with modified header and write it
             let page = Page::new(HEADER_PAGE_ID_0, Node::Header(n0));
             {
-                let mut buf = mvcc.page_buf.lock().unwrap();
+                let mut buf = mvcc.page_buf.lock();
                 serialize_page_into(&mut buf, &page.node, mvcc.zero_fill_pages)
                     .expect("serialize header page");
-                mvcc.pager
-                    .write_page(page.page_id, &buf)
+                mvcc.rw
+                    .pager
+                    .write_page_data(page.page_id, &buf)
                     .expect("write modified header 0");
             }
 
@@ -4782,10 +4880,6 @@ mod tests {
             {
                 let cache = mvcc.page_cache.as_ref().unwrap();
                 assert!(cache.get(&p1).is_some());
-                assert!(
-                    cache.get(&HEADER_PAGE_ID_0).is_some()
-                        || cache.get(&HEADER_PAGE_ID_1).is_some()
-                );
             }
 
             // Read page - should hit cache

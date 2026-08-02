@@ -129,6 +129,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2a4385e2e34eb35d6b3efe798b9eb88096925d87726c0798709bf56d9ed84af3"
 
 [[package]]
+name = "arc-swap"
+version = "1.9.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c049c0be4daef0b145cb3555416b3b8ef5b7888a38aea1a3a155801fe7b0810b"
+dependencies = [
+ "rustversion",
+]
+
+[[package]]
 name = "arrayvec"
 version = "0.7.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3048,6 +3057,7 @@ version = "0.6.15"
 dependencies = [
  "async-trait",
  "futures",
+ "parking_lot",
  "rustc-hash 2.1.3",
  "tokio",
  "tonic",
@@ -3060,6 +3070,7 @@ dependencies = [
 name = "umadb-core"
 version = "0.6.15"
 dependencies = [
+ "arc-swap",
  "bitflags 2.13.1",
  "byteorder",
  "crc32fast",
@@ -3070,6 +3081,7 @@ dependencies = [
  "memmap2",
  "moka",
  "nix 0.30.1",
+ "parking_lot",
  "rand 0.10.2",
  "rustc-hash 2.1.3",
  "serial_test",
@@ -3109,6 +3121,7 @@ dependencies = [
 name = "umadb-python"
 version = "0.6.15"
 dependencies = [
+ "parking_lot",
  "pyo3",
  "pyo3-stub-gen",
  "umadb",

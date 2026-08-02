@@ -25,6 +25,8 @@ bitflags = "2"
 nix = { version = "0.30", features = ["fs"] }
 fs2 = "0.4"
 moka = { version = "0.12", features = ["sync"] }
+arc-swap = "1.9"
+parking_lot = { workspace = true }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 tokio-uring = "0.5.0"

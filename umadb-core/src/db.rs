@@ -1111,7 +1111,6 @@ pub fn unconditional_append(
 mod tests {
     use super::*;
     use crate::mvcc::{DEFAULT_PAGE_SIZE, StorageOptions};
-    use crate::page::Page;
     use serial_test::serial;
     use tempfile::tempdir;
     use umadb_dcb::{

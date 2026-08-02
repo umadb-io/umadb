@@ -1,7 +1,8 @@
 use std::sync::Arc;
 use tempfile::tempdir;
 use umadb_core::db::UmaDb;
-use umadb_core::mvcc::{Mvcc, ReadMethod, StorageOptions};
+use umadb_core::mvcc::{Mvcc, StorageOptions};
+use umadb_core::pager::ReadMethod;
 use umadb_dcb::{DcbEvent, DcbEventStoreSync, DcbQuery};
 
 #[test]

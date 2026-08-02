@@ -1,10 +1,10 @@
+use criterion::{Criterion, criterion_group, criterion_main};
 use std::hint::black_box;
-use criterion::{criterion_group, criterion_main, Criterion};
 use umadb_core::common::{PageID, Position, Tsn};
 use umadb_core::header_node::HeaderNode;
+use umadb_core::mvcc::DEFAULT_PAGE_SIZE;
 use umadb_core::node::Node;
 use umadb_core::page::serialize_page_into;
-use umadb_core::mvcc::DEFAULT_PAGE_SIZE;
 
 pub fn bench_serialize_header(c: &mut Criterion) {
     let header_node = HeaderNode {
