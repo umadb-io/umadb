@@ -5,8 +5,8 @@ use crate::slice_reader::SliceReader;
 use bitflags::bitflags;
 use rustc_hash::FxHashSet;
 use std::io::{Cursor, Write};
-use umadb_dcb::DcbError;
 use umadb_dcb::DcbResult;
+use umadb_dcb::{DcbError, TrackingInfo};
 use uuid::Uuid;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -16,6 +16,7 @@ pub struct EventRecord {
     pub tags: Vec<String>,
     pub uuid: Option<Uuid>,
     pub metadata: Vec<(String, String)>,
+    pub tracking_info: Option<TrackingInfo>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -29,6 +30,7 @@ pub enum EventValue {
         root_id: PageID,
         uuid: Option<Uuid>,
         metadata_len: u64,
+        tracking_info: Option<TrackingInfo>,
     },
 }
 
@@ -88,6 +90,7 @@ pub fn validate_event_record_for_append(
                     // Only non-zero matters for EventLeafNode::calc_serialized_size.
                     1
                 },
+                tracking_info: record.tracking_info.clone(),
             }
         }
         EventValue::Overflow { .. } => {
@@ -278,6 +281,14 @@ pub fn deserialize_metadata(slice: &[u8]) -> DcbResult<Vec<(String, String)>> {
     read_metadata(&mut reader)
 }
 
+/// Read tracking info for the event.
+fn read_tracking_info(reader: &mut SliceReader<'_>) -> DcbResult<TrackingInfo> {
+    let source_len = reader.read_u16()? as usize;
+    let source = reader.read_string(source_len)?;
+    let position = reader.read_u64()?;
+    Ok(TrackingInfo { source, position })
+}
+
 impl PartialEq<EventValue> for EventRecord {
     fn eq(&self, other: &EventValue) -> bool {
         match other {
@@ -305,9 +316,10 @@ impl PartialEq<EventRecord> for EventValue {
 bitflags! {
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     pub struct EventValueFlags: u8 {
-        const OVERFLOW      = 0b0000_0001; // event payload in overflow node
-        const HAS_UUID      = 0b0000_0010; // event includes UUID field
-        const HAS_METADATA  = 0b0000_0100; // event includes metadata field
+        const OVERFLOW           = 0b0000_0001; // event payload in overflow node
+        const HAS_UUID           = 0b0000_0010; // event includes UUID field
+        const HAS_METADATA       = 0b0000_0100; // event includes metadata field
+        const HAS_TRACKING_INFO  = 0b0000_1000; // event includes tracking info
     }
 }
 
@@ -347,6 +359,9 @@ impl EventLeafNode {
                     if !rec.metadata.is_empty() {
                         total_size += metadata_serialized_size(&rec.metadata);
                     }
+                    if let Some(tracking_info) = &rec.tracking_info {
+                        total_size += 4 + tracking_info.source.len() + 8;
+                    }
                 }
                 EventValue::Overflow {
                     event_type,
@@ -355,6 +370,7 @@ impl EventLeafNode {
                     root_id: _,
                     uuid,
                     metadata_len,
+                    tracking_info,
                 } => {
                     // 2 bytes for event_type length + bytes for the string
                     total_size += 2 + event_type.len();
@@ -374,6 +390,9 @@ impl EventLeafNode {
                     if *metadata_len > 0 {
                         // 8 bytes for metadata_len (u64)
                         total_size += 8;
+                    }
+                    if let Some(tracking_info) = tracking_info {
+                        total_size += 4 + tracking_info.source.len() + 8;
                     }
                 }
             }
@@ -405,6 +424,9 @@ impl EventLeafNode {
                     }
                     if !rec.metadata.is_empty() {
                         flags |= EventValueFlags::HAS_METADATA;
+                    }
+                    if rec.tracking_info.is_some() {
+                        flags |= EventValueFlags::HAS_TRACKING_INFO;
                     }
                     cursor.write_all(&[flags.bits()])?;
 
@@ -439,6 +461,12 @@ impl EventLeafNode {
                         // Advance the parent cursor past the written metadata
                         cursor.set_position((pos + written) as u64);
                     }
+                    if let Some(tracking_info) = &rec.tracking_info {
+                        let source_len = tracking_info.source.len() as u16;
+                        cursor.write_all(&source_len.to_le_bytes())?;
+                        cursor.write_all(tracking_info.source.as_bytes())?;
+                        cursor.write_all(&tracking_info.position.to_le_bytes())?;
+                    }
                 }
                 EventValue::Overflow {
                     event_type,
@@ -447,6 +475,7 @@ impl EventLeafNode {
                     root_id,
                     uuid,
                     metadata_len,
+                    tracking_info,
                 } => {
                     flags |= EventValueFlags::OVERFLOW;
                     if uuid.is_some() {
@@ -454,6 +483,9 @@ impl EventLeafNode {
                     }
                     if *metadata_len > 0 {
                         flags |= EventValueFlags::HAS_METADATA;
+                    }
+                    if tracking_info.is_some() {
+                        flags |= EventValueFlags::HAS_TRACKING_INFO;
                     }
                     cursor.write_all(&[flags.bits()])?;
 
@@ -480,6 +512,12 @@ impl EventLeafNode {
 
                     if *metadata_len > 0 {
                         cursor.write_all(&metadata_len.to_le_bytes())?;
+                    }
+                    if let Some(tracking_info) = tracking_info {
+                        let source_len = tracking_info.source.len() as u16;
+                        cursor.write_all(&source_len.to_le_bytes())?;
+                        cursor.write_all(tracking_info.source.as_bytes())?;
+                        cursor.write_all(&tracking_info.position.to_le_bytes())?;
                     }
                 }
             }
@@ -515,6 +553,7 @@ impl EventLeafNode {
             let overflow = flags.contains(EventValueFlags::OVERFLOW);
             let has_uuid = flags.contains(EventValueFlags::HAS_UUID);
             let has_metadata = flags.contains(EventValueFlags::HAS_METADATA);
+            let has_tracking_info = flags.contains(EventValueFlags::HAS_TRACKING_INFO);
 
             if !overflow {
                 // --- Inline Event ---
@@ -539,12 +578,19 @@ impl EventLeafNode {
                     Vec::new()
                 };
 
+                let tracking_info = if has_tracking_info {
+                    Some(read_tracking_info(&mut reader)?)
+                } else {
+                    None
+                };
+
                 values.push(EventValue::Inline(EventRecord {
                     event_type,
                     data,
                     tags,
                     uuid,
                     metadata,
+                    tracking_info,
                 }));
             } else {
                 // --- Overflow Event ---
@@ -568,6 +614,12 @@ impl EventLeafNode {
 
                 let metadata_len = if has_metadata { reader.read_u64()? } else { 0 };
 
+                let tracking_info = if has_tracking_info {
+                    Some(read_tracking_info(&mut reader)?)
+                } else {
+                    None
+                };
+
                 values.push(EventValue::Overflow {
                     event_type,
                     data_len,
@@ -575,6 +627,7 @@ impl EventLeafNode {
                     root_id,
                     uuid,
                     metadata_len,
+                    tracking_info,
                 });
             }
         }
@@ -778,6 +831,7 @@ mod tests {
                     tags: vec!["tag1".to_string(), "tag2".to_string(), "tag3".to_string()],
                     uuid: None,
                     metadata: Vec::new(),
+                    tracking_info: None,
                 }),
                 EventValue::Inline(EventRecord {
                     event_type: "event_type_2".to_string(),
@@ -790,6 +844,7 @@ mod tests {
                     ],
                     uuid: None,
                     metadata: Vec::new(),
+                    tracking_info: None,
                 }),
                 EventValue::Inline(EventRecord {
                     event_type: "event_type_3".to_string(),
@@ -797,6 +852,7 @@ mod tests {
                     tags: vec!["tag8".to_string(), "tag9".to_string()],
                     uuid: None,
                     metadata: Vec::new(),
+                    tracking_info: None,
                 }),
             ],
         };
@@ -884,6 +940,7 @@ mod tests {
                     tags: vec!["tag1".to_string(), "tag2".to_string(), "tag3".to_string()],
                     uuid: Some(uuid1),
                     metadata: Vec::new(),
+                    tracking_info: None,
                 }),
                 EventValue::Inline(EventRecord {
                     event_type: "event_type_2".to_string(),
@@ -896,6 +953,7 @@ mod tests {
                     ],
                     uuid: Some(uuid2),
                     metadata: Vec::new(),
+                    tracking_info: None,
                 }),
                 EventValue::Inline(EventRecord {
                     event_type: "event_type_3".to_string(),
@@ -903,6 +961,7 @@ mod tests {
                     tags: vec!["tag8".to_string(), "tag9".to_string()],
                     uuid: Some(uuid3),
                     metadata: Vec::new(),
+                    tracking_info: None,
                 }),
             ],
         };
@@ -976,6 +1035,142 @@ mod tests {
     }
 
     #[test]
+    fn test_event_leaf_serialize_with_tracking_info() {
+        // Create an EventLeafNode with known values
+        let uuid1 = Uuid::new_v4();
+        let uuid2 = Uuid::new_v4();
+        let uuid3 = Uuid::new_v4();
+        let leaf_node = EventLeafNode {
+            keys: vec![Position(1000), Position(2000), Position(3000)],
+            values: vec![
+                EventValue::Inline(EventRecord {
+                    event_type: "event_type_1".to_string(),
+                    data: vec![1, 0, 0, 0], // 100 as little-endian bytes
+                    tags: vec!["tag1".to_string(), "tag2".to_string(), "tag3".to_string()],
+                    uuid: Some(uuid1),
+                    metadata: Vec::new(),
+                    tracking_info: Some(TrackingInfo {
+                        source: "src1".into(),
+                        position: 42,
+                    }),
+                }),
+                EventValue::Inline(EventRecord {
+                    event_type: "event_type_2".to_string(),
+                    data: vec![2, 0, 0, 0], // 200 as little-endian bytes
+                    tags: vec![
+                        "tag4".to_string(),
+                        "tag5".to_string(),
+                        "tag6".to_string(),
+                        "tag7".to_string(),
+                    ],
+                    uuid: Some(uuid2),
+                    metadata: Vec::new(),
+                    tracking_info: Some(TrackingInfo {
+                        source: "src2".into(),
+                        position: 43,
+                    }),
+                }),
+                EventValue::Inline(EventRecord {
+                    event_type: "event_type_3".to_string(),
+                    data: vec![3, 0, 0, 0], // 300 as little-endian bytes
+                    tags: vec!["tag8".to_string(), "tag9".to_string()],
+                    uuid: Some(uuid3),
+                    metadata: Vec::new(),
+                    tracking_info: Some(TrackingInfo {
+                        source: "src3".into(),
+                        position: 44,
+                    }),
+                }),
+            ],
+        };
+
+        // Serialize the EventLeafNode
+        let mut serialized = vec![0u8; leaf_node.calc_serialized_size()];
+        leaf_node.serialize_into(&mut serialized).unwrap();
+
+        // Verify the serialized output is not empty
+        assert!(!serialized.is_empty());
+
+        // Deserialize back to an EventLeafNode
+        let deserialized =
+            EventLeafNode::from_slice(&serialized).expect("Failed to deserialize EventLeafNode");
+
+        // Verify that the deserialized node matches the original
+        assert_eq!(leaf_node, deserialized);
+
+        // Verify specific properties
+        assert_eq!(3, deserialized.keys.len());
+        assert_eq!(3, deserialized.values.len());
+
+        // Check keys
+        assert_eq!(Position(1000), deserialized.keys[0]);
+        assert_eq!(Position(2000), deserialized.keys[1]);
+        assert_eq!(Position(3000), deserialized.keys[2]);
+
+        // Check first value
+        match &deserialized.values[0] {
+            EventValue::Inline(v) => {
+                assert_eq!("event_type_1", v.event_type);
+                assert_eq!(vec![1, 0, 0, 0], v.data);
+                assert_eq!(
+                    vec!["tag1".to_string(), "tag2".to_string(), "tag3".to_string()],
+                    v.tags
+                );
+                assert_eq!(
+                    Some(TrackingInfo {
+                        source: "src1".into(),
+                        position: 42
+                    }),
+                    v.tracking_info
+                );
+            }
+            _ => panic!("Expected Inline for first value"),
+        }
+
+        // Check second value
+        match &deserialized.values[1] {
+            EventValue::Inline(v) => {
+                assert_eq!("event_type_2", v.event_type);
+                assert_eq!(vec![2, 0, 0, 0], v.data);
+                assert_eq!(
+                    vec![
+                        "tag4".to_string(),
+                        "tag5".to_string(),
+                        "tag6".to_string(),
+                        "tag7".to_string()
+                    ],
+                    v.tags
+                );
+                assert_eq!(
+                    Some(TrackingInfo {
+                        source: "src2".into(),
+                        position: 43
+                    }),
+                    v.tracking_info
+                );
+            }
+            _ => panic!("Expected Inline for second value"),
+        }
+
+        // Check third value
+        match &deserialized.values[2] {
+            EventValue::Inline(v) => {
+                assert_eq!("event_type_3", v.event_type);
+                assert_eq!(vec![3, 0, 0, 0], v.data);
+                assert_eq!(vec!["tag8".to_string(), "tag9".to_string()], v.tags);
+                assert_eq!(
+                    Some(TrackingInfo {
+                        source: "src3".into(),
+                        position: 44
+                    }),
+                    v.tracking_info
+                );
+            }
+            _ => panic!("Expected Inline for third value"),
+        }
+    }
+
+    #[test]
     fn test_event_leaf_serialize_with_overflow_single_without_uuid() {
         let leaf_node = EventLeafNode {
             keys: vec![Position(111)],
@@ -986,6 +1181,7 @@ mod tests {
                 root_id: PageID(123),
                 uuid: None,
                 metadata_len: 0,
+                tracking_info: None,
             }],
         };
         // Serialize
@@ -1009,6 +1205,7 @@ mod tests {
                 root_id,
                 uuid,
                 metadata_len,
+                tracking_info: None,
             } => {
                 assert_eq!("over_evt", event_type);
                 assert_eq!(1234567, *data_len);
@@ -1033,6 +1230,7 @@ mod tests {
                 root_id: PageID(123),
                 uuid: Some(uuid1),
                 metadata_len: 0,
+                tracking_info: None,
             }],
         };
         // Serialize
@@ -1056,12 +1254,64 @@ mod tests {
                 root_id,
                 uuid,
                 metadata_len: 0,
+                tracking_info: None,
             } => {
                 assert_eq!("over_evt", event_type);
                 assert_eq!(1234567, *data_len);
                 assert_eq!(vec!["a".to_string(), "b".to_string()], *tags);
                 assert_eq!(PageID(123), *root_id);
                 assert_eq!(Some(uuid1), *uuid);
+            }
+            _ => panic!("Expected Overflow variant"),
+        }
+    }
+
+    #[test]
+    fn test_event_leaf_serialize_with_overflow_single_with_tracking_info() {
+        let given_tracking_info = TrackingInfo {
+            source: "src".into(),
+            position: 99,
+        };
+        let leaf_node = EventLeafNode {
+            keys: vec![Position(111)],
+            values: vec![EventValue::Overflow {
+                event_type: "over_evt".to_string(),
+                data_len: 1234567,
+                tags: vec!["a".to_string(), "b".to_string()],
+                root_id: PageID(123),
+                uuid: None,
+                metadata_len: 0,
+                tracking_info: Some(given_tracking_info.clone()),
+            }],
+        };
+        // Serialize
+        let mut serialized = vec![0u8; leaf_node.calc_serialized_size()];
+        leaf_node.serialize_into(&mut serialized).unwrap();
+        assert!(!serialized.is_empty());
+        // Deserialize
+        let deserialized = EventLeafNode::from_slice(&serialized)
+            .expect("Failed to deserialize EventLeafNode with overflow");
+        assert_eq!(leaf_node, deserialized);
+
+        // Check specific fields
+        assert_eq!(1, deserialized.keys.len());
+        assert_eq!(Position(111), deserialized.keys[0]);
+        assert_eq!(1, deserialized.values.len());
+        match &deserialized.values[0] {
+            EventValue::Overflow {
+                event_type,
+                data_len,
+                tags,
+                root_id,
+                uuid: None,
+                metadata_len: 0,
+                tracking_info,
+            } => {
+                assert_eq!("over_evt", event_type);
+                assert_eq!(1234567, *data_len);
+                assert_eq!(vec!["a".to_string(), "b".to_string()], *tags);
+                assert_eq!(PageID(123), *root_id);
+                assert_eq!(Some(given_tracking_info), *tracking_info);
             }
             _ => panic!("Expected Overflow variant"),
         }
@@ -1075,6 +1325,7 @@ mod tests {
             tags: vec!["x".to_string()],
             uuid: None,
             metadata: Vec::new(),
+            tracking_info: None,
         });
         let overflow = EventValue::Overflow {
             event_type: "overflow_evt".to_string(),
@@ -1083,6 +1334,7 @@ mod tests {
             root_id: PageID(999),
             uuid: None,
             metadata_len: 0,
+            tracking_info: None,
         };
         let leaf_node = EventLeafNode {
             keys: vec![Position(10), Position(20)],
@@ -1111,6 +1363,7 @@ mod tests {
                 root_id,
                 uuid,
                 metadata_len,
+                tracking_info,
             } => {
                 assert_eq!("overflow_evt", event_type);
                 assert_eq!(9999, *data_len);
@@ -1118,6 +1371,7 @@ mod tests {
                 assert_eq!(PageID(999), *root_id);
                 assert_eq!(None, *uuid);
                 assert_eq!(0, *metadata_len);
+                assert_eq!(None, *tracking_info);
             }
             _ => panic!("Expected Overflow at index 1"),
         }
@@ -1279,6 +1533,7 @@ mod tests {
                     tags: vec!["tag1".to_string()],
                     uuid: None,
                     metadata: md1.clone(),
+                    tracking_info: None,
                 }),
                 // Inline with both uuid and metadata
                 EventValue::Inline(EventRecord {
@@ -1287,6 +1542,7 @@ mod tests {
                     tags: vec!["tag2".to_string(), "tag3".to_string()],
                     uuid: Some(uuid2),
                     metadata: md3.clone(),
+                    tracking_info: None,
                 }),
                 // Inline with empty metadata to confirm the flag stays unset
                 EventValue::Inline(EventRecord {
@@ -1295,6 +1551,7 @@ mod tests {
                     tags: vec![],
                     uuid: None,
                     metadata: Vec::new(),
+                    tracking_info: None,
                 }),
             ],
         };

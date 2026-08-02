@@ -123,6 +123,14 @@ impl SequencedEvent {
         self.inner.position
     }
 
+    #[getter]
+    fn tracking_info(&self) -> Option<TrackingInfo> {
+        self.inner
+            .tracking_info
+            .clone()
+            .map(|inner| TrackingInfo { inner })
+    }
+
     fn __repr__(&self) -> String {
         format!(
             "SequencedEvent(position={}, event_type='{}')",

@@ -346,6 +346,7 @@ mod tests {
                             tags: vec!["user".to_string(), "create".to_string()],
                             uuid: None,
                             metadata: Vec::new(),
+                            tracking_info: None,
                         }),
                         EventValue::Overflow {
                             event_type: "blob.uploaded".to_string(),
@@ -354,6 +355,7 @@ mod tests {
                             root_id: PageID(500),
                             uuid: Some(Uuid::nil()),
                             metadata_len: 0,
+                            tracking_info: None,
                         },
                     ],
                 }),
@@ -502,6 +504,7 @@ mod tests {
                             ],
                             uuid: Some(Uuid::nil()),
                             metadata: Vec::new(),
+                            tracking_info: None,
                         }),
                         EventValue::Inline(EventRecord {
                             event_type: "user.session.updated".to_string(),
@@ -513,6 +516,7 @@ mod tests {
                             ],
                             uuid: None,
                             metadata: Vec::new(),
+                            tracking_info: None,
                         }),
                         EventValue::Overflow {
                             event_type: "blob.chunk.indexed".to_string(),
@@ -526,6 +530,7 @@ mod tests {
                             root_id: PageID(1500),
                             uuid: Some(Uuid::nil()),
                             metadata_len: 0,
+                            tracking_info: None,
                         },
                         EventValue::Inline(EventRecord {
                             event_type: "audit.log".to_string(),
@@ -537,6 +542,7 @@ mod tests {
                             ],
                             uuid: Some(Uuid::nil()),
                             metadata: Vec::new(),
+                            tracking_info: None,
                         }),
                         EventValue::Overflow {
                             event_type: "ml.feature.vector".to_string(),
@@ -549,6 +555,7 @@ mod tests {
                             root_id: PageID(1501),
                             uuid: None,
                             metadata_len: 0,
+                            tracking_info: None,
                         },
                     ],
                 }),

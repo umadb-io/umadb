@@ -92,6 +92,31 @@ pub trait IteratorWithTimeout {
     fn next_timeout(&mut self, timeout: Duration) -> Option<Self::Item>;
 }
 
+fn convert_sequenced_events(
+    events: impl IntoIterator<Item = umadb_proto::v1::SequencedEvent>, // Update type as needed
+) -> DcbResult<VecDeque<DcbSequencedEvent>> {
+    events
+        .into_iter()
+        // filter_map drops items that return None
+        .filter_map(|e| {
+            e.event.map(|ev| {
+                // This block returns Result<DcbSequencedEvent, DcbError>
+                DcbEvent::try_from(ev).map(|event| DcbSequencedEvent {
+                    position: e.position,
+                    event,
+                    tracking_info: e.tracking_info.map(
+                        |umadb_proto::v1::TrackingInfo { source, position }| TrackingInfo {
+                            source,
+                            position,
+                        },
+                    ),
+                })
+            })
+        })
+        // Collects into a Result, short-circuiting on the first Err
+        .collect()
+}
+
 /// Async read response wrapper that provides batched access and head metadata
 pub struct AsyncClientReadResponse {
     stream: tonic::Streaming<umadb_proto::v1::ReadResponse>,
@@ -139,14 +164,7 @@ impl AsyncClientReadResponse {
                 match msg {
                     Ok(Some(resp)) => {
                         self.last_head = Some(resp.head);
-                        let mut buffer = VecDeque::with_capacity(resp.events.len());
-                        for e in resp.events {
-                            if let Some(ev) = e.event {
-                                let event = DcbEvent::try_from(ev)?;
-                                buffer.push_back(DcbSequencedEvent { position: e.position, event });
-                            }
-                        }
-                        self.buffer = buffer;
+                        self.buffer = convert_sequenced_events(resp.events)?;
                     }
                     Ok(None) => self.ended = true,
                     Err(status) => return Err(umadb_proto::dcb_error_from_status(status)),
@@ -179,14 +197,7 @@ impl AsyncClientReadResponse {
                 match msg {
                     Ok(Some(resp)) => {
                         self.last_head = Some(resp.head);
-                        let mut buffer = VecDeque::with_capacity(resp.events.len());
-                        for e in resp.events {
-                            if let Some(ev) = e.event {
-                                let event = DcbEvent::try_from(ev)?;
-                                buffer.push_back(DcbSequencedEvent { position: e.position, event });
-                            }
-                        }
-                        self.buffer = buffer;
+                        self.buffer = convert_sequenced_events(resp.events)?;
                     }
                     Ok(None) => self.ended = true,
                     Err(status) => return Err(umadb_proto::dcb_error_from_status(status)),
@@ -297,21 +308,10 @@ impl Stream for AsyncClientReadResponse {
                 Some(Ok(resp)) => {
                     this.last_head = Some(resp.head);
 
-                    let mut buffer = VecDeque::with_capacity(resp.events.len());
-                    for e in resp.events {
-                        if let Some(ev) = e.event {
-                            let event = match DcbEvent::try_from(ev) {
-                                Ok(event) => event,
-                                Err(err) => return Poll::Ready(Some(Err(err))),
-                            };
-                            buffer.push_back(DcbSequencedEvent {
-                                position: e.position,
-                                event,
-                            });
-                        }
-                    }
-
-                    this.buffer = buffer;
+                    this.buffer = match convert_sequenced_events(resp.events) {
+                        Ok(buf) => buf,
+                        Err(err) => return Poll::Ready(Some(Err(err))),
+                    };
 
                     // If the batch is empty, loop again to poll the next message
                     if this.buffer.is_empty() {
@@ -381,14 +381,7 @@ impl AsyncClientSubscription {
             msg = self.stream.message() => {
                 match msg {
                     Ok(Some(resp)) => {
-                        let mut buffer = VecDeque::with_capacity(resp.events.len());
-                        for e in resp.events {
-                            if let Some(ev) = e.event {
-                                let event = DcbEvent::try_from(ev)?;
-                                buffer.push_back(DcbSequencedEvent { position: e.position, event });
-                            }
-                        }
-                        self.buffer = buffer;
+                        self.buffer = convert_sequenced_events(resp.events)?;
                     }
                     Ok(None) => self.ended = true,
                     Err(status) => return Err(umadb_proto::dcb_error_from_status(status)),
@@ -479,20 +472,10 @@ impl Stream for AsyncClientSubscription {
 
             return match ready!(Pin::new(&mut this.stream).poll_next(cx)) {
                 Some(Ok(resp)) => {
-                    let mut buffer = VecDeque::with_capacity(resp.events.len());
-                    for e in resp.events {
-                        if let Some(ev) = e.event {
-                            let event = match DcbEvent::try_from(ev) {
-                                Ok(event) => event,
-                                Err(err) => return Poll::Ready(Some(Err(err))),
-                            };
-                            buffer.push_back(DcbSequencedEvent {
-                                position: e.position,
-                                event,
-                            });
-                        }
-                    }
-                    this.buffer = buffer;
+                    this.buffer = match convert_sequenced_events(resp.events) {
+                        Ok(buf) => buf,
+                        Err(err) => return Poll::Ready(Some(Err(err))),
+                    };
                     if this.buffer.is_empty() {
                         continue;
                     }

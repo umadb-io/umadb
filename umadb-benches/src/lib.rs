@@ -74,6 +74,7 @@ pub mod bench_api {
                         root_id,
                         uuid: None,
                         metadata_len: 0,
+                        tracking_info: None,
                     });
                 }
 
@@ -113,6 +114,7 @@ pub mod bench_api {
                     tags: tags.clone(),
                     uuid: None,
                     metadata: Vec::new(),
+                    tracking_info: None,
                 }));
             }
             let keys_vec: Vec<Position> = (0..keys).map(|i| Position(i as u64)).collect();
@@ -163,6 +165,7 @@ pub mod bench_api {
                     root_id: PageID(1 + i as u64),
                     uuid: None,
                     metadata_len: 0,
+                    tracking_info: None,
                 });
             }
             let keys_vec: Vec<Position> = (0..keys).map(|i| Position(i as u64)).collect();
@@ -231,6 +234,7 @@ pub mod bench_api {
                             tags: vec!["user".to_string(), "create".to_string()],
                             uuid: None,
                             metadata: Vec::new(),
+                            tracking_info: None,
                         }),
                         EventValue::Overflow {
                             event_type: "blob.uploaded".to_string(),
@@ -239,6 +243,7 @@ pub mod bench_api {
                             root_id: PageID(500),
                             uuid: Some(Uuid::nil()),
                             metadata_len: 0,
+                            tracking_info: None,
                         },
                     ],
                 }),
@@ -387,6 +392,7 @@ pub mod bench_api {
                             ],
                             uuid: Some(Uuid::nil()),
                             metadata: Vec::new(),
+                            tracking_info: None,
                         }),
                         EventValue::Inline(EventRecord {
                             event_type: "user.session.updated".to_string(),
@@ -398,6 +404,7 @@ pub mod bench_api {
                             ],
                             uuid: None,
                             metadata: Vec::new(),
+                            tracking_info: None,
                         }),
                         EventValue::Overflow {
                             event_type: "blob.chunk.indexed".to_string(),
@@ -411,6 +418,7 @@ pub mod bench_api {
                             root_id: PageID(1500),
                             uuid: Some(Uuid::nil()),
                             metadata_len: 0,
+                            tracking_info: None,
                         },
                         EventValue::Inline(EventRecord {
                             event_type: "audit.log".to_string(),
@@ -422,6 +430,7 @@ pub mod bench_api {
                             ],
                             uuid: Some(Uuid::nil()),
                             metadata: Vec::new(),
+                            tracking_info: None,
                         }),
                         EventValue::Overflow {
                             event_type: "ml.feature.vector".to_string(),
@@ -434,6 +443,7 @@ pub mod bench_api {
                             root_id: PageID(1501),
                             uuid: None,
                             metadata_len: 0,
+                            tracking_info: None,
                         },
                     ],
                 }),
@@ -548,6 +558,7 @@ pub mod bench_api {
                                 ],
                                 uuid: None,
                                 metadata: Vec::new(),
+                                tracking_info: None,
                             })
                         })
                         .collect(),

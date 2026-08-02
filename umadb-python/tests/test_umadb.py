@@ -590,17 +590,23 @@ class TestBasicUsage(unittest.TestCase):
         self.assertEqual(tracking_info.source, tracking_source)
         self.assertEqual(tracking_info.position, 1)
 
+        tag = f"tracking-demo-{uuid4()}"
         events = [
             Event(
                 event_type="UpstreamCommitted",
                 data=b"{}",
-                tags=["tracking-demo", self.run_tag],
+                tags=[tag, self.run_tag],
             )
         ]
         self.client.append(events, tracking_info=tracking_info)
 
         pos_after = self.client.get_tracking_info(tracking_source)
         self.assertEqual(pos_after, tracking_info.position)
+
+        sequenced_events = list(self.client.read(Query(items=[QueryItem(tags=[tag])])))
+        self.assertEqual(len(sequenced_events), 1)
+        self.assertTrue(sequenced_events[0].tracking_info)
+
 
     def test_tracking_info_duplicate_position_fails(self) -> None:
         tracking_source = "example-source:" + str(uuid4())

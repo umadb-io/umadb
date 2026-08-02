@@ -1,5 +1,6 @@
+use futures::StreamExt;
 use umadb_client::UmaDbClient;
-use umadb_dcb::{DcbError, DcbEvent, DcbEventStoreAsync, TrackingInfo};
+use umadb_dcb::{DcbError, DcbEvent, DcbEventStoreAsync, DcbQuery, DcbQueryItem, TrackingInfo};
 use umadb_server::start_server;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -92,6 +93,34 @@ async fn grpc_append_with_tracking_enforces_monotonicity() {
 
     assert_eq!(Some(6u64), client.get_tracking_info("srcA").await.unwrap());
     assert_eq!(None, client.get_tracking_info("srcB").await.unwrap());
+
+    // Check the sequenced event has the tracking info.
+    let query = DcbQuery {
+        items: vec![DcbQueryItem {
+            types: vec![],
+            tags: vec!["x".to_string()],
+        }],
+    };
+    let mut response = client
+        .read(Some(query), None, false, None)
+        .await
+        .expect("appended events");
+    let mut count = 0;
+    let mut expected_position = 5;
+    while let Some(result) = response.next().await {
+        let event = result.expect("sequenced event");
+        count = count + 1;
+        assert_eq!(
+            Some(TrackingInfo {
+                source: "src1".into(),
+                position: expected_position
+            }),
+            event.tracking_info
+        );
+        if expected_position == 5 {
+            expected_position = 6;
+        }
+    }
 
     // Cleanup
     let _ = shutdown_tx.send(());

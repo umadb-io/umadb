@@ -571,6 +571,7 @@ pub fn read_conditional<T: MvccSnapshot>(
                         uuid: rec.uuid,
                         metadata: rec.metadata,
                     },
+                    tracking_info: rec.tracking_info,
                 });
                 if let Some(lim) = limit
                     && out.len() >= lim as usize
@@ -623,6 +624,7 @@ pub fn read_conditional<T: MvccSnapshot>(
                             uuid: rec.uuid,
                             metadata: rec.metadata,
                         },
+                        tracking_info: rec.tracking_info,
                     });
                     if let Some(lim) = limit
                         && out.len() >= lim as usize
@@ -810,6 +812,7 @@ pub fn read_conditional<T: MvccSnapshot>(
                 uuid: rec.uuid,
                 metadata: rec.metadata,
             },
+            tracking_info: rec.tracking_info,
         });
         if let Some(lim) = limit
             && out.len() >= lim as usize
@@ -888,6 +891,7 @@ pub fn process_append_request<T: MvccSnapshot>(
             tags: ev.tags,
             uuid: ev.uuid,
             metadata: ev.metadata,
+            tracking_info: tracking_info.clone(),
         };
         all_event_values_and_size_diffs
             .push(validate_event_record_for_append(writer.page_size, record)?);
@@ -1099,6 +1103,7 @@ pub fn unconditional_append(
             tags: ev.tags,
             uuid: ev.uuid,
             metadata: ev.metadata,
+            tracking_info: None,
         };
         let event_values_and_diffs = validate_event_record_for_append(mvcc.page_size, record)?;
         all_event_values_and_size_diffs.push(event_values_and_diffs);
@@ -1340,6 +1345,33 @@ mod tests {
             .unwrap();
         assert_eq!(2, last2);
         assert_eq!(Some(6), uma.get_tracking_info("src1").unwrap());
+
+        // Check the sequenced event has the tracking info.
+        let query = DcbQuery {
+            items: vec![DcbQueryItem {
+                types: vec![],
+                tags: vec!["x".to_string()],
+            }],
+        };
+        let mut response = uma
+            .read(Some(query), None, false, None)
+            .expect("appended events");
+        let mut count = 0;
+        let mut expected_position = 5;
+        while let Some(result) = response.next() {
+            let event = result.expect("sequenced event");
+            count = count + 1;
+            assert_eq!(
+                Some(TrackingInfo {
+                    source: "src1".into(),
+                    position: expected_position
+                }),
+                event.tracking_info
+            );
+            if expected_position == 5 {
+                expected_position = 6;
+            }
+        }
     }
 
     // Backward-compatible wrapper for tests: call new read_conditional with an empty dirty map

@@ -462,7 +462,7 @@ impl DcbEvent {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct TrackingInfo {
     pub source: String,
@@ -477,6 +477,8 @@ pub struct DcbSequencedEvent {
     pub position: u64,
     /// The event
     pub event: DcbEvent,
+    // Optional tracking info given when event was appended.
+    pub tracking_info: Option<TrackingInfo>,
 }
 
 // Error types
@@ -735,11 +737,13 @@ mod tests {
         let seq_event1 = DcbSequencedEvent {
             event: event1,
             position: 1,
+            tracking_info: None,
         };
 
         let seq_event2 = DcbSequencedEvent {
             event: event2,
             position: 2,
+            tracking_info: None,
         };
 
         // Create a test response

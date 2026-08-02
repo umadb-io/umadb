@@ -28,6 +28,8 @@ message SequencedEvent {
   uint64 position = 1;
   // The original event data.
   Event event = 2;
+  // Optional tracking info given when the event was appended.
+  optional TrackingInfo tracking_info = 3;
 }
 
 // A specific filter condition used to match events in the store.

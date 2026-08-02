@@ -136,6 +136,7 @@ fn materialize_event_value<T: MvccSnapshot>(
             root_id,
             uuid,
             metadata_len,
+            tracking_info,
         } => {
             let all_data = read_overflow_chain(mvcc, dirty, *root_id)?;
             let all_data_len = all_data.len();
@@ -158,6 +159,7 @@ fn materialize_event_value<T: MvccSnapshot>(
                 tags: tags.clone(),
                 uuid: *uuid,
                 metadata,
+                tracking_info: tracking_info.clone(),
             })
         }
     }
@@ -811,6 +813,7 @@ mod tests {
             tags: vec!["users".to_string(), "creation".to_string()],
             uuid: None,
             metadata: Vec::new(),
+            tracking_info: None,
         };
 
         // Call append_event
@@ -872,6 +875,7 @@ mod tests {
                 tags: vec!["users".to_string(), "creation".to_string()],
                 uuid: None,
                 metadata: Vec::new(),
+                tracking_info: None,
             };
             appended.push((position, record.clone()));
 
@@ -945,6 +949,7 @@ mod tests {
                 tags: vec!["users".to_string(), "creation".to_string()],
                 uuid: None,
                 metadata: Vec::new(),
+                tracking_info: None,
             };
             appended.push((position, record.clone()));
 
@@ -1023,6 +1028,7 @@ mod tests {
                 tags: vec!["users".to_string(), "creation".to_string()],
                 uuid: None,
                 metadata: Vec::new(),
+                tracking_info: None,
             };
             appended.push((position, record.clone()));
 
@@ -1112,6 +1118,7 @@ mod tests {
                 tags: vec!["users".to_string(), "creation".to_string()],
                 uuid: None,
                 metadata: Vec::new(),
+                tracking_info: None,
             };
             appended.push((position, record.clone()));
 
@@ -1207,6 +1214,7 @@ mod tests {
                 tags: vec!["users".to_string(), "creation".to_string()],
                 uuid: None,
                 metadata: Vec::new(),
+                tracking_info: None,
             };
             appended.push((position, record.clone()));
 
@@ -1334,6 +1342,7 @@ mod tests {
                 tags: vec!["users".to_string(), "creation".to_string()],
                 uuid: None,
                 metadata: Vec::new(),
+                tracking_info: None,
             };
             appended.push((position, record.clone()));
 
@@ -1454,6 +1463,7 @@ mod tests {
                 tags: vec!["users".to_string(), "creation".to_string()],
                 uuid: None,
                 metadata: Vec::new(),
+                tracking_info: None,
             };
             appended.push((position, record.clone()));
 
@@ -1566,6 +1576,7 @@ mod tests {
             tags: vec![],
             uuid: None,
             metadata: Vec::new(),
+            tracking_info: None,
         };
         event_tree_append(&db, &mut writer, event.clone(), pos).unwrap();
         db.commit(&mut writer).unwrap();
@@ -1618,6 +1629,7 @@ mod tests {
             tags: vec![],
             uuid: None,
             metadata: Vec::new(),
+            tracking_info: None,
         };
         event_tree_append(&db, &mut writer, event.clone(), pos).unwrap();
         db.commit(&mut writer).unwrap();
@@ -1669,6 +1681,7 @@ mod tests {
             tags: vec!["t".into()],
             uuid: None,
             metadata: metadata.clone(),
+            tracking_info: None,
         };
         event_tree_append(&db, &mut writer, event.clone(), pos).unwrap();
         db.commit(&mut writer).unwrap();
@@ -1712,6 +1725,7 @@ mod tests {
             tags: vec!["t".into()],
             uuid: Some(uuid::Uuid::new_v4()),
             metadata: metadata.clone(),
+            tracking_info: None,
         };
         event_tree_append(&db, &mut writer, event.clone(), pos).unwrap();
         db.commit(&mut writer).unwrap();
@@ -1774,6 +1788,7 @@ mod tests {
             tags: vec!["t".into()],
             uuid: None,
             metadata: metadata.clone(),
+            tracking_info: None,
         };
         event_tree_append(&db, &mut writer, event.clone(), pos).unwrap();
         db.commit(&mut writer).unwrap();
@@ -1803,6 +1818,7 @@ mod tests {
             tags: vec!["t".into()],
             uuid: None,
             metadata,
+            tracking_info: None,
         };
 
         // Append must fail cleanly with InvalidArgument rather than corrupting
@@ -1840,6 +1856,7 @@ mod tests {
             tags: vec!["t".into()],
             uuid: None,
             metadata,
+            tracking_info: None,
         };
 
         // Append must fail cleanly with InvalidArgument rather than corrupting
@@ -1875,6 +1892,7 @@ mod tests {
             tags: vec!["t".into()],
             uuid: None,
             metadata: Vec::new(),
+            tracking_info: None,
         };
 
         match event_tree_append(&db, &mut writer, event, pos) {
@@ -1898,6 +1916,7 @@ mod tests {
             tags: vec!["x".repeat(MAX_TAG_LEN + 1)],
             uuid: None,
             metadata: Vec::new(),
+            tracking_info: None,
         };
 
         match event_tree_append(&db, &mut writer, event, pos) {
@@ -1974,6 +1993,7 @@ mod tests {
                 tags: vec!["test".to_string()],
                 uuid: None,
                 metadata: Vec::new(),
+                tracking_info: None,
             };
             appended.push((position, record.clone()));
             event_tree_append(&db, &mut writer, record, position).unwrap();
@@ -2049,6 +2069,7 @@ mod tests {
             tags: vec![large_tag],
             uuid: None,
             metadata: Vec::new(),
+            tracking_info: None,
         };
 
         match event_tree_append(&db, &mut writer, event, pos) {

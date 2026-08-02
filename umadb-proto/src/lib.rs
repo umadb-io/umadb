@@ -132,6 +132,10 @@ impl From<DcbSequencedEvent> for v1::SequencedEvent {
         v1::SequencedEvent {
             position: event.position,
             event: Some(event.event.into()),
+            tracking_info: event.tracking_info.map(|t| crate::v1::TrackingInfo {
+                source: t.source,
+                position: t.position,
+            }),
         }
     }
 }
