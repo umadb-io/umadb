@@ -3,7 +3,7 @@ use std::fs;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::LazyLock;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use tokio::sync::{Semaphore, mpsc, oneshot, watch};
 
 use tokio_stream::wrappers::ReceiverStream;
@@ -166,16 +166,15 @@ where
 
 static START_TIME: LazyLock<Instant> = LazyLock::new(Instant::now);
 
-const APPEND_BATCH_MAX_EVENTS: usize = 2000;
-const READ_RESPONSE_BATCH_SIZE_DEFAULT: u32 = 100;
-const READ_RESPONSE_BATCH_SIZE_MAX: u32 = 5000;
+const APPEND_BATCH_MAX_EVENTS: usize = 2048;
+const READ_RESPONSE_BATCH_SIZE_DEFAULT: u32 = 1024;
+const READ_RESPONSE_BATCH_SIZE_MAX: u32 = 4096;
 
-pub fn server_uptime() -> std::time::Duration {
+pub fn server_uptime() -> Duration {
     START_TIME.elapsed()
 }
 
 fn build_server_builder_with_options(tls: Option<ServerTlsOptions>) -> Server {
-    use std::time::Duration;
     let mut server_builder = Server::builder()
         .http2_keepalive_interval(Some(Duration::from_secs(5)))
         .http2_keepalive_timeout(Some(Duration::from_secs(10)))
@@ -291,7 +290,7 @@ pub async fn start_server_with_options(
         }
     }
     .with_nodelay(Some(true))
-    .with_keepalive(Some(std::time::Duration::from_secs(60)));
+    .with_keepalive(Some(Duration::from_secs(60)));
 
     // Create a shutdown broadcast channel for terminating ongoing subscriptions
     let (srv_shutdown_tx, srv_shutdown_rx) = watch::channel(false);
@@ -700,12 +699,15 @@ impl umadb_proto::v1::dcb_server::Dcb for UmaDbServer {
         let cancel_signal_for_task = cancel_signal.clone();
         let read_scan_semaphore = self.readers_semaphore.clone();
 
+        // Wrap query in an Arc so we don't deep-clone Strings/Vecs on every batch loop
+        let query_arc = query.map(Arc::new);
+
         // Spawn a task to handle the subscribe operation and stream multiple batches
         tokio::spawn(async move {
             // Ensure we can reuse the same query across batches
-            let query_clone = query;
+            let query_arc = query_arc;
 
-            let mut next_after = after.map(|a| a.saturating_add(1));
+            let mut next_read_start = after.map(|a| a.saturating_add(1));
             // Create a watch receiver for head updates
             let mut head_rx = request_handler.watch_head();
 
@@ -718,6 +720,12 @@ impl umadb_proto::v1::dcb_server::Dcb for UmaDbServer {
                     break;
                 }
 
+                // Prepare to read.
+                let handler = request_handler.clone();
+                let query_val = query_arc.clone();
+                let batch_size_val = Some(batch_size);
+                let cancel_for_blocking = cancel_signal_for_task.clone();
+
                 // Throttle concurrent blocking scans so reactor threads stay free to
                 // service HTTP/2 keepalive. The permit is held only for this batch scan
                 // (moved into the closure), and released before we send the batch or wait
@@ -726,33 +734,40 @@ impl umadb_proto::v1::dcb_server::Dcb for UmaDbServer {
                     Ok(permit) => permit,
                     Err(_) => break,
                 };
-                let handler = request_handler.clone();
-                let query_val = query_clone.clone();
-                let batch_size_val = Some(batch_size);
-                let cancel_for_blocking = cancel_signal_for_task.clone();
+
+                // Clear any pending watch notifications BEFORE we take our database snapshot.
+                // This acknowledges any writes that happened during our previous loop iterations.
+                // Because we are about to take a fresh snapshot, we will naturally see those
+                // writes anyway. If we don't clear them now, those old notifications will cause
+                // a wasted, phantom loop iteration when we eventually hit `head_rx.changed().await`.
+                let _ = head_rx.borrow_and_update();
+
+                // Spawn a blocking task for reading.
                 let mut blocking_handle = tokio::task::spawn_blocking(move || {
                     let _permit = permit;
                     handler.read(
-                        query_val,
-                        next_after,
+                        // TODO: Change to pass Arc down the stack.
+                        query_val.as_deref().cloned(),
+                        next_read_start,
                         false,
                         batch_size_val,
                         Some(cancel_for_blocking),
                     )
                 });
 
+                // Wait until the read completed, or we got closed or shutdown.
                 let res = tokio::select! {
                     res = &mut blocking_handle => {
                         res.map_err(|e| DcbError::InternalError(e.to_string())).and_then(|res| res)
                     }
                     _ = tx.closed() => {
                         cancel_signal_for_task.store(true, std::sync::atomic::Ordering::SeqCst);
-                        let _ = blocking_handle.await;
+                        let _ = blocking_handle.abort();
                         break;
                     }
                     _ = shutdown_watch_rx.changed() => {
                         cancel_signal_for_task.store(true, std::sync::atomic::Ordering::SeqCst);
-                        let _ = blocking_handle.await;
+                        let _ = blocking_handle.abort();
                         break;
                     }
                 };
@@ -776,22 +791,40 @@ impl umadb_proto::v1::dcb_server::Dcb for UmaDbServer {
                             continue;
                         }
 
-                        let last_event_position = sequenced_event_protos.last().map(|e| e.position);
+                        let count = sequenced_event_protos.len();
+                        let last_seen_position = sequenced_event_protos.last().map(|e| e.position);
 
                         let response = umadb_proto::v1::SubscribeResponse {
                             events: sequenced_event_protos,
                         };
 
+                        // TODO: Actually check the total size of payload,
+                        //  and chunk things if greater than the max size
+                        //  allowed by gRPC (which is 4MB?).
                         if tx.send(Ok(response)).await.is_err() {
                             break;
                         }
 
-                        // Advance the cursor (use a new reader on the next loop iteration)
-                        // Todo: End the subscription if last_event_position is Some(u64:MAX).
-                        next_after = last_event_position.map(|p| p.saturating_add(1));
+                        if let Some(position) = last_seen_position {
+                            // End the subscription if last_seen_position is Some(u64:MAX).
+                            if position == u64::MAX {
+                                break;
+                            }
+                            // Next read starts after the last seen position.
+                            next_read_start = Some(position.saturating_add(1));
+                        }
 
-                        // Yield to let other tasks progress under high concurrency
-                        tokio::task::yield_now().await;
+                        // FEATURE: Dynamic Linger (Smart Batching)
+                        // If the batch we just sent wasn't full, we have caught up to the DB head.
+                        // Instead of instantly looping and starving writers for CPU time on tiny
+                        // 1-event reads, we pause for 2ms. This allows concurrent writers to queue
+                        // up a massive batch. Because we ALREADY sent the data to the client,
+                        // this does not penalize latency for idle/low-load systems!
+                        if count < batch_size as usize {
+                            tokio::time::sleep(Duration::from_millis(2)).await;
+                        } else {
+                            tokio::task::yield_now().await;
+                        }
                     }
                     Err(e) => {
                         if matches!(e, DcbError::CancelledByUser()) {
