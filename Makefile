@@ -210,6 +210,68 @@ HOST_ARCH := $(shell uname -m)
 HOST_OS := $(shell uname -s)
 
 
+# ---------------------------------------------
+# New ZigBuild Helpers (To replace cross)
+# ---------------------------------------------
+HOST_ARCH := $(shell uname -m)
+HOST_OS := $(shell uname -s)
+
+ensure_zigbuild:
+	@if ! command -v cargo-zigbuild &> /dev/null; then \
+		echo "🔧 Installing cargo-zigbuild..."; \
+		pipx install cargo-zigbuild; \
+	fi
+	@if ! command -v zig &> /dev/null; then \
+		echo "🔧 Installing zig via pipx..."; \
+		pipx install ziglang; \
+		echo "🔗 Symlinking python-zig to zig..."; \
+		ln -sf $$(command -v python-zig) $$(dirname $$(command -v python-zig))/zig; \
+	fi
+
+zig_build_umadb: ensure_zigbuild
+	@echo "🚀 Building RUST_TARGET: $(RUST_TARGET)"
+	rustup target add $(RUST_TARGET)
+	@if [[ "$(RUST_TARGET)" == *"linux-gnu"* ]]; then \
+		AWS_LC_SYS_CMAKE_BUILDER=1 cargo zigbuild --release --target $(RUST_TARGET).2.34 --package umadb; \
+	else \
+		AWS_LC_SYS_CMAKE_BUILDER=1 cargo build --release --target $(RUST_TARGET) --package umadb; \
+	fi
+
+# ---------------------------------------------
+# New Build Targets (Using ZigBuild)
+# ---------------------------------------------
+
+PHONY: build-zig-umadb-x86_64-unknown-linux-gnu
+build-zig-umadb-x86_64-unknown-linux-gnu:
+	$(MAKE) zig_build_umadb RUST_TARGET=x86_64-unknown-linux-gnu
+
+PHONY: build-zig-umadb-aarch64-unknown-linux-gnu
+build-zig-umadb-aarch64-unknown-linux-gnu:
+	$(MAKE) zig_build_umadb RUST_TARGET=aarch64-unknown-linux-gnu
+
+PHONY: build-zig-umadb-x86_64-apple-darwin
+build-zig-umadb-x86_64-apple-darwin:
+	$(MAKE) zig_build_umadb RUST_TARGET=x86_64-apple-darwin
+
+PHONY: build-zig-umadb-aarch64-apple-darwin
+build-zig-umadb-aarch64-apple-darwin:
+	$(MAKE) zig_build_umadb RUST_TARGET=aarch64-apple-darwin
+
+
+PHONY: build-zig-umadb-all
+build-zig-umadb-all: \
+	build-zig-umadb-x86_64-unknown-linux-gnu \
+	build-zig-umadb-aarch64-unknown-linux-gnu \
+	build-zig-umadb-x86_64-apple-darwin \
+	build-zig-umadb-aarch64-apple-darwin
+
+
+
+#
+# Old cross things....
+#
+
+
 # Install cross if needed
 ensure_cross:
 	@if [ -z "$(CROSS)" ]; then \
