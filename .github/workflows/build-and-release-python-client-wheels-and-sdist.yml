@@ -54,20 +54,6 @@ jobs:
           args: --release --out dist --manifest-path umadb-python/Cargo.toml -i python${{ matrix.python-version }} --zig --manylinux 2_34
           container: off
 
-      - name: Start UmaDB server
-        run: |
-          docker network create umadb-net
-          docker run -d --network umadb-net --name umadb-server umadb/umadb:latest
-          # Wait for server to become ready
-          for i in {1..20}; do
-              if nc -z localhost 50051; then
-                  echo "UmaDB server is up!"
-                  break
-              fi
-              echo "Waiting for UmaDB server..."
-              sleep 1
-          done
-
       - name: Test built wheel
         uses: addnab/docker-run-action@v3
         with:
@@ -76,13 +62,14 @@ jobs:
           options: |
             -v ${{ github.workspace }}/dist:/dist
             --platform ${{ matrix.target == 'aarch64-unknown-linux-gnu' && 'linux/arm64' || 'linux/amd64' }}
-            --network umadb-net
           run: |
             /opt/python/cp310-cp310/bin/pip install /dist/*.whl
+            /opt/python/cp310-cp310/bin/umadb &
+            sleep 1
             /opt/python/cp310-cp310/bin/python - << 'END'
             from umadb import Client, Event
 
-            client = Client("http://umadb-server:50051")
+            client = Client("http://127.0.0.1:50051")
             
             event = Event(
                 event_type="UserCreated",
@@ -178,8 +165,33 @@ jobs:
 
       - name: Test built wheel
         run: |
+          # Install the newly built wheel from the dist folder
           pip install umadb --no-index --find-links dist --force-reinstall
-          python -c "import umadb"
+          
+          # Start the server in the background natively on the Mac runner
+          umadb &
+          
+          # Give it a couple of seconds to spin up and bind the port
+          sleep 3
+          
+          # Run the Python test against localhost
+          python - << 'END'
+          from umadb import Client, Event
+          
+          client = Client("http://127.0.0.1:50051")
+          
+          event = Event(
+              event_type="UserCreated",
+              data=b"user data",
+              tags=["user", "creation"],
+          )
+          position = client.append([event])
+          print(f"Event appended at position: {position}")
+          
+          events = client.read()
+          for seq_event in events:
+              print(f"Position {seq_event.position}: {seq_event.event.event_type}")
+          END
 
       - name: Upload artifact
         uses: actions/upload-artifact@v6
