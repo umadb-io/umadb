@@ -18,15 +18,15 @@ name = "umadb"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-umadb-client = { path = "../umadb-client", version = "0.7.1" }
-umadb-dcb = { path = "../umadb-dcb", version = "0.7.1" }
+umadb-client = { path = "../umadb-client", version = "0.7.2" }
+umadb-dcb = { path = "../umadb-dcb", version = "0.7.2" }
 pyo3 = { version = ">=0.28", features = ["abi3-py310", "uuid"] }
 uuid = { version = ">=1.23", features = ["v4"] }
 pyo3-stub-gen = "0.23"
 parking_lot = { workspace = true }
 
 [target.'cfg(not(windows))'.dependencies]
-umadb-cli = { package = "umadb", path = "../umadb", version = "0.7.1" }
+umadb-cli = { package = "umadb", path = "../umadb", version = "0.7.2" }
 
 [features]
 default = ["extension-module"]
