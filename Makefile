@@ -66,7 +66,7 @@ build-workspace-exclude-python:
 	cargo build --workspace --exclude umadb-python
 
 build-umadb-bin-release:
-	cargo build --bin umadb --release
+	RUSTFLAGS="-C target-cpu=native" cargo build --bin umadb --release
 
 test:
 	$(MAKE) test-workspace-exclude-python
@@ -213,8 +213,6 @@ HOST_OS := $(shell uname -s)
 # ---------------------------------------------
 # New ZigBuild Helpers (To replace cross)
 # ---------------------------------------------
-HOST_ARCH := $(shell uname -m)
-HOST_OS := $(shell uname -s)
 
 ensure_zigbuild:
 	@if ! command -v cargo-zigbuild &> /dev/null; then \
@@ -228,13 +226,18 @@ ensure_zigbuild:
 		ln -sf $$(command -v python-zig) $$(dirname $$(command -v python-zig))/zig; \
 	fi
 
+# Default CPU level if not explicitly provided
+CPU_LEVEL ?= x86-64-v2
+
 zig_build_umadb: ensure_zigbuild
 	@echo "🚀 Building RUST_TARGET: $(RUST_TARGET)"
 	rustup target add $(RUST_TARGET)
-	@if [[ "$(RUST_TARGET)" == *"linux-gnu"* ]]; then \
-		AWS_LC_SYS_CMAKE_BUILDER=1 cargo zigbuild --release --target $(RUST_TARGET).2.34 --package umadb; \
+	@if [[ "$(RUST_TARGET)" == *"x86_64-unknown-linux-gnu"* ]]; then \
+	   RUSTFLAGS="-C target-cpu=$(CPU_LEVEL)" AWS_LC_SYS_CMAKE_BUILDER=1 cargo zigbuild --release --target $(RUST_TARGET).2.34 --package umadb; \
+	elif [[ "$(RUST_TARGET)" == *"linux-gnu"* ]]; then \
+	   AWS_LC_SYS_CMAKE_BUILDER=1 cargo zigbuild --release --target $(RUST_TARGET).2.34 --package umadb; \
 	else \
-		AWS_LC_SYS_CMAKE_BUILDER=1 cargo build --release --target $(RUST_TARGET) --package umadb; \
+	   AWS_LC_SYS_CMAKE_BUILDER=1 cargo build --release --target $(RUST_TARGET) --package umadb; \
 	fi
 
 # ---------------------------------------------
@@ -243,7 +246,7 @@ zig_build_umadb: ensure_zigbuild
 
 PHONY: build-zig-umadb-x86_64-unknown-linux-gnu
 build-zig-umadb-x86_64-unknown-linux-gnu:
-	$(MAKE) zig_build_umadb RUST_TARGET=x86_64-unknown-linux-gnu
+	$(MAKE) zig_build_umadb RUST_TARGET=x86_64-unknown-linux-gnu CPU_LEVEL=$(CPU_LEVEL)
 
 PHONY: build-zig-umadb-aarch64-unknown-linux-gnu
 build-zig-umadb-aarch64-unknown-linux-gnu:

@@ -22,13 +22,26 @@ jobs:
           # Linux GNU targets (Linked against glibc 2.34 via zigbuild for AL2023 compatibility)
           - os: ubuntu-latest
             rust_target: x86_64-unknown-linux-gnu
+            cpu_level: x86-64-v2
+            artifact_name: umadb-x86_64-unknown-linux-gnu-v2
+          - os: ubuntu-latest
+            rust_target: x86_64-unknown-linux-gnu
+            cpu_level: x86-64-v3
+            artifact_name: umadb-x86_64-unknown-linux-gnu-v3
+
+          # --- Other Targets ---
           - os: ubuntu-latest
             rust_target: aarch64-unknown-linux-gnu
-          # macOS targets
+            cpu_level: generic
+            artifact_name: umadb-aarch64-unknown-linux-gnu
           - os: macos-latest
             rust_target: x86_64-apple-darwin
+            cpu_level: generic
+            artifact_name: umadb-x86_64-apple-darwin
           - os: macos-latest
             rust_target: aarch64-apple-darwin
+            cpu_level: generic
+            artifact_name: umadb-aarch64-apple-darwin
 
     steps:
       - uses: actions/checkout@v6
@@ -44,24 +57,18 @@ jobs:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build binary
-        run: make build-zig-umadb-${{ matrix.rust_target }}
+        run: make build-zig-umadb-${{ matrix.rust_target }} CPU_LEVEL=${{ matrix.cpu_level }}
 
-      - name: Archive artifact
+      - name: Compress binary
         run: |
           cd target/${{ matrix.rust_target }}/release
-          if [ "${{ matrix.os }}" = "windows-latest" ]; then
-            7z a ../../../umadb-${{ matrix.rust_target }}.zip umadb
-          else
-            tar czf ../../../umadb-${{ matrix.rust_target }}.tar.gz umadb
-          fi
+          tar czf ../../../${{ matrix.artifact_name }}.tar.gz umadb
 
       - name: Upload binary artifact
         uses: actions/upload-artifact@v6
         with:
-          name: umadb-${{ matrix.rust_target }}
-          path: |
-            umadb-${{ matrix.rust_target }}.tar.gz
-            umadb-${{ matrix.rust_target }}.zip
+          name: ${{ matrix.artifact_name }}
+          path: ${{ matrix.artifact_name }}.tar.gz
           if-no-files-found: ignore
 
   create-release:
@@ -108,14 +115,14 @@ jobs:
           mkdir -p ./binaries/linux/amd64
           mkdir -p ./binaries/linux/arm64
           
-          # Extract Linux x86_64 GNU binary
-          tar xzf artifacts/umadb-x86_64-unknown-linux-gnu/umadb-x86_64-unknown-linux-gnu.tar.gz -C ./binaries/linux/amd64
+          # Extract Linux x86_64 GNU binary - use v2 for maximum Docker host compatibility
+          tar xzf artifacts/umadb-x86_64-unknown-linux-gnu-v2/umadb-x86_64-unknown-linux-gnu-v2.tar.gz -C ./binaries/linux/amd64
           chmod +x ./binaries/linux/amd64/umadb
 
           # Extract Linux aarch64 GNU binary
           tar xzf artifacts/umadb-aarch64-unknown-linux-gnu/umadb-aarch64-unknown-linux-gnu.tar.gz -C ./binaries/linux/arm64
           chmod +x ./binaries/linux/arm64/umadb
-          
+                    
           # List binaries
           ls -lh ./binaries/linux/amd64
           ls -lh ./binaries/linux/arm64

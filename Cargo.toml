@@ -61,9 +61,11 @@ strip = "none"      # requires a sufficiently recent Rust toolchain
 split-debuginfo = "unpacked" # macOS
 
 [profile.release]
-lto = true
+opt-level = 3          # Maximum speed optimizations (default is 3, but good to be explicit)
+lto = "fat"
 codegen-units = 1
 panic = "abort"
+strip = true
 
 [profile.release-with-debug]
 inherits = "release"
