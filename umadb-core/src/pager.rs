@@ -4,6 +4,7 @@ use memmap2::{Mmap, MmapOptions};
 use fs2::FileExt as Fs2FileExt;
 use nix::fcntl;
 use rustc_hash::FxHashMap;
+use std::convert::TryInto;
 use std::fs::{File, OpenOptions};
 use std::io;
 use std::os::fd::{AsRawFd, RawFd};
@@ -330,7 +331,14 @@ impl Pager {
         // Ensure the underlying file is large enough to permit a full standard-length mapping.
         let required_len = map_offset + max_len;
         if file_len < required_len {
-            self.file.set_len(required_len)?;
+            // Let's not set file length here, it should already be pre-allocated correctly.
+            return Err(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                format!(
+                    "File too small for memory map: {} < {}",
+                    file_len, required_len
+                ),
+            ));
         }
 
         // Create the mmap and insert it, but guard with a double-check
@@ -390,6 +398,7 @@ impl Pager {
         if self.page_size as u64 * (page_id.0 + 1) > file_len
             && let Err(err) = preallocate(
                 &self.file,
+                file_len,
                 (self.mmap_pages_per_map * self.page_size) as u64,
             )
         {
@@ -467,20 +476,28 @@ impl MappedPage {
 /// - Other OS: falls back to `File::set_len()` (may be sparse)
 ///
 /// Returns an error if allocation failed.
-pub fn preallocate(file: &File, len: u64) -> io::Result<()> {
-    let current_len = file.metadata()?.len();
-
+pub fn preallocate(file: &File, current_len: u64, extra_len: u64) -> io::Result<()> {
     // --- LINUX ---------------------------------------------------------------
     #[cfg(target_os = "linux")]
     {
-        current_len
-            .checked_add(len)
-            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "size overflow"))?;
+        // 1. Ensure both fit into positive i64s
+        let current_len_i64: i64 = current_len.try_into().map_err(|_| {
+            io::Error::new(io::ErrorKind::InvalidInput, "current_len exceeds i64::MAX")
+        })?;
 
-        let offset = current_len as i64;
-        let length = len as i64;
+        let extra_len_i64: i64 = extra_len
+            .try_into()
+            .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "len exceeds i64::MAX"))?;
 
-        match fcntl::posix_fallocate(file, offset, length) {
+        // 2. Ensure their sum fits into a positive i64
+        current_len_i64.checked_add(extra_len_i64).ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "offset + length exceeds i64::MAX",
+            )
+        })?;
+
+        match fcntl::posix_fallocate(file, current_len_i64, extra_len_i64) {
             Ok(()) => return Ok(()),
             Err(e) => {
                 return Err(io::Error::from_raw_os_error(e as i32));
@@ -493,49 +510,64 @@ pub fn preallocate(file: &File, len: u64) -> io::Result<()> {
     {
         use nix::libc::{self, F_ALLOCATEALL, F_ALLOCATECONTIG, F_PEOFPOSMODE, fstore_t};
 
-        let new_len = current_len
-            .checked_add(len)
-            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "size overflow"))?;
+        // 1. Ensure both fit into positive i64s
+        let current_len_i64: i64 = current_len.try_into().map_err(|_| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "size overflow: current_len exceeds i64::MAX",
+            )
+        })?;
 
+        let extra_len_i64: i64 = extra_len.try_into().map_err(|_| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "size overflow: len exceeds i64::MAX",
+            )
+        })?;
+
+        // 2. Ensure their sum fits into a positive i64
+        let new_len_i64 = current_len_i64.checked_add(extra_len_i64).ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "size overflow: offset + length exceeds i64::MAX",
+            )
+        })?;
+
+        // Try contiguous allocation
         let mut store: fstore_t = fstore_t {
             fst_flags: F_ALLOCATECONTIG,
             fst_posmode: F_PEOFPOSMODE,
             fst_offset: 0,
-            fst_length: len as i64,
+            fst_length: extra_len_i64,
             fst_bytesalloc: 0,
         };
-
-        // Try contiguous allocation
         let r = fcntl::fcntl(
             file, // <-- MUST BE the File object, not `fd`
             fcntl::FcntlArg::F_PREALLOCATE(&mut store),
         );
         if r.is_err() {
-            println!("Trying non-contiguous file allocation");
             // Try non-contiguous allocation
             let mut store2: fstore_t = fstore_t {
                 fst_flags: F_ALLOCATEALL,
                 fst_posmode: F_PEOFPOSMODE,
                 fst_offset: 0,
-                fst_length: len as i64,
+                fst_length: extra_len_i64,
                 fst_bytesalloc: 0,
             };
-
             let r2 = fcntl::fcntl(file, fcntl::FcntlArg::F_PREALLOCATE(&mut store2));
 
-            if r2.is_err() {
-                // fallback
-                file.set_len(new_len)?;
-                return Ok(());
+            match r2 {
+                Ok(_) => {}
+                Err(e) => {
+                    return Err(io::Error::from_raw_os_error(e as i32));
+                }
             }
-            // } else {
-            //     println!("Success with contiguous file allocation");
         }
 
         // Now extend file size (macOS requirement)
         let fd = file.as_raw_fd();
         unsafe {
-            if libc::ftruncate(fd, new_len as i64) != 0 {
+            if libc::ftruncate(fd, new_len_i64) != 0 {
                 return Err(io::Error::last_os_error());
             }
         }
