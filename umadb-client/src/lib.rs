@@ -1000,12 +1000,19 @@ impl AsyncUmaDbClient {
         let max_attempts = 50usize;
         let mut attempts = 0usize;
         loop {
-            match Self::connect_with_tls_options(url.clone(), client_tls_options.clone(), batch_size, api_key.clone()).await {
+            match Self::connect_with_tls_options(
+                url.clone(),
+                client_tls_options.clone(),
+                batch_size,
+                api_key.clone(),
+            )
+            .await
+            {
                 Ok(client) => break Ok(client),
                 Err(err) => {
                     attempts += 1;
                     if attempts >= max_attempts {
-                        return Err(err)
+                        return Err(err);
                     }
                     sleep(TokioDuration::from_millis(100)).await;
                 }
