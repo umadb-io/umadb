@@ -785,14 +785,16 @@ impl Mvcc {
             batch_buf.resize(needed_bytes, 0);
 
             // Serialize all pages in this chunk into the buffer
-            let mut chunk_page_count = 0;
             for (idx, page) in contiguous_pages.iter().enumerate() {
                 let byte_start = idx * self.page_size;
                 let byte_end = byte_start + self.page_size;
 
                 page.serialize_into(&mut batch_buf[byte_start..byte_end], self.zero_fill_pages)?;
-                chunk_page_count += 1;
             }
+
+            // if chunk_len > 1 {
+            //     println!("Got {} pages in chunk", chunk_len);
+            // }
 
             // Write the entire batch in a single system call
             self.rw
@@ -1268,10 +1270,65 @@ impl Writer {
             }
         }
 
-        self.reusable_page_ids = reusable_page_ids;
-        if verbose {
-            println!("Found reusable page IDs: {:?}", self.reusable_page_ids);
+        // --- NEW EXTENT-BASED ALLOCATION LOGIC ---
+
+        // 1. Convert the collected pages to a Vec and sort them strictly by PageID
+        let mut pages_vec: Vec<(PageID, Tsn)> = reusable_page_ids.into();
+        pages_vec.sort_unstable_by_key(|(pid, _)| pid.0);
+
+        // 2. Group the sorted pages into contiguous extents
+        let mut extents: Vec<VecDeque<(PageID, Tsn)>> = Vec::new();
+        let mut current_extent: VecDeque<(PageID, Tsn)> = VecDeque::new();
+
+        for (pid, tsn) in pages_vec {
+            if let Some((last_pid, _)) = current_extent.back() {
+                if pid.0 == last_pid.0 + 1 {
+                    current_extent.push_back((pid, tsn));
+                } else {
+                    extents.push(current_extent);
+                    current_extent = VecDeque::new();
+                    current_extent.push_back((pid, tsn));
+                }
+            } else {
+                current_extent.push_back((pid, tsn));
+            }
         }
+        if !current_extent.is_empty() {
+            extents.push(current_extent);
+        }
+
+        // 3. Sort the extents deterministically
+        extents.sort_unstable_by(|a, b| {
+            // Primary sort: Largest extents first
+            b.len()
+                .cmp(&a.len())
+                // Secondary sort (Tie-breaker): Lowest starting PageID first
+                .then(a[0].0.cmp(&b[0].0))
+        });
+
+        let extents_count = extents.len();
+
+        // 4. Flatten back into the allocator queue
+        let mut optimized_reusable = VecDeque::new();
+        for mut extent in extents {
+            optimized_reusable.append(&mut extent);
+        }
+
+        self.reusable_page_ids = optimized_reusable;
+
+        if verbose {
+            println!(
+                "Found {} reusable pages, optimized into {} contiguous extents.",
+                self.reusable_page_ids.len(),
+                extents_count
+            );
+        }
+
+        // self.reusable_page_ids = reusable_page_ids;
+        // if verbose {
+        //     println!("Found reusable page IDs: {:?}", self.reusable_page_ids);
+        // }
+
         Ok(())
     }
 
@@ -1909,7 +1966,7 @@ impl Writer {
         let mut current_page_id = self.free_lists_tree_root_id;
 
         // Traverse the tree to find a leaf node
-        let mut stack: Vec<PageID> = Vec::new();
+        let mut stack: Vec<(PageID, usize)> = Vec::new();
         let mut removed_page_ids: Vec<PageID> = Vec::new();
 
         loop {
@@ -1921,8 +1978,12 @@ impl Writer {
                 if verbose {
                     println!("Page {:?} is internal node", current_page_ref.page_id);
                 }
-                stack.push(current_page_id);
-                current_page_id = *internal_node.child_ids.first().unwrap();
+                let mut child_idx = 0;
+                while child_idx < internal_node.keys.len() && tsn >= internal_node.keys[child_idx] {
+                    child_idx += 1;
+                }
+                stack.push((current_page_id, child_idx));
+                current_page_id = internal_node.child_ids[child_idx];
             } else {
                 return Err(DcbError::DatabaseCorrupted(
                     "Expected FreeListInternal node".to_string(),
@@ -1945,14 +2006,20 @@ impl Writer {
                 "Expected FreeListLeaf node".to_string(),
             ));
         };
-        if leaf_node_ro.keys.is_empty() || leaf_node_ro.keys[0] != tsn {
-            return Err(DcbError::DatabaseCorrupted(format!(
-                "Expected TSN {} not found: {:?}",
-                tsn.0, leaf_node_ro
-            )));
-        }
 
-        let leaf_value_root_id = leaf_node_ro.values[0].root_id;
+        // Find the index of the TSN in the leaf node
+        let leaf_idx = leaf_node_ro
+            .keys
+            .iter()
+            .position(|&k| k == tsn)
+            .ok_or_else(|| {
+                DcbError::DatabaseCorrupted(format!(
+                    "Expected TSN {} not found in leaf: {:?}",
+                    tsn.0, leaf_node_ro
+                ))
+            })?;
+        let leaf_value_root_id = leaf_node_ro.values[leaf_idx].root_id;
+
         // let mut leaf_inline_page_ids: Option<Vec<PageID>> = None;
         // if leaf_value_root_id == PageID(0) {
         //     leaf_inline_page_ids = Some(leaf_node_ro.values[0].page_ids.clone());
@@ -1966,7 +2033,7 @@ impl Writer {
             }
             let dirty_leaf_page = self.get_mut_dirty(dirty_page_id)?;
             if let Node::FreeListLeaf(dirty_leaf_node) = &mut dirty_leaf_page.node {
-                let leaf_value = &mut dirty_leaf_node.values[0];
+                let leaf_value = &mut dirty_leaf_node.values[leaf_idx];
                 if let Some(pos) = leaf_value
                     .page_ids
                     .iter()
@@ -1982,8 +2049,8 @@ impl Writer {
                     println!("Removed {used_page_id:?} from {tsn:?} in {dirty_page_id:?}");
                 }
                 if leaf_value.page_ids.is_empty() {
-                    dirty_leaf_node.keys.remove(0);
-                    dirty_leaf_node.values.remove(0);
+                    dirty_leaf_node.keys.remove(leaf_idx);
+                    dirty_leaf_node.values.remove(leaf_idx);
                     if verbose {
                         println!("Removed {tsn:?} from {dirty_page_id:?}");
                     }
@@ -2200,7 +2267,7 @@ impl Writer {
             let dirty_leaf_page = self.get_mut_dirty(dirty_page_id)?;
             if let Node::FreeListLeaf(dirty_leaf_node) = &mut dirty_leaf_page.node {
                 // Ensure expected TSN still at index 0
-                if dirty_leaf_node.keys.is_empty() || dirty_leaf_node.keys[0] != tsn {
+                if dirty_leaf_node.keys.is_empty() || dirty_leaf_node.keys[leaf_idx] != tsn {
                     return Err(DcbError::DatabaseCorrupted(format!(
                         "Expected TSN {} not found in dirty leaf: {:?}",
                         tsn.0, dirty_leaf_node
@@ -2208,8 +2275,8 @@ impl Writer {
                 }
                 if tsn_leaf_became_empty {
                     // Remove the TSN entry entirely
-                    dirty_leaf_node.keys.remove(0);
-                    dirty_leaf_node.values.remove(0);
+                    dirty_leaf_node.keys.remove(leaf_idx);
+                    dirty_leaf_node.values.remove(leaf_idx);
                     if verbose {
                         println!("Removed {tsn:?} from {dirty_page_id:?}");
                     }
@@ -2223,10 +2290,10 @@ impl Writer {
                     }
                 } else if let Some(new_root) = tsn_root_replaced {
                     // TSN-subtree root changed (internal collapsed to single child)
-                    dirty_leaf_node.values[0].root_id = new_root;
+                    dirty_leaf_node.values[leaf_idx].root_id = new_root;
                 } else if dirty_tsn_root_id != tsn_root_id {
                     // Update the pointer to the new dirty TSN leaf (COW of root leaf)
-                    dirty_leaf_node.values[0].root_id = dirty_tsn_root_id;
+                    dirty_leaf_node.values[leaf_idx].root_id = dirty_tsn_root_id;
                 }
             } else {
                 return Err(DcbError::DatabaseCorrupted(
@@ -2238,7 +2305,7 @@ impl Writer {
         // Propagate replacements and removals up the stack
         let mut current_replacement_info = replacement_info;
 
-        while let Some(parent_page_id) = stack.pop() {
+        while let Some((parent_page_id, child_idx)) = stack.pop() {
             // Make the internal page dirty
             let dirty_page_id = { self.get_dirty_page_id(parent_page_id)? };
             let parent_replacement_info: Option<(PageID, PageID)> = {
@@ -2254,8 +2321,8 @@ impl Writer {
             if let Some((old_id, new_id)) = current_replacement_info {
                 if let Node::FreeListInternal(dirty_internal_node) = &mut dirty_internal_page.node {
                     // Replace the child ID
-                    if dirty_internal_node.child_ids[0] == old_id {
-                        dirty_internal_node.child_ids[0] = new_id;
+                    if dirty_internal_node.child_ids[child_idx] == old_id {
+                        dirty_internal_node.child_ids[child_idx] = new_id;
                         if verbose {
                             println!(
                                 "Replaced {old_id:?} with {new_id:?} in {dirty_page_id:?}: {dirty_internal_page:?}"
@@ -2277,16 +2344,16 @@ impl Writer {
 
                 if let Node::FreeListInternal(dirty_internal_node) = &mut dirty_internal_page.node {
                     // Remove the child ID and key
-                    if dirty_internal_node.child_ids[0] != removed_page_id {
+                    if dirty_internal_node.child_ids[child_idx] != removed_page_id {
                         return Err(DcbError::DatabaseCorrupted("Child ID mismatch".to_string()));
                     }
-                    if dirty_internal_node.keys.is_empty() {
-                        return Err(DcbError::DatabaseCorrupted(
-                            "Empty internal node keys".to_string(),
-                        ));
+
+                    dirty_internal_node.child_ids.remove(child_idx);
+                    let key_remove_idx = if child_idx == 0 { 0 } else { child_idx - 1 };
+                    if key_remove_idx < dirty_internal_node.keys.len() {
+                        dirty_internal_node.keys.remove(key_remove_idx);
                     }
-                    dirty_internal_node.child_ids.remove(0);
-                    dirty_internal_node.keys.remove(0);
+
                     if verbose {
                         println!(
                             "Removed {removed_page_id:?} from {dirty_page_id:?}: {dirty_internal_node:?}"
@@ -2597,8 +2664,8 @@ mod tests {
 
             // Check there are two free pages
             assert_eq!(2, writer.reusable_page_ids.len());
-            assert_eq!((PageID(5), Tsn(1)), writer.reusable_page_ids[0]);
-            assert_eq!((PageID(2), Tsn(1)), writer.reusable_page_ids[1]);
+            assert_eq!((PageID(2), Tsn(1)), writer.reusable_page_ids[0]);
+            assert_eq!((PageID(5), Tsn(1)), writer.reusable_page_ids[1]);
 
             // Check the free list root is page 2
             assert_eq!(PageID(6), writer.free_lists_tree_root_id);
@@ -2608,7 +2675,7 @@ mod tests {
 
             // Allocate and insert free page ID.
             let free_page_id = writer.alloc_page_id();
-            assert_eq!(PageID(5), free_page_id);
+            assert_eq!(PageID(2), free_page_id);
             writer
                 .insert_freed_page_id(
                     &db,
@@ -2621,7 +2688,7 @@ mod tests {
 
             // Check the dirty page IDs
             assert_eq!(1, writer.dirty.len());
-            assert_eq!(PageID(2), *writer.dirty.keys().collect::<Vec<_>>()[0]);
+            assert_eq!(PageID(5), *writer.dirty.keys().collect::<Vec<_>>()[0]);
 
             // Check the freed page IDs
             assert_eq!(1, writer.freed_page_ids.len());
@@ -2636,18 +2703,18 @@ mod tests {
 
             // Check there are two free pages
             assert_eq!(2, writer.reusable_page_ids.len());
-            assert_eq!((PageID(5), Tsn(2)), writer.reusable_page_ids[0]);
+            assert_eq!((PageID(2), Tsn(2)), writer.reusable_page_ids[0]);
             assert_eq!((PageID(6), Tsn(2)), writer.reusable_page_ids[1]);
 
             // Check the free list root is page 2
-            assert_eq!(PageID(2), writer.free_lists_tree_root_id);
+            assert_eq!(PageID(5), writer.free_lists_tree_root_id);
 
             // Check the position root is page 3
             assert_eq!(PageID(3), writer.events_tree_root_id);
 
             // Allocate and insert free page ID.
             let free_page_id = writer.alloc_page_id();
-            assert_eq!(PageID(5), free_page_id);
+            assert_eq!(PageID(2), free_page_id);
             writer
                 .insert_freed_page_id(
                     &db,
@@ -2664,7 +2731,7 @@ mod tests {
 
             // Check the freed page IDs
             assert_eq!(1, writer.freed_page_ids.len());
-            assert!(writer.freed_page_ids.contains(&PageID(2)));
+            assert!(writer.freed_page_ids.contains(&PageID(5)));
 
             db.commit(&mut writer).unwrap();
         }
@@ -4603,9 +4670,9 @@ mod tests {
             writer.remove_free_page_id(&db, tsn1, pid1).unwrap();
             writer.find_reusable_page_ids(&db).unwrap();
             assert_eq!(3, writer.reusable_page_ids.len());
-            assert_eq!((pid2, tsn1), writer.reusable_page_ids[0]);
-            assert_eq!((pid3, tsn1), writer.reusable_page_ids[1]);
-            assert_eq!((pid4, tsn1), writer.reusable_page_ids[2]);
+            assert_eq!((pid3, tsn1), writer.reusable_page_ids[0]);
+            assert_eq!((pid4, tsn1), writer.reusable_page_ids[1]);
+            assert_eq!((pid2, tsn1), writer.reusable_page_ids[2]);
 
             assert_eq!(1, writer.freed_page_ids.len());
 
@@ -4643,13 +4710,13 @@ mod tests {
             writer.remove_free_page_id(&db, tsn, pid1).unwrap();
             writer.find_reusable_page_ids(&db).unwrap();
             assert_eq!(7, writer.reusable_page_ids.len());
-            assert_eq!((pid2, tsn), writer.reusable_page_ids[0]);
-            assert_eq!((pid3, tsn), writer.reusable_page_ids[1]);
-            assert_eq!((pid4, tsn), writer.reusable_page_ids[2]);
-            assert_eq!((pid5, tsn), writer.reusable_page_ids[3]);
-            assert_eq!((pid6, tsn), writer.reusable_page_ids[4]);
-            assert_eq!((pid7, tsn), writer.reusable_page_ids[5]);
-            assert_eq!((pid8, tsn), writer.reusable_page_ids[6]);
+            assert_eq!((pid3, tsn), writer.reusable_page_ids[0]);
+            assert_eq!((pid4, tsn), writer.reusable_page_ids[1]);
+            assert_eq!((pid5, tsn), writer.reusable_page_ids[2]);
+            assert_eq!((pid6, tsn), writer.reusable_page_ids[3]);
+            assert_eq!((pid7, tsn), writer.reusable_page_ids[4]);
+            assert_eq!((pid8, tsn), writer.reusable_page_ids[5]);
+            assert_eq!((pid2, tsn), writer.reusable_page_ids[6]);
 
             assert_eq!(1, writer.freed_page_ids.len());
         }
