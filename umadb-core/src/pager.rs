@@ -11,6 +11,7 @@ use std::os::fd::{AsRawFd, RawFd};
 use std::os::unix::fs::FileExt;
 use std::path::Path;
 use std::str::FromStr;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
 use umadb_dcb::{DcbError, DcbResult};
 
@@ -37,6 +38,7 @@ impl FromStr for ReadMethod {
 #[derive(Debug)]
 pub struct Pager {
     pub file: File,
+    file_len: AtomicU64,
     pub writer_raw_fd: RawFd,
     pub page_size: usize,
     pub is_file_new: bool,
@@ -119,8 +121,11 @@ impl Pager {
         };
         let mmap_pages_per_map = align_pages * usize::max(1, k);
 
+        let file_len = file.metadata()?.len();
+
         Ok(Self {
             file,
+            file_len: AtomicU64::new(file_len),
             writer_raw_fd,
             page_size,
             is_file_new,
@@ -394,15 +399,10 @@ impl Pager {
         }
 
         // Check the page doesn't overflow the file size.
-        let file_len = self.file.metadata()?.len();
-        if self.page_size as u64 * (page_id.0 + 1) > file_len
-            && let Err(err) = preallocate(
-                &self.file,
-                file_len,
-                (self.mmap_pages_per_map * self.page_size) as u64,
-            )
-        {
-            return Err(DcbError::Io(err));
+        let current_len = self.file_len.load(Ordering::Relaxed);
+        if self.page_size as u64 * (page_id.0 + 1) > current_len {
+            let extra_len = (self.mmap_pages_per_map * self.page_size) as u64;
+            self.preallocate(current_len, extra_len)?
         }
 
         // Write the page data
@@ -410,6 +410,135 @@ impl Pager {
             .write_at(page_data, page_id.0 * (self.page_size as u64))?;
 
         Ok(())
+    }
+
+    /// Preallocate `len` bytes *beyond the current file size*.
+    ///
+    /// - Linux: uses `posix_fallocate` (guaranteed allocation)
+    /// - macOS: uses `F_PREALLOCATE` (contiguous first, then non-contiguous)
+    /// - Other OS: falls back to `File::set_len()` (may be sparse)
+    ///
+    /// Returns an error if allocation failed.
+    pub fn preallocate(&self, current_len: u64, extra_len: u64) -> io::Result<()> {
+        let file = &self.file;
+
+        let new_len = current_len.checked_add(extra_len).ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "size overflow: offset + length exceeds i64::MAX",
+            )
+        })?;
+
+        // --- LINUX ---------------------------------------------------------------
+        #[cfg(target_os = "linux")]
+        {
+            // 1. Ensure both fit into positive i64s
+            let current_len_i64: i64 = current_len.try_into().map_err(|_| {
+                io::Error::new(io::ErrorKind::InvalidInput, "current_len exceeds i64::MAX")
+            })?;
+
+            let extra_len_i64: i64 = extra_len
+                .try_into()
+                .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "len exceeds i64::MAX"))?;
+
+            // 2. Ensure their sum fits into a positive i64
+            current_len_i64.checked_add(extra_len_i64).ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "offset + length exceeds i64::MAX",
+                )
+            })?;
+
+            match fcntl::posix_fallocate(file, current_len_i64, extra_len_i64) {
+                Ok(()) => {
+                    return {
+                        self.file_len = new_len;
+                        Ok(())
+                    };
+                }
+                Err(e) => {
+                    return Err(io::Error::from_raw_os_error(e as i32));
+                }
+            }
+        }
+
+        // --- macOS ---------------------------------------------------------------
+        #[cfg(target_os = "macos")]
+        {
+            use nix::libc::{self, F_ALLOCATEALL, F_ALLOCATECONTIG, F_PEOFPOSMODE, fstore_t};
+
+            // 1. Ensure both fit into positive i64s
+            let current_len_i64: i64 = current_len.try_into().map_err(|_| {
+                io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "size overflow: current_len exceeds i64::MAX",
+                )
+            })?;
+
+            let extra_len_i64: i64 = extra_len.try_into().map_err(|_| {
+                io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "size overflow: len exceeds i64::MAX",
+                )
+            })?;
+
+            // 2. Ensure their sum fits into a positive i64
+            let new_len_i64 = current_len_i64.checked_add(extra_len_i64).ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "size overflow: offset + length exceeds i64::MAX",
+                )
+            })?;
+
+            // Try contiguous allocation
+            let mut store: fstore_t = fstore_t {
+                fst_flags: F_ALLOCATECONTIG,
+                fst_posmode: F_PEOFPOSMODE,
+                fst_offset: 0,
+                fst_length: extra_len_i64,
+                fst_bytesalloc: 0,
+            };
+            let r = fcntl::fcntl(
+                file, // <-- MUST BE the File object, not `fd`
+                fcntl::FcntlArg::F_PREALLOCATE(&mut store),
+            );
+            if r.is_err() {
+                // Try non-contiguous allocation
+                let mut store2: fstore_t = fstore_t {
+                    fst_flags: F_ALLOCATEALL,
+                    fst_posmode: F_PEOFPOSMODE,
+                    fst_offset: 0,
+                    fst_length: extra_len_i64,
+                    fst_bytesalloc: 0,
+                };
+                let r2 = fcntl::fcntl(file, fcntl::FcntlArg::F_PREALLOCATE(&mut store2));
+
+                match r2 {
+                    Ok(_) => {}
+                    Err(e) => {
+                        return Err(io::Error::from_raw_os_error(e as i32));
+                    }
+                }
+            }
+
+            // Now extend file size (macOS requirement)
+            let fd = file.as_raw_fd();
+            unsafe {
+                if libc::ftruncate(fd, new_len_i64) != 0 {
+                    return Err(io::Error::last_os_error());
+                }
+            }
+            self.file_len.fetch_max(new_len, Ordering::SeqCst);
+
+            Ok(())
+        }
+
+        // --- OTHER OSes ----------------------------------------------------------
+        #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+        {
+            file.set_len(new_len)?;
+            Ok(())
+        }
     }
 
     pub fn fsync(&self) -> io::Result<()> {
@@ -466,120 +595,6 @@ pub struct MappedPage {
 impl MappedPage {
     pub fn as_slice(&self) -> &[u8] {
         &self.mmap[self.start..self.start + self.len]
-    }
-}
-
-/// Preallocate `len` bytes *beyond the current file size*.
-///
-/// - Linux: uses `posix_fallocate` (guaranteed allocation)
-/// - macOS: uses `F_PREALLOCATE` (contiguous first, then non-contiguous)
-/// - Other OS: falls back to `File::set_len()` (may be sparse)
-///
-/// Returns an error if allocation failed.
-pub fn preallocate(file: &File, current_len: u64, extra_len: u64) -> io::Result<()> {
-    // --- LINUX ---------------------------------------------------------------
-    #[cfg(target_os = "linux")]
-    {
-        // 1. Ensure both fit into positive i64s
-        let current_len_i64: i64 = current_len.try_into().map_err(|_| {
-            io::Error::new(io::ErrorKind::InvalidInput, "current_len exceeds i64::MAX")
-        })?;
-
-        let extra_len_i64: i64 = extra_len
-            .try_into()
-            .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "len exceeds i64::MAX"))?;
-
-        // 2. Ensure their sum fits into a positive i64
-        current_len_i64.checked_add(extra_len_i64).ok_or_else(|| {
-            io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "offset + length exceeds i64::MAX",
-            )
-        })?;
-
-        match fcntl::posix_fallocate(file, current_len_i64, extra_len_i64) {
-            Ok(()) => return Ok(()),
-            Err(e) => {
-                return Err(io::Error::from_raw_os_error(e as i32));
-            }
-        }
-    }
-
-    // --- macOS ---------------------------------------------------------------
-    #[cfg(target_os = "macos")]
-    {
-        use nix::libc::{self, F_ALLOCATEALL, F_ALLOCATECONTIG, F_PEOFPOSMODE, fstore_t};
-
-        // 1. Ensure both fit into positive i64s
-        let current_len_i64: i64 = current_len.try_into().map_err(|_| {
-            io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "size overflow: current_len exceeds i64::MAX",
-            )
-        })?;
-
-        let extra_len_i64: i64 = extra_len.try_into().map_err(|_| {
-            io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "size overflow: len exceeds i64::MAX",
-            )
-        })?;
-
-        // 2. Ensure their sum fits into a positive i64
-        let new_len_i64 = current_len_i64.checked_add(extra_len_i64).ok_or_else(|| {
-            io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "size overflow: offset + length exceeds i64::MAX",
-            )
-        })?;
-
-        // Try contiguous allocation
-        let mut store: fstore_t = fstore_t {
-            fst_flags: F_ALLOCATECONTIG,
-            fst_posmode: F_PEOFPOSMODE,
-            fst_offset: 0,
-            fst_length: extra_len_i64,
-            fst_bytesalloc: 0,
-        };
-        let r = fcntl::fcntl(
-            file, // <-- MUST BE the File object, not `fd`
-            fcntl::FcntlArg::F_PREALLOCATE(&mut store),
-        );
-        if r.is_err() {
-            // Try non-contiguous allocation
-            let mut store2: fstore_t = fstore_t {
-                fst_flags: F_ALLOCATEALL,
-                fst_posmode: F_PEOFPOSMODE,
-                fst_offset: 0,
-                fst_length: extra_len_i64,
-                fst_bytesalloc: 0,
-            };
-            let r2 = fcntl::fcntl(file, fcntl::FcntlArg::F_PREALLOCATE(&mut store2));
-
-            match r2 {
-                Ok(_) => {}
-                Err(e) => {
-                    return Err(io::Error::from_raw_os_error(e as i32));
-                }
-            }
-        }
-
-        // Now extend file size (macOS requirement)
-        let fd = file.as_raw_fd();
-        unsafe {
-            if libc::ftruncate(fd, new_len_i64) != 0 {
-                return Err(io::Error::last_os_error());
-            }
-        }
-
-        Ok(())
-    }
-
-    // --- OTHER OSes ----------------------------------------------------------
-    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
-    {
-        file.set_len(new_len)?;
-        Ok(())
     }
 }
 
