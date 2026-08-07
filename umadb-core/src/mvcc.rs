@@ -754,22 +754,54 @@ impl Mvcc {
         Ok(writer)
     }
 
-    /// Write one or more pages to disk using the shared preallocated page buffer.
+    /// Extracts contiguous runs of pages and writes them to disk in batches.
     /// Returns the number of pages written.
     pub fn write_pages<'a, I>(&self, pages: I) -> DcbResult<usize>
     where
         I: IntoIterator<Item = &'a Page>,
     {
-        let mut buf = self.page_buf.lock();
-        let mut count = 0usize;
-        for page in pages {
-            self.rw
-                .write_page(page.page_id, &page, &mut buf, self.zero_fill_pages)?;
-            if self.verbose {
-                println!("Wrote {:?} to file", page.page_id);
-            }
-            count += 1;
+        // 1. Collect and Sort
+        let mut pages_vec: Vec<&'a Page> = pages.into_iter().collect();
+        if pages_vec.is_empty() {
+            return Ok(0);
         }
+
+        pages_vec.sort_unstable_by_key(|p| p.page_id.0);
+
+        let mut count = 0usize;
+        let mut batch_buf = Vec::new(); // Reused across all chunks to prevent allocations
+
+        // 2. Group into contiguous chunks
+        let chunked_pages = pages_vec.chunk_by(|a, b| a.page_id.0 + 1 == b.page_id.0);
+
+        // 3. Process and write each chunk
+        for contiguous_pages in chunked_pages {
+            let start_page_id = contiguous_pages[0].page_id;
+            let chunk_len = contiguous_pages.len();
+
+            // Prepare the batch buffer
+            let needed_bytes = chunk_len * self.page_size;
+            batch_buf.clear();
+            batch_buf.resize(needed_bytes, 0);
+
+            // Serialize all pages in this chunk into the buffer
+            let mut chunk_page_count = 0;
+            for (idx, page) in contiguous_pages.iter().enumerate() {
+                let byte_start = idx * self.page_size;
+                let byte_end = byte_start + self.page_size;
+
+                page.serialize_into(&mut batch_buf[byte_start..byte_end], self.zero_fill_pages)?;
+                chunk_page_count += 1;
+            }
+
+            // Write the entire batch in a single system call
+            self.rw
+                .pager
+                .write_contiguous_pages(start_page_id, &batch_buf)?;
+
+            count += chunk_len;
+        }
+
         Ok(count)
     }
 
@@ -1105,14 +1137,14 @@ impl Writer {
     pub fn find_reusable_page_ids(&mut self, mvcc: &Mvcc) -> DcbResult<()> {
         // Find the smallest live reader TSN (O(log n): the leftmost key of the multiset)
         let smallest_reader_tsn = mvcc.reader_tsns.min();
-        self.find_reusable_page_ids_snap(mvcc, smallest_reader_tsn)
+        self.find_reusable_page_ids_with_snapshot(mvcc, smallest_reader_tsn)
     }
 
     /// Snapshot-aware variant used by the pipelined writer thread. It reads free-list
     /// pages through an `MvccSnapshot` so it can see the previous in-flight batch's
     /// not-yet-durable `wet_pages`, and takes the smallest live reader TSN explicitly
     /// (the caller reads it from the base `Mvcc`).
-    pub fn find_reusable_page_ids_snap<T: MvccSnapshot>(
+    pub fn find_reusable_page_ids_with_snapshot<T: MvccSnapshot>(
         &mut self,
         mvcc: &T,
         smallest_reader_tsn: Option<Tsn>,

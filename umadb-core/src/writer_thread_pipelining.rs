@@ -142,8 +142,8 @@ pub fn writer_thread_pipelining(
                     // free-list through the snapshot so it sees the previous batch's
                     // not-yet-durable pages, and gating on the smallest live reader
                     // TSN so we never reuse a page a live reader can still see.
-                    if let Err(e) =
-                        active_writer.find_reusable_page_ids_snap(&snapshot, mvcc.reader_tsns.min())
+                    if let Err(e) = active_writer
+                        .find_reusable_page_ids_with_snapshot(&snapshot, mvcc.reader_tsns.min())
                     {
                         let _ = response_tx.send(Err(clone_dcb_error(&e)));
                         continue;

@@ -407,7 +407,24 @@ impl Pager {
 
         // Write the page data
         self.file
-            .write_at(page_data, page_id.0 * (self.page_size as u64))?;
+            .write_all_at(page_data, page_id.0 * (self.page_size as u64))?;
+
+        Ok(())
+    }
+
+    pub fn write_contiguous_pages(&self, start_page_id: PageID, data: &[u8]) -> DcbResult<()> {
+        let page_count = (data.len() / self.page_size) as u64;
+
+        // Check the page doesn't overflow the file size.
+        let current_len = self.file_len.load(Ordering::Relaxed);
+        if self.page_size as u64 * (start_page_id.0 + page_count) > current_len {
+            let extra_len = (self.mmap_pages_per_map * self.page_size) as u64;
+            self.preallocate(current_len, extra_len)?
+        }
+
+        // Now issue disk write without holding the file_len lock
+        let start_byte_offset = start_page_id.0 * (self.page_size as u64);
+        self.file.write_all_at(data, start_byte_offset)?;
 
         Ok(())
     }
