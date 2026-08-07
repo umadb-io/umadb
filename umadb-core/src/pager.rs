@@ -449,17 +449,9 @@ impl Pager {
                 )
             })?;
 
-            match fcntl::posix_fallocate(file, current_len_i64, extra_len_i64) {
-                Ok(()) => {
-                    return {
-                        self.file_len = new_len;
-                        Ok(())
-                    };
-                }
-                Err(e) => {
-                    return Err(io::Error::from_raw_os_error(e as i32));
-                }
-            }
+            if let Err(e) = fcntl::posix_fallocate(file, current_len_i64, extra_len_i64) {
+                return Err(io::Error::from_raw_os_error(e as i32));
+            };
         }
 
         // --- macOS ---------------------------------------------------------------
@@ -498,10 +490,7 @@ impl Pager {
                 fst_length: extra_len_i64,
                 fst_bytesalloc: 0,
             };
-            let r = fcntl::fcntl(
-                file, // <-- MUST BE the File object, not `fd`
-                fcntl::FcntlArg::F_PREALLOCATE(&mut store),
-            );
+            let r = fcntl::fcntl(file, fcntl::FcntlArg::F_PREALLOCATE(&mut store));
             if r.is_err() {
                 // Try non-contiguous allocation
                 let mut store2: fstore_t = fstore_t {
@@ -511,14 +500,9 @@ impl Pager {
                     fst_length: extra_len_i64,
                     fst_bytesalloc: 0,
                 };
-                let r2 = fcntl::fcntl(file, fcntl::FcntlArg::F_PREALLOCATE(&mut store2));
-
-                match r2 {
-                    Ok(_) => {}
-                    Err(e) => {
-                        return Err(io::Error::from_raw_os_error(e as i32));
-                    }
-                }
+                if let Err(e) = fcntl::fcntl(file, fcntl::FcntlArg::F_PREALLOCATE(&mut store2)) {
+                    return Err(io::Error::from_raw_os_error(e as i32));
+                };
             }
 
             // Now extend file size (macOS requirement)
@@ -528,17 +512,16 @@ impl Pager {
                     return Err(io::Error::last_os_error());
                 }
             }
-            self.file_len.fetch_max(new_len, Ordering::SeqCst);
-
-            Ok(())
         }
 
         // --- OTHER OSes ----------------------------------------------------------
         #[cfg(not(any(target_os = "linux", target_os = "macos")))]
         {
             file.set_len(new_len)?;
-            Ok(())
         }
+
+        self.file_len.fetch_max(new_len, Ordering::SeqCst);
+        Ok(())
     }
 
     pub fn fsync(&self) -> io::Result<()> {
