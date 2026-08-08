@@ -383,8 +383,10 @@ impl Mvcc {
             };
             let tags_page = Page::new(initial_tags_tree_root_id, Node::TagsLeaf(tags_leaf));
 
-            // Write all three initial root pages using the shared write_pages helper
-            let _ = mvcc.write_pages([&free_list_page, &position_page, &tags_page].into_iter())?;
+            // Write all new root pages.
+            let new_root_pages = [&free_list_page, &position_page, &tags_page];
+            let mut buffer: Vec<u8> = Vec::with_capacity(new_root_pages.len());
+            let _ = mvcc.write_pages(new_root_pages.into_iter(), &mut buffer)?;
 
             // Sync the file to disk.
             mvcc.fsync()?;
@@ -756,7 +758,7 @@ impl Mvcc {
 
     /// Extracts contiguous runs of pages and writes them to disk in batches.
     /// Returns the number of pages written.
-    pub fn write_pages<'a, I>(&self, pages: I) -> DcbResult<usize>
+    pub fn write_pages<'a, I>(&self, pages: I, writer_buffer: &mut Vec<u8>) -> DcbResult<usize>
     where
         I: IntoIterator<Item = &'a Page>,
     {
@@ -769,7 +771,6 @@ impl Mvcc {
         pages_vec.sort_unstable_by_key(|p| p.page_id.0);
 
         let mut count = 0usize;
-        let mut batch_buf = Vec::new(); // Reused across all chunks to prevent allocations
 
         // 2. Group into contiguous chunks
         let chunked_pages = pages_vec.chunk_by(|a, b| a.page_id.0 + 1 == b.page_id.0);
@@ -781,19 +782,19 @@ impl Mvcc {
 
             // Prepare the batch buffer
             let needed_bytes = chunk_len * self.page_size;
-            if batch_buf.len() < needed_bytes {
-                batch_buf.resize(needed_bytes, 0);
+            if writer_buffer.len() < needed_bytes {
+                writer_buffer.resize(needed_bytes, 0);
             }
 
             // Borrow a slice of the exact size needed
-            let current_buf = &mut batch_buf[..needed_bytes];
+            let needed_buf = &mut writer_buffer[..needed_bytes];
 
             // Serialize all pages in this chunk into the buffer
             for (idx, page) in contiguous_pages.iter().enumerate() {
                 let byte_start = idx * self.page_size;
                 let byte_end = byte_start + self.page_size;
 
-                page.serialize_into(&mut current_buf[byte_start..byte_end], self.zero_fill_pages)?;
+                page.serialize_into(&mut needed_buf[byte_start..byte_end], self.zero_fill_pages)?;
             }
 
             // if chunk_len > 1 {
@@ -803,7 +804,7 @@ impl Mvcc {
             // Write the entire batch in a single system call
             self.rw
                 .pager
-                .write_contiguous_pages(start_page_id, current_buf)?;
+                .write_contiguous_pages(start_page_id, needed_buf)?;
 
             count += chunk_len;
         }
@@ -822,7 +823,7 @@ impl Mvcc {
 
         // Write all dirty pages (except for the header page) to the file
         if !writer.dirty.is_empty() {
-            let count = { self.write_pages(writer.dirty.values())? };
+            let count = { self.write_pages(writer.dirty.values(), &mut writer.writer_buffer)? };
             if self.verbose {
                 println!("Wrote {} dirty page(s) to file", count);
             }
@@ -984,6 +985,7 @@ pub struct Writer {
     pub verbose: bool,
     pub page_size: usize,
     pub max_node_size: usize,
+    pub writer_buffer: Vec<u8>,
 }
 
 impl Writer {
@@ -1017,7 +1019,39 @@ impl Writer {
             verbose,
             page_size,
             max_node_size,
+            writer_buffer: Vec::with_capacity(page_size * 20),
         }
+    }
+
+    pub fn reset(&mut self, mvcc: &Mvcc) -> DcbResult<()> {
+        // Get the latest header
+        let header_page = mvcc.get_latest_header_page()?;
+        let header_node = header_page.as_header_node()?;
+
+        // Set values from the header: TSN, root page IDs, next page Id, next sequence position.
+        self.header_page = header_page.clone();
+        self.tsn = Tsn(header_node.tsn.0 + 1);
+        self.next_page_id = header_node.next_page_id;
+        self.free_lists_tree_root_id = header_node.free_lists_tree_root_id;
+        self.events_tree_root_id = header_node.events_tree_root_id;
+        self.tags_tree_root_id = header_node.tags_tree_root_id;
+        self.tracking_tree_root_id = header_node.tracking_tree_root_id;
+        self.next_position = header_node.next_position;
+
+        if self.verbose {
+            println!("Reset writer with {:?}", self.tsn);
+        }
+
+        // Find the reusable page IDs.
+        self.find_reusable_page_ids(mvcc)?;
+
+        // Also clear everything else.
+        self.freed_page_ids.clear();
+        self.deserialized.clear();
+        self.dirty.clear();
+        self.reused_page_ids.clear();
+
+        Ok(())
     }
 
     /// Returns the current issue position and increments the next position.
@@ -1312,13 +1346,11 @@ impl Writer {
 
         let extents_count = extents.len();
 
-        // 4. Flatten back into the allocator queue
-        let mut optimized_reusable = VecDeque::new();
+        // 4. Flatten back into the queue of reusable page IDs
+        self.reusable_page_ids.clear();
         for mut extent in extents {
-            optimized_reusable.append(&mut extent);
+            self.reusable_page_ids.append(&mut extent);
         }
-
-        self.reusable_page_ids = optimized_reusable;
 
         if verbose {
             println!(
@@ -1327,11 +1359,6 @@ impl Writer {
                 extents_count
             );
         }
-
-        // self.reusable_page_ids = reusable_page_ids;
-        // if verbose {
-        //     println!("Found reusable page IDs: {:?}", self.reusable_page_ids);
-        // }
 
         Ok(())
     }

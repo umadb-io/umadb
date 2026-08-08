@@ -23,6 +23,9 @@ struct InflightCommit {
     wet_pages_to_cache: FxHashMap<PageID, Arc<Page>>,
 }
 
+// TODO: Update this to prepare to write contiguous pages.
+// TODO: Update this use writer.reset().
+
 pub fn writer_thread_pipelining(
     io_tx: mpsc::UnboundedSender<IoJob>,
     mvcc_arc: Arc<Mvcc>,
@@ -92,10 +95,11 @@ pub fn writer_thread_pipelining(
     // the in-flight batch (and the not-yet-durable batch we built on top of it).
     let rollback = |active_writer: &mut Writer, wet_pages: &mut FxHashMap<PageID, Arc<Page>>| {
         wet_pages.clear();
-        match mvcc.writer() {
-            Ok(w) => *active_writer = w,
+        match active_writer.reset(mvcc) {
+            Ok(_) => {}
             Err(e) => {
                 // The durable state itself is unreadable; nothing safe to do but stop.
+                // TODO: How do we "stop"? ("nothing safe to do but stop")
                 eprintln!("Fatal error rolling back writer after I/O failure: {e:?}");
             }
         }

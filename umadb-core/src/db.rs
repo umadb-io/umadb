@@ -897,7 +897,8 @@ pub fn process_append_request<T: MvccSnapshot>(
             .push(validate_event_record_for_append(writer.page_size, record)?);
     }
 
-    // If tracking is provided for this item, enforce monotonicity and update tracking leaf under same writer
+    // If tracking info has been given, enforce monotonicity of the
+    // upstream position and update tracking leaf under same writer
     if let Some(tracking_info) = tracking_info {
         tracking_upsert(
             mvcc,

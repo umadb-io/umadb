@@ -1,5 +1,5 @@
 use crate::db::{
-    UmaDb, clone_dcb_error, is_integrity_error, is_invalid_argument_error, process_append_request,
+    clone_dcb_error, is_integrity_error, is_invalid_argument_error, process_append_request,
     shadow_for_batch_abort,
 };
 use crate::mvcc::Mvcc;
@@ -14,7 +14,17 @@ pub fn writer_thread_blocking(
     head_watch_tx: watch::Sender<Option<u64>>,
     append_batch_max_events: usize,
 ) {
-    let db = UmaDb::from_arc(mvcc);
+    // let db = UmaDb::from_arc(mvcc);
+
+    let mut writer = match mvcc.writer() {
+        Ok(w) => w,
+        Err(e) => {
+            eprintln!("Fatal error initializing writer thread: {e:?}");
+            return;
+        }
+    };
+
+    // let mvcc = &db.mvcc;
 
     // Process writer requests.
     while let Some(request) = request_rx.blocking_recv() {
@@ -27,15 +37,10 @@ pub fn writer_thread_blocking(
                 cancel,
             } => {
                 // Batch processing: drain any immediately available requests
-                // let mut items: Vec<(Vec<DCBEvent>, Option<DCBAppendCondition>)> =
-                //     Vec::new();
-
                 let mut total_events = 0;
                 total_events += events.len();
-                // items.push((events, condition));
 
-                let mvcc = &db.mvcc;
-                let mut writer = match mvcc.writer() {
+                match writer.reset(&mvcc) {
                     Ok(writer) => writer,
                     Err(err) => {
                         let _ = response_tx.send(Err(err));
