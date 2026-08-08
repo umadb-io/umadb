@@ -781,15 +781,19 @@ impl Mvcc {
 
             // Prepare the batch buffer
             let needed_bytes = chunk_len * self.page_size;
-            batch_buf.clear();
-            batch_buf.resize(needed_bytes, 0);
+            if batch_buf.len() < needed_bytes {
+                batch_buf.resize(needed_bytes, 0);
+            }
+
+            // Borrow a slice of the exact size needed
+            let current_buf = &mut batch_buf[..needed_bytes];
 
             // Serialize all pages in this chunk into the buffer
             for (idx, page) in contiguous_pages.iter().enumerate() {
                 let byte_start = idx * self.page_size;
                 let byte_end = byte_start + self.page_size;
 
-                page.serialize_into(&mut batch_buf[byte_start..byte_end], self.zero_fill_pages)?;
+                page.serialize_into(&mut current_buf[byte_start..byte_end], self.zero_fill_pages)?;
             }
 
             // if chunk_len > 1 {
@@ -799,7 +803,7 @@ impl Mvcc {
             // Write the entire batch in a single system call
             self.rw
                 .pager
-                .write_contiguous_pages(start_page_id, &batch_buf)?;
+                .write_contiguous_pages(start_page_id, current_buf)?;
 
             count += chunk_len;
         }
