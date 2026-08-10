@@ -1154,7 +1154,7 @@ impl Writer {
         let mut new_page =
             Arc::unwrap_or_clone(self.deserialized.remove(&page_id).ok_or_else(|| {
                 DcbError::DatabaseCorrupted(format!(
-                    "Deserialized page {page_id:?} not found while marking dirty"
+                    "Deserialized page {page_id:?} not found to make dirty"
                 ))
             })?);
 
@@ -2108,7 +2108,10 @@ impl Writer {
         } else {
             // TSN-subtree case: mutate the TSN leaf first
             let tsn_root_id = leaf_value_root_id;
-            let dirty_tsn_root_id = { self.get_dirty_page_id(tsn_root_id)? };
+            // Ensure we have a deserialized page to make dirty.
+            // - unusually here we first make pages dirty and then change them
+            let _ = self.get_page_ref(mvcc, tsn_root_id);
+            let dirty_tsn_root_id = self.get_dirty_page_id(tsn_root_id)?;
             let mut tsn_root_replaced: Option<PageID> = None;
             let dirty_tsn_root_page = self.get_mut_dirty(dirty_tsn_root_id)?;
             let mut tsn_leaf_became_empty = false;
@@ -2301,7 +2304,7 @@ impl Writer {
             }
             let dirty_leaf_page = self.get_mut_dirty(dirty_page_id)?;
             if let Node::FreeListLeaf(dirty_leaf_node) = &mut dirty_leaf_page.node {
-                // Ensure expected TSN still at index 0
+                // Ensure expected TSN still at index 'leaf_idx'
                 if dirty_leaf_node.keys.is_empty() || dirty_leaf_node.keys[leaf_idx] != tsn {
                     return Err(DcbError::DatabaseCorrupted(format!(
                         "Expected TSN {} not found in dirty leaf: {:?}",
@@ -3094,13 +3097,15 @@ mod tests {
         fn build_free_list_tree_leaf_tsn_subtree_leaf(
             writer: &mut Writer,
         ) -> (PageID, PageID, Tsn) {
-            // Create a TSN-subtree leaf and make a leaf value point to it
+            // Create a TSN-subtree leaf node that has two PageIDs.
+            // - this will be the root of the subtree.
             let tsn_sub_leaf_id = writer.alloc_page_id();
             let pid1 = writer.alloc_page_id();
             let pid2 = writer.alloc_page_id();
             let tsn_sub_leaf = crate::free_lists_tree_nodes::FreeListTsnLeafNode {
                 page_ids: vec![pid1, pid2],
             };
+            // Insert it as a "dirty" page.
             writer
                 .insert_dirty(Page::new(
                     tsn_sub_leaf_id,
@@ -3108,7 +3113,9 @@ mod tests {
                 ))
                 .unwrap();
 
-            let tsn = Tsn(33);
+            // Create a TSN tree leaf node that points to the subtree node.
+            // - this will be the new root of the TSN tree.
+            let tsn = Tsn(33); // the TSN the subtree has PageIDs from
             let leaf = FreeListLeafNode {
                 keys: vec![tsn],
                 values: vec![FreeListLeafValue {
@@ -3116,12 +3123,19 @@ mod tests {
                     root_id: tsn_sub_leaf_id,
                 }],
             };
+
+            // Insert it as a "dirty" page.
             let root_id = writer.alloc_page_id();
             writer
                 .insert_dirty(Page::new(root_id, Node::FreeListLeaf(leaf)))
                 .unwrap();
+
+            // Set the old TSN root page ID free.
             writer.append_freed_page_id(writer.free_lists_tree_root_id);
+            // Replace the new TSN root page ID in the writer.
             writer.free_lists_tree_root_id = root_id;
+
+            // Return the two PageIDs (in the subtree) and their TSN
             (pid1, pid2, tsn)
         }
 
@@ -4679,7 +4693,7 @@ mod tests {
 
         #[test]
         #[serial]
-        fn test_remove_freed_page_id_from_tsn_subtree_leaf_all() {
+        fn test_remove_freed_page_id_from_tsn_subtree_leaf_all_with_dirty_pages() {
             let (_temp_dir, db) = construct_mvcc(128);
             let mut writer = db.writer().unwrap();
 
@@ -4691,6 +4705,46 @@ mod tests {
             assert_eq!(0, writer.reusable_page_ids.len());
 
             assert_eq!(2, writer.freed_page_ids.len());
+        }
+
+        #[test]
+        #[serial]
+        fn test_remove_freed_page_id_from_tsn_subtree_leaf_all_after_commit() {
+            // In this test we are trying to arrange the writer to remove a
+            // PageID for a TSN that has a subtree, without dirty pages, so
+            // that it must deserialize the TSN subtree root page.
+            let (_temp_dir, db) = construct_mvcc(128);
+            let mut writer = db.writer().unwrap();
+
+            // Bigger TSN than the value used in build_free_list_tree_leaf_tsn_subtree_leaf.
+            writer.tsn = Tsn(40);
+
+            // This inserts two dirty pages and changes the `orig_free_lists_tree_root_id`.
+            let (pid1, pid2, tsn1) = build_free_list_tree_leaf_tsn_subtree_leaf(&mut writer);
+
+            // Just commit the dirty pages, and then .
+            writer.freed_page_ids.clear();
+            db.commit(&mut writer).unwrap();
+
+            // Reset the writer, which should find the two PageIDs are reusable.
+            writer.reset(&db).unwrap();
+
+            assert_eq!(2, writer.reusable_page_ids.len());
+            assert_eq!((pid1, tsn1), writer.reusable_page_ids[0]);
+            assert_eq!((pid2, tsn1), writer.reusable_page_ids[1]);
+            assert_eq!(0, writer.freed_page_ids.len());
+
+            // Now remove the PageIDs (and therefore the TSN) from the TSN subtree.
+            // - two pages were CoW-ed.
+            writer.remove_free_page_id(&db, tsn1, pid1).unwrap();
+            assert_eq!(2, writer.freed_page_ids.len());
+            // - the TSN subtree root page was removed, TSN root page dirty and updated.
+            writer.remove_free_page_id(&db, tsn1, pid2).unwrap();
+            assert_eq!(3, writer.freed_page_ids.len());
+
+            // Find reusable PageIDs - should be none.
+            writer.find_reusable_page_ids(&db).unwrap();
+            assert_eq!(0, writer.reusable_page_ids.len());
         }
 
         #[test]
