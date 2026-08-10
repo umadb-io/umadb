@@ -1,8 +1,8 @@
 use crate::common::PageID;
-use memmap2::{Mmap, MmapOptions};
-// use memmap2::{Advice, MmapOptions};
 use fs2::FileExt as Fs2FileExt;
+use memmap2::{Mmap, MmapOptions};
 use nix::fcntl;
+use parking_lot::Mutex;
 use rustc_hash::FxHashMap;
 use std::convert::TryInto;
 use std::fs::{File, OpenOptions};
@@ -11,7 +11,6 @@ use std::os::fd::{AsRawFd, RawFd};
 use std::os::unix::fs::FileExt;
 use std::path::Path;
 use std::str::FromStr;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
 use umadb_dcb::{DcbError, DcbResult};
 
@@ -38,7 +37,7 @@ impl FromStr for ReadMethod {
 #[derive(Debug)]
 pub struct Pager {
     pub file: File,
-    file_len: AtomicU64,
+    file_len: Mutex<u64>,
     pub writer_raw_fd: RawFd,
     pub page_size: usize,
     pub is_file_new: bool,
@@ -125,7 +124,7 @@ impl Pager {
 
         Ok(Self {
             file,
-            file_len: AtomicU64::new(file_len),
+            file_len: Mutex::new(file_len),
             writer_raw_fd,
             page_size,
             is_file_new,
@@ -158,6 +157,36 @@ impl Pager {
         }
     }
 
+    /// Verifies that the physical file length safely supports the logical database size
+    /// and the required mmap chunk boundaries (as should have been pre-allocated).
+    pub fn verify_file_size(&self, next_page_id: PageID) -> DcbResult<()> {
+        let physical_len = *self.file_len.lock();
+        let logical_len = next_page_id.0 * (self.page_size as u64);
+
+        // 1. Data Integrity Check: Ensure no data pages were truncated.
+        if physical_len < logical_len {
+            return Err(DcbError::DatabaseCorrupted(format!(
+                "Database file is truncated. Header expects a minimum of {} bytes (page {}), \
+                but the physical file is only {} bytes.",
+                logical_len, next_page_id.0, physical_len
+            )));
+        }
+
+        // 2. Alignment Integrity Check: Ensure mmap window boundaries are satisfied.
+        let chunk_size = (self.mmap_pages_per_map * self.page_size) as u64;
+        let expected_aligned_len = logical_len.div_ceil(chunk_size) * chunk_size;
+
+        if physical_len < expected_aligned_len {
+            return Err(DcbError::DatabaseCorrupted(format!(
+                "Database file has lost its preallocated alignment (possibly due to a file copy stripping trailing zeros). \
+                Expected chunk-aligned size of at least {} bytes, but physical file is {} bytes.",
+                expected_aligned_len, physical_len
+            )));
+        }
+
+        Ok(())
+    }
+
     pub fn read_page_from_file(&self, page_id: PageID) -> io::Result<Vec<u8>> {
         let offset = page_id.0 * (self.page_size as u64);
         let mut page = vec![0u8; self.page_size];
@@ -170,104 +199,6 @@ impl Pager {
         }
         Ok(page)
     }
-
-    // pub fn read_page_mmap(&self, page_id: PageID) -> io::Result<Vec<u8>> {
-    //     // Precompute addressing values
-    //     let page_size_u64 = self.page_size as u64;
-    //     let offset = page_id.0 * page_size_u64;
-    //     let pages_per_map = self.mmap_pages_per_map as u64;
-    //     let map_id = page_id.0 / pages_per_map;
-    //     let map_offset = map_id * pages_per_map * page_size_u64;
-    //     let within = (offset - map_offset) as usize;
-    //
-    //     // Fast path: if mapping exists, do not obtain file lock; take Arc clone and release map lock
-    //     if let Some(mmap_arc) = {
-    //         let maps = self.mmaps.lock().unwrap();
-    //         maps.get(&map_id).cloned()
-    //     } {
-    //         let start = within;
-    //         let stop = start + self.page_size;
-    //         if stop > mmap_arc.len() {
-    //             return Err(io::Error::new(
-    //                 io::ErrorKind::UnexpectedEof,
-    //                 format!("Page {page_id:?} not found"),
-    //             ));
-    //         }
-    //         return Ok(mmap_arc[start..stop].to_vec());
-    //     }
-    //
-    //     // Slow path: need to create the mapping with double-checked locking
-    //     let file = self.reader.lock().unwrap();
-    //     let file_len = file.metadata()?.len();
-    //
-    //     // Re-check if mapping appeared while we acquired the file lock
-    //     if let Some(mmap_arc) = {
-    //         let maps = self.mmaps.lock().unwrap();
-    //         maps.get(&map_id).cloned()
-    //     } {
-    //         let start = within;
-    //         let stop = start + self.page_size;
-    //         if stop > mmap_arc.len() {
-    //             return Err(io::Error::new(
-    //                 io::ErrorKind::UnexpectedEof,
-    //                 format!("Page {page_id:?} not found"),
-    //             ));
-    //         }
-    //         return Ok(mmap_arc[start..stop].to_vec());
-    //     }
-    //
-    //     // Calculate standard mapping window length (does not depend on current file length)
-    //     let max_len = pages_per_map * page_size_u64;
-    //
-    //     // Before mapping, ensure the requested page is within the current file length.
-    //     let page_end = offset + page_size_u64;
-    //     if page_end > file_len {
-    //         return Err(io::Error::new(
-    //             io::ErrorKind::UnexpectedEof,
-    //             format!("Page {page_id:?} not found"),
-    //         ));
-    //     }
-    //
-    //     // Ensure the underlying file is large enough to permit a full standard-length mapping.
-    //     let required_len = map_offset + max_len;
-    //     if file_len < required_len {
-    //         file.set_len(required_len)?;
-    //     }
-    //
-    //     // Create the mmap and insert it, but guard with a double-check
-    //     let mmap_new = unsafe {
-    //         MmapOptions::new()
-    //             .offset(map_offset)
-    //             .len(max_len as usize)
-    //             .map(&*file)?
-    //     };
-    //     let mmap_arc = {
-    //         let mut maps = self.mmaps.lock().unwrap();
-    //         // Another thread could have inserted meanwhile
-    //         if let Some(existing) = maps.get(&map_id) {
-    //             existing.clone()
-    //         } else {
-    //             let arc = Arc::new(mmap_new);
-    //             maps.insert(map_id, arc.clone());
-    //             // println!(
-    //             //     "Created new mmap: map_id={} offset={} len={}",
-    //             //     map_id, map_offset, max_len
-    //             // );
-    //             arc
-    //         }
-    //     };
-    //
-    //     // Now copy the requested page
-    //     let start = within;
-    //     let stop = start + self.page_size;
-    //     if stop > mmap_arc.len() {
-    //         return Err(io::Error::new(
-    //             io::ErrorKind::UnexpectedEof,
-    //             format!("Page {page_id:?} not found"),
-    //         ));
-    //     }
-    //     Ok(mmap_arc[start..stop].to_vec())
-    // }
 
     pub fn read_page_mmap_slice(&self, page_id: PageID) -> io::Result<MappedPage> {
         // Precompute addressing values
@@ -299,7 +230,7 @@ impl Pager {
         }
 
         // Slow path: need to create the mapping with double-checked locking
-        let file_len = self.file.metadata()?.len();
+        let file_len = *self.file_len.lock();
 
         // Re-check if mapping appeared while we acquired the file lock
         if let Some(mmap_arc) = {
@@ -398,12 +329,9 @@ impl Pager {
             )));
         }
 
-        // Check the page doesn't overflow the file size.
-        let current_len = self.file_len.load(Ordering::Relaxed);
-        if self.page_size as u64 * (page_id.0 + 1) > current_len {
-            let extra_len = (self.mmap_pages_per_map * self.page_size) as u64;
-            self.preallocate(current_len, extra_len)?
-        }
+        // Check the page data doesn't overflow the file size.
+        let required_len = self.page_size as u64 * (page_id.0 + 1);
+        self.ensure_required_len(required_len)?;
 
         // Write the page data
         self.file
@@ -413,14 +341,21 @@ impl Pager {
     }
 
     pub fn write_contiguous_pages(&self, start_page_id: PageID, data: &[u8]) -> DcbResult<()> {
+        // Prevent partial page writes
+        if data.len() % self.page_size != 0 {
+            return Err(DcbError::InternalError(format!(
+                "Data length ({}) is not a multiple of page size ({})",
+                data.len(),
+                self.page_size
+            )));
+        }
+
         let page_count = (data.len() / self.page_size) as u64;
 
-        // Check the page doesn't overflow the file size.
-        let current_len = self.file_len.load(Ordering::Relaxed);
-        if self.page_size as u64 * (start_page_id.0 + page_count) > current_len {
-            let extra_len = (self.mmap_pages_per_map * self.page_size) as u64;
-            self.preallocate(current_len, extra_len)?
-        }
+        // Check the page data doesn't overflow the file size.
+        let required_len = self.page_size as u64 * (start_page_id.0 + page_count);
+
+        self.ensure_required_len(required_len)?;
 
         // Now issue disk write without holding the file_len lock
         let start_byte_offset = start_page_id.0 * (self.page_size as u64);
@@ -436,15 +371,43 @@ impl Pager {
     /// - Other OS: falls back to `File::set_len()` (may be sparse)
     ///
     /// Returns an error if allocation failed.
-    pub fn preallocate(&self, current_len: u64, extra_len: u64) -> io::Result<()> {
-        let file = &self.file;
+    pub fn ensure_required_len(&self, required_len: u64) -> DcbResult<()> {
+        let mut current_len_guard = self.file_len.lock();
 
-        let new_len = current_len.checked_add(extra_len).ok_or_else(|| {
-            io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "size overflow: offset + length exceeds i64::MAX",
-            )
-        })?;
+        if required_len > *current_len_guard {
+            let chunk_size = (self.mmap_pages_per_map * self.page_size) as u64;
+
+            // Ensure we grow by AT LEAST required_len, rounded up to the next chunk
+            let extra_needed = required_len - *current_len_guard;
+            let chunks_needed = extra_needed.div_ceil(chunk_size);
+            let extra_len = chunks_needed * chunk_size;
+
+            if let Err(e) = self.preallocate(*current_len_guard, extra_len) {
+                // ROLLBACK: Truncate back to original size to prevent unaligned
+                // file lengths from persisting across restarts.
+                if let Err(rollback_err) = self.file.set_len(*current_len_guard) {
+                    // DOUBLE FAULT: Do NOT resync to metadata().len().
+                    // If we do, we break chunk alignment for future retries.
+                    // Leave *current_len_guard as is, so a retry can attempt to fix the alignment.
+                    return Err(DcbError::InternalError(format!(
+                        "Preallocation failed ({}). Rollback also failed ({}). \
+            File may be in an unaligned state.",
+                        e, rollback_err
+                    )));
+                }
+                return Err(DcbError::InternalError(format!(
+                    "Failed to preallocate file: {}",
+                    e
+                )));
+            }
+
+            *current_len_guard += extra_len;
+        }
+        Ok(())
+    }
+
+    fn preallocate(&self, current_len: u64, extra_len: u64) -> io::Result<()> {
+        let file = &self.file;
 
         // --- LINUX ---------------------------------------------------------------
         #[cfg(target_os = "linux")]
@@ -534,10 +497,15 @@ impl Pager {
         // --- OTHER OSes ----------------------------------------------------------
         #[cfg(not(any(target_os = "linux", target_os = "macos")))]
         {
+            let new_len = current_len.checked_add(extra_len).ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "size overflow: offset + length exceeds u64::MAX",
+                )
+            })?;
             file.set_len(new_len)?;
         }
 
-        self.file_len.fetch_max(new_len, Ordering::SeqCst);
         Ok(())
     }
 

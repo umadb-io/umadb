@@ -455,6 +455,10 @@ impl Mvcc {
             // Set tag key width based on latest header.
             if let Ok(header_page) = mvcc.get_latest_header_page() {
                 let header_node = header_page.as_header_node()?;
+
+                // Check the database file length.
+                mvcc.rw.pager.verify_file_size(header_node.next_page_id)?;
+
                 // Don't proceed if this software is too old.
                 if header_node.schema_version > DB_SCHEMA_VERSION {
                     let schema_version = header_node.schema_version;
