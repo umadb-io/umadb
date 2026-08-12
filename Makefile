@@ -12,8 +12,6 @@ UVX ?= uvx@$(UV_VERSION)
 .PHONY: build-workspace-exclude-python
 .PHONY: test
 .PHONY: test-workspace-exclude-python
-.PHONY: test-umadb-python-unittests
-.PHONY: test-umadb-python-examples-basic-usage
 .PHONY: bench-append bench-append-sustained bench-append-1 bench-append-10 bench-append-100 bench-append-1000 bench-append-all
 .PHONY: bench-append-cond bench-append-cond-1 bench-append-cond-10 bench-append-cond-100 bench-append-cond-all
 .PHONY: bench-append-with-readers
@@ -48,6 +46,9 @@ UVX ?= uvx@$(UV_VERSION)
 .PHONY: install-python-tools
 .PHONY: upgrade-python-tools
 .PHONY: build-umadb-python
+.PHONY: test-umadb-python
+.PHONY: test-umadb-python-unittests
+.PHONY: test-umadb-python-examples-basic-usage
 .PHONY: python-stubs
 .PHONY: maturin-python-develop
 .PHONY: maturin-python-build
@@ -70,8 +71,7 @@ build-umadb-bin-release:
 
 test:
 	$(MAKE) test-workspace-exclude-python
-	$(MAKE) test-umadb-python-unittests
-	$(MAKE) test-umadb-python-examples-basic-usage
+	$(MAKE) test-umadb-python
 
 test-compare-actual-vs-approx-memory-per-page:
 	cargo test -p umadb-benches compare_actual_vs_approx_memory_per_page_type -- --nocapture
@@ -473,6 +473,10 @@ maturin-python-build:
 
 maturin-python-build-release:
 	PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1 $(UV) run maturin build --release -m umadb-python/Cargo.toml
+
+test-umadb-python:
+	$(MAKE) test-umadb-python-unittests
+	$(MAKE) test-umadb-python-examples-basic-usage
 
 test-umadb-python-examples-basic-usage:
 	$(MAKE) self-signed-cert
