@@ -1,5 +1,6 @@
 use prost::Message;
 use prost::bytes::Bytes;
+use std::error::Error;
 use tonic::{Code, Status};
 use umadb_dcb::{
     DcbAppendCondition, DcbError, DcbEvent, DcbQuery, DcbQueryItem, DcbResult, DcbSequencedEvent,
@@ -216,6 +217,35 @@ pub fn dcb_error_from_status(status: Status) -> DcbError {
         Code::FailedPrecondition => DcbError::IntegrityError(status.message().to_string()),
         Code::DataLoss => DcbError::Corruption(status.message().to_string()),
         Code::Internal => DcbError::InternalError(status.message().to_string()),
+        Code::Unavailable => DcbError::TransportError(format!("gRPC error: {}", status)),
+        Code::Unknown => {
+            if let Some(mut current_err) = status.source() {
+                // Check the top-level error and walk down the chain
+                loop {
+                    // 1. Check if it's a raw std::io::Error (just in case it's NOT wrapped)
+                    if let Some(io_err) = current_err.downcast_ref::<std::io::Error>() {
+                        if io_err.kind() == std::io::ErrorKind::BrokenPipe {
+                            return DcbError::TransportError(format!("Stream closed: {}", status));
+                        }
+                    }
+
+                    // 2. The pragmatic check: catch wrapped errors (hyper/h2) by their Debug output
+                    let debug_str = format!("{:?}", current_err).to_lowercase();
+                    if debug_str.contains("broken pipe") {
+                        return DcbError::TransportError(format!("Stream closed: {}", status));
+                    }
+
+                    // Move to the next error in the chain
+                    if let Some(source) = current_err.source() {
+                        current_err = source;
+                    } else {
+                        break;
+                    }
+                }
+            }
+            // Fallback if we walked the whole chain and didn't find what we were looking for.
+            DcbError::Unknown(format!("{}", status))
+        }
         _ => DcbError::Io(std::io::Error::other(format!("gRPC error: {}", status))),
     }
 }

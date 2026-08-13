@@ -16,6 +16,7 @@ umadb-proto = { path = "../umadb-proto", version = "0.7.5" }
 uuid = { workspace = true }
 tokio = { workspace = true }
 tonic = { workspace = true }
+tonic-health = { workspace = true }
 async-trait = { workspace = true }
 futures = { workspace = true }
 rustc-hash = { workspace = true }

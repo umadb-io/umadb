@@ -334,7 +334,7 @@ pub async fn start_server_with_options(
     health_reporter
         .set_service_status("umadb.v1.DCB", ServingStatus::Serving)
         .await;
-    let health_reporter_for_shutdown = health_reporter.clone();
+    let mut health_reporter_for_shutdown = health_reporter.clone();
 
     // Apply PathRewriterLayer at the server level to intercept all requests before routing
     let mut builder = build_server_builder_with_options(options.tls)
@@ -352,12 +352,18 @@ pub async fn start_server_with_options(
         .serve_with_incoming_shutdown(incoming, async move {
             // Wait for an external shutdown trigger
             let _ = shutdown_rx.await;
-            // Mark health as NOT_SERVING before shutdown
-            let _ = health_reporter_for_shutdown
+            // Mark health as NOT_SERVING, then clear the service statuses.
+            // Clearing drops the watch channel senders, which ends any active
+            // health watch streams so the server can exit promptly.
+            health_reporter_for_shutdown
                 .set_service_status("", ServingStatus::NotServing)
                 .await;
-            let _ = health_reporter_for_shutdown
+            health_reporter_for_shutdown
                 .set_service_status("umadb.v1.DCB", ServingStatus::NotServing)
+                .await;
+            health_reporter_for_shutdown.clear_service_status("").await;
+            health_reporter_for_shutdown
+                .clear_service_status("umadb.v1.DCB")
                 .await;
             // Broadcast shutdown to all subscription tasks
             let _ = srv_shutdown_tx.send(true);

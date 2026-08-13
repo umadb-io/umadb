@@ -462,6 +462,80 @@ impl Subscription {
     }
 }
 
+/// Health check serving status.
+#[gen_stub_pyclass_enum] // <- Add this for pyo3-stub-gen
+#[pyclass(eq, eq_int, from_py_object, rename_all = "SCREAMING_SNAKE_CASE")]
+#[derive(Clone, PartialEq)]
+pub enum ServingStatus {
+    /// The serving status is unknown.
+    Unknown,
+    /// The server is ready to handle requests.
+    Serving,
+    /// The server is not ready to handle requests.
+    NotServing,
+    /// The requested service is not known to the server (used only by the watch_health method).
+    ServiceUnknown,
+}
+
+fn to_serving_status(status: umadb_client::ServingStatus) -> ServingStatus {
+    match status {
+        umadb_client::ServingStatus::Unknown => ServingStatus::Unknown,
+        umadb_client::ServingStatus::Serving => ServingStatus::Serving,
+        umadb_client::ServingStatus::NotServing => ServingStatus::NotServing,
+        umadb_client::ServingStatus::ServiceUnknown => ServingStatus::ServiceUnknown,
+    }
+}
+
+/// Python iterator over health watch status updates
+#[gen_stub_pyclass]
+#[pyclass]
+pub struct HealthWatch {
+    inner: Arc<Mutex<umadb_client::SyncHealthWatch>>,
+}
+
+#[gen_stub_pymethods()]
+#[pymethods]
+impl HealthWatch {
+    fn __iter__(slf: PyRef<Self>) -> PyRef<Self> {
+        slf
+    }
+
+    /// Returns the next health status, or raises StopIteration when the stream ends.
+    fn __next__(slf: PyRefMut<Self>, py: Python<'_>) -> Option<PyResult<ServingStatus>> {
+        let inner = slf.inner.clone();
+        drop(slf);
+
+        loop {
+            let result = py.detach({
+                let inner = inner.clone();
+                move || inner.lock().next_timeout(Duration::from_millis(100))
+            });
+
+            // Check Python signals.
+            if let Err(e) = py.check_signals() {
+                return Some(Err(e));
+            }
+
+            match result {
+                Ok(Some(status)) => return Some(Ok(to_serving_status(status))),
+                Ok(None) => return None,
+                Err(DcbError::Timeout()) => continue,
+                Err(err) => return Some(Err(dcb_error_to_py_err(err))),
+            }
+        }
+    }
+
+    /// Ends this individual health watch stream.
+    ///
+    /// After calling `cancel()`, iterating over this health watch will raise
+    /// a CancelledByUserError.
+    fn cancel(slf: PyRefMut<Self>, py: Python<'_>) {
+        let inner = slf.inner.clone();
+        drop(slf);
+        py.detach(move || inner.lock().cancel());
+    }
+}
+
 /// Python wrapper for the synchronous UmaDB client
 #[gen_stub_pyclass]
 #[pyclass]
@@ -625,6 +699,46 @@ impl Client {
             .map_err(dcb_error_to_py_err)
     }
 
+    /// Perform a unary health check for the given service name.
+    ///
+    /// Args:
+    ///     service: The service name to check (empty string for overall health)
+    ///
+    /// Returns:
+    ///     The serving status as a ServingStatus enum value
+    #[pyo3(signature = (service=""))]
+    fn check_health(&self, py: Python<'_>, service: &str) -> PyResult<ServingStatus> {
+        let inner = self.inner.clone();
+        let service = service.to_string();
+        let status = py
+            .detach(move || inner.check_health(&service))
+            .map_err(dcb_error_to_py_err)?;
+        Ok(to_serving_status(status))
+    }
+
+    /// Open a server-streaming health watch for the given service name.
+    ///
+    /// The server immediately sends the current serving status and then pushes
+    /// updates whenever the status changes. Returns a `HealthWatch` iterator
+    /// that yields `ServingStatus` values.
+    ///
+    /// Args:
+    ///     service: The service name to watch (empty string for overall health)
+    ///
+    /// Returns:
+    ///     A HealthWatch iterator over ServingStatus values
+    #[pyo3(signature = (service=""))]
+    fn watch_health(&self, py: Python<'_>, service: &str) -> PyResult<HealthWatch> {
+        let inner = self.inner.clone();
+        let service = service.to_string();
+        let watch = py
+            .detach(move || inner.watch_health(&service))
+            .map_err(dcb_error_to_py_err)?;
+        Ok(HealthWatch {
+            inner: Arc::new(Mutex::new(watch)),
+        })
+    }
+
     fn __repr__(&self) -> String {
         "Client(connected)".to_string()
     }
@@ -727,6 +841,8 @@ fn umadb(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<QueryItem>()?;
     m.add_class::<AppendCondition>()?;
     m.add_class::<TrackingInfo>()?;
+    m.add_class::<HealthWatch>()?;
+    m.add_class::<ServingStatus>()?;
     m.add_function(wrap_pyfunction!(run_server_from_args, m)?)?;
     m.add_function(wrap_pyfunction!(cancel_all_stream_responses, m)?)?;
     m.add("IntegrityError", py.get_type::<IntegrityError>())?;

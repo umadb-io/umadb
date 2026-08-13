@@ -3,10 +3,14 @@ import os
 import signal
 import threading
 import unittest
+from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
 import time
+import socket
+import subprocess
+import tempfile
 from umadb import (
     AppendCondition,
     Client,
@@ -16,8 +20,10 @@ from umadb import (
     QueryItem,
     SequencedEvent,
     TrackingInfo,
+    TransportError,
     cancel_all_stream_responses,
     CancelledByUserError,
+    ServingStatus,
 )
 
 
@@ -608,6 +614,20 @@ class TestBasicUsage(unittest.TestCase):
         self.assertTrue(sequenced_events[0].tracking_info)
 
 
+    def test_check_health_overall(self) -> None:
+        status = self.client.check_health()
+        self.assertEqual(status, ServingStatus.SERVING)
+
+    def test_check_health_named_service(self) -> None:
+        status = self.client.check_health("umadb.v1.DCB")
+        self.assertEqual(status, ServingStatus.SERVING)
+
+    def test_watch_health_overall(self) -> None:
+        watch = self.client.watch_health()
+        status = next(watch)
+        self.assertEqual(status, ServingStatus.SERVING)
+        watch.cancel()
+
     def test_tracking_info_duplicate_position_fails(self) -> None:
         tracking_source = "example-source:" + str(uuid4())
         tracking_info = TrackingInfo(tracking_source, 1)
@@ -623,4 +643,172 @@ class TestBasicUsage(unittest.TestCase):
 
         with self.assertRaises(IntegrityError):
             self.client.append(events, tracking_info=tracking_info)
+
+
+def _get_free_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind(("127.0.0.1", 0))
+        return int(s.getsockname()[1])
+
+
+def _start_server(port: int, db_path: str) -> subprocess.Popen[bytes]:
+    """Start a UmaDB server as a subprocess and wait until it is ready."""
+    repo_root = Path(__file__).resolve().parents[2]
+    umadb_bin = repo_root / "target" / "debug" / "umadb"
+
+    proc = subprocess.Popen(
+        [umadb_bin, "--db-path", db_path,
+         "--listen", f"127.0.0.1:{port}"],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    # Wait for the server to accept connections.
+    for _ in range(80):  # up to ~4s
+        try:
+            with socket.create_connection(("127.0.0.1", port), timeout=0.5):
+                return proc
+        except OSError:
+            time.sleep(0.05)
+    proc.kill()
+    stdout, stderr = proc.communicate()
+
+
+    raise RuntimeError(f"server did not start in time: {stdout.decode()} {stderr.decode()}")
+
+
+class TestHealthCheckServerShutdown(unittest.TestCase):
+    """Tests that verify health-check behaviour after the server is shut down."""
+
+    def test_check_health_after_server_shutdown(self) -> None:
+        port = _get_free_port()
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = os.path.join(tmp, "test.db")
+            proc = _start_server(port, db_path)
+            try:
+                client = Client(f"http://127.0.0.1:{port}")
+                status = client.check_health()
+                self.assertEqual(status, ServingStatus.SERVING)
+
+                # Shut down the server gracefully.
+                proc.send_signal(signal.SIGINT)
+                proc.wait(timeout=10)
+
+                # After shutdown, check_health should raise TransportError.
+                with self.assertRaises(TransportError):
+                    client.check_health()
+            finally:
+                if proc.poll() is None:
+                    proc.kill()
+                    proc.wait()
+
+    def test_watch_health_next_after_server_sigint(self) -> None:
+        port = _get_free_port()
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = os.path.join(tmp, "test.db")
+            proc = _start_server(port, db_path)
+            try:
+                client = Client(f"http://127.0.0.1:{port}")
+                watch = client.watch_health()
+
+                # Wait for the server to be running.
+                self.assertEqual(next(watch), ServingStatus.SERVING)
+
+                # Interrupt the server.
+                proc.send_signal(signal.SIGINT)
+
+                # After interrupt, the watch stream should immediately yield
+                # a "not serving" status and then end (StopIteration).
+                self.assertEqual(next(watch), ServingStatus.NOT_SERVING)
+                with self.assertRaises(StopIteration):
+                    next(watch)
+
+                # Now wait for the server to shutdown.
+                proc.wait(timeout=3)
+
+            finally:
+                if proc.poll() is None:
+                    proc.kill()
+                    proc.wait()
+
+    def test_watch_health_next_after_server_process_ended(self) -> None:
+        port = _get_free_port()
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = os.path.join(tmp, "test.db")
+            proc = _start_server(port, db_path)
+            try:
+                client = Client(f"http://127.0.0.1:{port}")
+                watch = client.watch_health()
+
+                self.assertEqual(next(watch), ServingStatus.SERVING)
+
+                # Interrupt the server.
+                proc.send_signal(signal.SIGINT)
+
+                # Now wait for the server to shutdown.
+                proc.wait(timeout=3)
+
+                # After shutdown, the watch stream should yield
+                # a "not serving" and then end (StopIteration).
+                self.assertEqual(next(watch), ServingStatus.NOT_SERVING)
+                with self.assertRaises(StopIteration):
+                    next(watch)
+
+            finally:
+                if proc.poll() is None:
+                    proc.kill()
+                    proc.wait()
+
+    def test_watch_health_next_after_server_process_killed(self) -> None:
+        port = _get_free_port()
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = os.path.join(tmp, "test.db")
+            proc = _start_server(port, db_path)
+            try:
+                client = Client(f"http://127.0.0.1:{port}")
+                watch = client.watch_health()
+
+                self.assertEqual(next(watch), ServingStatus.SERVING)
+
+                # Kill the server.
+                proc.kill()
+
+                # Now wait for the server to shutdown.
+                proc.wait(timeout=3)
+
+                # After a hard kill the connection is severed abruptly,
+                # so the watch stream should raise TransportError.
+                with self.assertRaises(TransportError):
+                    next(watch)
+
+            finally:
+                if proc.poll() is None:
+                    proc.kill()
+                    proc.wait()
+
+    def test_watch_health_cancel(self) -> None:
+        port = _get_free_port()
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = os.path.join(tmp, "test.db")
+            proc = _start_server(port, db_path)
+            try:
+                client = Client(f"http://127.0.0.1:{port}")
+                watch = client.watch_health()
+
+                self.assertEqual(next(watch), ServingStatus.SERVING)
+
+                watch.cancel()
+                with self.assertRaises(CancelledByUserError):
+                    next(watch)
+
+                # Interrupt the server.
+                proc.send_signal(signal.SIGINT)
+
+                # Now wait for the server to shutdown.
+                proc.wait(timeout=3)
+
+
+            finally:
+                if proc.poll() is None:
+                    proc.kill()
+                    proc.wait()
 

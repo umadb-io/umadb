@@ -3,6 +3,7 @@ import uuid as _uuid
 # ruff: noqa: E501, F401, F403, F405
 
 import builtins
+import enum
 import typing
 __all__ = [
     "AppendCondition",
@@ -11,12 +12,14 @@ __all__ = [
     "Client",
     "CorruptionError",
     "Event",
+    "HealthWatch",
     "IntegrityError",
     "Query",
     "QueryItem",
     "ReadResponse",
     "SequencedEvent",
     "ServerStartError",
+    "ServingStatus",
     "Subscription",
     "TrackingInfo",
     "TransportError",
@@ -114,6 +117,30 @@ class Client:
         Returns:
             Optional position last recorded for this source (None if not set)
         """
+    def check_health(self, service: builtins.str = '') -> ServingStatus:
+        r"""
+        Perform a unary health check for the given service name.
+        
+        Args:
+            service: The service name to check (empty string for overall health)
+        
+        Returns:
+            The serving status as a ServingStatus enum value
+        """
+    def watch_health(self, service: builtins.str = '') -> HealthWatch:
+        r"""
+        Open a server-streaming health watch for the given service name.
+        
+        The server immediately sends the current serving status and then pushes
+        updates whenever the status changes. Returns a `HealthWatch` iterator
+        that yields `ServingStatus` values.
+        
+        Args:
+            service: The service name to watch (empty string for overall health)
+        
+        Returns:
+            A HealthWatch iterator over ServingStatus values
+        """
     def __repr__(self) -> builtins.str: ...
     def __enter__(self) -> typing.Any:
         r"""
@@ -148,6 +175,24 @@ class Event:
     def metadata(self) -> builtins.dict[builtins.str, builtins.str]: ...
     def __new__(cls, event_type: builtins.str, data: typing.Sequence[builtins.int], tags: typing.Optional[typing.Sequence[builtins.str]] = None, uuid: typing.Optional[_uuid.UUID] = None, metadata: typing.Optional[typing.Mapping[builtins.str, builtins.str]] = None) -> Event: ...
     def __repr__(self) -> builtins.str: ...
+
+@typing.final
+class HealthWatch:
+    r"""
+    Python iterator over health watch status updates
+    """
+    def __iter__(self) -> HealthWatch: ...
+    def __next__(self) -> typing.Optional[ServingStatus]:
+        r"""
+        Returns the next health status, or raises StopIteration when the stream ends.
+        """
+    def cancel(self) -> None:
+        r"""
+        Ends this individual health watch stream.
+        
+        After calling `cancel()`, iterating over this health watch will raise
+        a CancelledByUserError.
+        """
 
 class IntegrityError(builtins.ValueError):
     ...
@@ -246,6 +291,28 @@ class TrackingInfo:
 
 class TransportError(builtins.RuntimeError):
     ...
+
+@typing.final
+class ServingStatus(enum.Enum):
+    r"""
+    Health check serving status.
+    """
+    UNKNOWN = ...
+    r"""
+    The serving status is unknown.
+    """
+    SERVING = ...
+    r"""
+    The server is ready to handle requests.
+    """
+    NOT_SERVING = ...
+    r"""
+    The server is not ready to handle requests.
+    """
+    SERVICE_UNKNOWN = ...
+    r"""
+    The requested service is not known to the server (used only by the watch_health method).
+    """
 
 def cancel_all_stream_responses() -> None:
     r"""

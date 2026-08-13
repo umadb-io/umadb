@@ -526,6 +526,8 @@ pub enum DcbError {
     CancelledByUser(),
     #[error("timeout")]
     Timeout(),
+    #[error("{0}")]
+    Unknown(String),
 
     // Authentication error
     #[error("authentication error: {0}")]

@@ -12,6 +12,10 @@ use tonic::Request;
 use tonic::metadata::MetadataValue;
 use tonic::transport::{Certificate, Channel, ClientTlsConfig, Endpoint};
 
+use tonic_health::pb::HealthCheckRequest;
+pub use tonic_health::pb::health_check_response::ServingStatus;
+use tonic_health::pb::health_client::HealthClient;
+
 use tokio::runtime::{Handle, Runtime};
 use umadb_dcb::{
     DcbAppendCondition, DcbError, DcbEvent, DcbEventStoreAsync, DcbEventStoreSync, DcbQuery,
@@ -913,6 +917,197 @@ impl DcbSubscriptionAsync for RegisteredSubscription {
     }
 }
 
+/// Async health watch stream with cancel support.
+///
+/// Wraps a `tonic::Streaming<HealthCheckResponse>` and integrates with the
+/// global and per-stream cancel channels so that the stream is automatically
+/// cancelled when the client is closed/dropped or when the user explicitly
+/// cancels it.
+pub struct AsyncHealthWatch {
+    stream: tonic::Streaming<tonic_health::pb::HealthCheckResponse>,
+    ended: bool,
+    cancel: watch::Receiver<()>,
+    local_cancel_tx: Arc<watch::Sender<()>>,
+    local_cancel: watch::Receiver<()>,
+    _guard: Option<StreamGuard>,
+}
+
+impl AsyncHealthWatch {
+    pub fn new(stream: tonic::Streaming<tonic_health::pb::HealthCheckResponse>) -> Self {
+        let (local_cancel_tx, local_cancel) = watch::channel(());
+        let local_cancel_tx = Arc::new(local_cancel_tx);
+        Self {
+            stream,
+            ended: false,
+            cancel: cancel_receiver(),
+            local_cancel_tx,
+            local_cancel,
+            _guard: None,
+        }
+    }
+
+    fn set_guard(&mut self, guard: StreamGuard) {
+        self._guard = Some(guard);
+    }
+
+    /// Returns the next health status, blocking until one arrives or the
+    /// stream ends / is cancelled.
+    pub async fn next(&mut self) -> DcbResult<Option<ServingStatus>> {
+        if self.ended {
+            return Ok(None);
+        }
+        tokio::select! {
+            biased;
+            _ = self.cancel.changed() => {
+                self.ended = true;
+                Err(DcbError::CancelledByUser())
+            }
+            _ = self.local_cancel.changed() => {
+                self.ended = true;
+                Err(DcbError::CancelledByUser())
+            }
+            msg = self.stream.message() => {
+                match msg {
+                    Ok(Some(resp)) => {
+                        Ok(Some(ServingStatus::try_from(resp.status).unwrap_or(ServingStatus::Unknown)))
+                    }
+                    Ok(None) => {
+                        self.ended = true;
+                        Ok(None)
+                    }
+                    Err(status) => Err(umadb_proto::dcb_error_from_status(status)),
+                }
+            }
+        }
+    }
+
+    /// Returns the next health status with a timeout.
+    pub async fn next_timeout(&mut self, timeout: Duration) -> DcbResult<Option<ServingStatus>> {
+        if self.ended {
+            return Ok(None);
+        }
+        tokio::select! {
+            biased;
+            _ = self.cancel.changed() => {
+                self.ended = true;
+                Err(DcbError::CancelledByUser())
+            }
+            _ = self.local_cancel.changed() => {
+                self.ended = true;
+                Err(DcbError::CancelledByUser())
+            }
+            _ = tokio::time::sleep(timeout) => {
+                Err(DcbError::Timeout())
+            }
+            msg = self.stream.message() => {
+                match msg {
+                    Ok(Some(resp)) => {
+                        Ok(Some(ServingStatus::try_from(resp.status).unwrap_or(ServingStatus::Unknown)))
+                    }
+                    Ok(None) => {
+                        self.ended = true;
+                        Ok(None)
+                    }
+                    Err(status) => Err(umadb_proto::dcb_error_from_status(status)),
+                }
+            }
+        }
+    }
+
+    pub fn cancel(&mut self) {
+        let _ = self.local_cancel_tx.send(());
+    }
+
+    pub fn cancel_handle(&self) -> Option<StreamCancelHandle> {
+        let tx = self.local_cancel_tx.clone();
+        Some(StreamCancelHandle::new(move || {
+            let _ = tx.send(());
+        }))
+    }
+
+    pub fn check_shutdown_status(&self) -> ShutdownStatus {
+        if self.cancel.has_changed().unwrap_or(false)
+            || self.local_cancel.has_changed().unwrap_or(false)
+        {
+            return ShutdownStatus::CancelledByUser;
+        }
+        if self.ended {
+            return ShutdownStatus::StoppedGracefully;
+        }
+        ShutdownStatus::NotStopped
+    }
+}
+
+/// Synchronous health watch stream.
+///
+/// Wraps an [`AsyncHealthWatch`] and blocks on a tokio [`Handle`] to provide
+/// a synchronous iterator-like API.
+pub struct SyncHealthWatch {
+    rt: Handle,
+    async_watch: AsyncHealthWatch,
+    finished: bool,
+}
+
+impl SyncHealthWatch {
+    pub fn new(rt: Handle, async_watch: AsyncHealthWatch) -> Self {
+        Self {
+            rt,
+            async_watch,
+            finished: false,
+        }
+    }
+
+    /// Returns the next health status, blocking until one arrives.
+    pub fn next(&mut self) -> DcbResult<Option<ServingStatus>> {
+        if self.finished {
+            return Ok(None);
+        }
+        match self.async_watch.check_shutdown_status() {
+            ShutdownStatus::CancelledByUser => {
+                self.finished = true;
+                return Err(DcbError::CancelledByUser());
+            }
+            ShutdownStatus::StoppedGracefully => {
+                self.finished = true;
+                return Ok(None);
+            }
+            ShutdownStatus::NotStopped => {}
+        }
+        let result = self.rt.block_on(self.async_watch.next());
+        if matches!(result, Ok(None)) {
+            self.finished = true;
+        }
+        result
+    }
+
+    /// Returns the next health status with a timeout.
+    pub fn next_timeout(&mut self, timeout: Duration) -> DcbResult<Option<ServingStatus>> {
+        if self.finished {
+            return Ok(None);
+        }
+        match self.async_watch.check_shutdown_status() {
+            ShutdownStatus::CancelledByUser => {
+                self.finished = true;
+                return Err(DcbError::CancelledByUser());
+            }
+            ShutdownStatus::StoppedGracefully => {
+                self.finished = true;
+                return Ok(None);
+            }
+            ShutdownStatus::NotStopped => {}
+        }
+        let result = self.rt.block_on(self.async_watch.next_timeout(timeout));
+        if matches!(result, Ok(None)) {
+            self.finished = true;
+        }
+        result
+    }
+
+    pub fn cancel(&mut self) {
+        self.async_watch.cancel();
+    }
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct ClientTlsOptions {
     pub domain: Option<String>,
@@ -963,6 +1158,7 @@ async fn new_channel(
 // Async client implementation
 pub struct AsyncUmaDbClient {
     client: umadb_proto::v1::dcb_client::DcbClient<Channel>,
+    health_client: HealthClient<Channel>,
     batch_size: Option<u32>,
     tls_enabled: bool,
     api_key: Option<String>,
@@ -997,7 +1193,7 @@ impl AsyncUmaDbClient {
 
         use tokio::time::{Duration as TokioDuration, sleep};
 
-        let max_attempts = 50usize;
+        let max_attempts = 10usize;
         let mut attempts = 0usize;
         loop {
             match Self::connect_with_tls_options(
@@ -1014,7 +1210,7 @@ impl AsyncUmaDbClient {
                     if attempts >= max_attempts {
                         return Err(err);
                     }
-                    sleep(TokioDuration::from_millis(100)).await;
+                    sleep(TokioDuration::from_millis(50)).await;
                 }
             }
         }
@@ -1056,6 +1252,48 @@ impl AsyncUmaDbClient {
         self.registry.cancel_all();
     }
 
+    /// Performs a unary health check for the given service name.
+    ///
+    /// Use an empty string (`""`) to check the overall server health, or pass a
+    /// fully-qualified gRPC service name (e.g. `"umadb.v1.DCB"`) to check a
+    /// specific service.
+    pub async fn check_health(&self, service: &str) -> DcbResult<ServingStatus> {
+        let mut client = self.health_client.clone();
+        let request = Request::new(HealthCheckRequest {
+            service: service.to_string(),
+        });
+        let response = client
+            .check(request)
+            .await
+            .map_err(umadb_proto::dcb_error_from_status)?;
+        let status = response.into_inner().status;
+        Ok(ServingStatus::try_from(status).unwrap_or(ServingStatus::Unknown))
+    }
+
+    /// Opens a server-streaming health watch for the given service name.
+    ///
+    /// The server immediately sends the current serving status and then pushes
+    /// updates whenever the status changes. Use an empty string (`""`) for
+    /// overall server health.
+    ///
+    /// The returned [`AsyncHealthWatch`] is registered with this client's
+    /// stream registry and will be automatically cancelled when the client is
+    /// closed or dropped.
+    pub async fn watch_health(&self, service: &str) -> DcbResult<AsyncHealthWatch> {
+        let mut client = self.health_client.clone();
+        let request = Request::new(HealthCheckRequest {
+            service: service.to_string(),
+        });
+        let response = client
+            .watch(request)
+            .await
+            .map_err(umadb_proto::dcb_error_from_status)?;
+        let mut watch = AsyncHealthWatch::new(response.into_inner());
+        let guard = self.registry.register(watch.cancel_handle());
+        watch.set_guard(guard);
+        Ok(watch)
+    }
+
     pub async fn connect_with_tls_options(
         url: String,
         tls_options: Option<ClientTlsOptions>,
@@ -1065,7 +1303,8 @@ impl AsyncUmaDbClient {
         let tls_enabled = url.starts_with("https://") || url.starts_with("grpcs://");
         match new_channel(url, tls_options).await {
             Ok(channel) => Ok(Self {
-                client: umadb_proto::v1::dcb_client::DcbClient::new(channel),
+                client: umadb_proto::v1::dcb_client::DcbClient::new(channel.clone()),
+                health_client: HealthClient::new(channel),
                 batch_size,
                 tls_enabled,
                 api_key,
@@ -1235,6 +1474,32 @@ impl SyncUmaDbClient {
     /// details. Affects only streams opened by this client instance.
     pub fn close(&self) {
         self.async_client.close();
+    }
+
+    /// Performs a unary health check for the given service name.
+    ///
+    /// Use an empty string (`""`) to check the overall server health, or pass a
+    /// fully-qualified gRPC service name (e.g. `"umadb.v1.DCB"`) to check a
+    /// specific service.
+    pub fn check_health(&self, service: &str) -> DcbResult<ServingStatus> {
+        self.handle
+            .block_on(self.async_client.check_health(service))
+    }
+
+    /// Opens a server-streaming health watch for the given service name.
+    ///
+    /// The server immediately sends the current serving status and then pushes
+    /// updates whenever the status changes. Use an empty string (`""`) for
+    /// overall server health.
+    ///
+    /// The returned [`SyncHealthWatch`] is registered with this client's
+    /// stream registry and will be automatically cancelled when the client is
+    /// closed or dropped.
+    pub fn watch_health(&self, service: &str) -> DcbResult<SyncHealthWatch> {
+        let async_watch = self
+            .handle
+            .block_on(self.async_client.watch_health(service))?;
+        Ok(SyncHealthWatch::new(self.handle.clone(), async_watch))
     }
 
     // pub fn connect_with_tls_options(
