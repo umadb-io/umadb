@@ -39,6 +39,13 @@ class TestUmaDbClient(unittest.TestCase):
     def _generate_tag(self) -> str:
         return "foo" + str(uuid4()) + ":" + "bar"
 
+    def test_fail_to_connect(self) -> None:
+        with self.assertRaises(TransportError) as ctx:
+            Client("http://127.0.0.1:555555")
+        # The error message should include the underlying cause, not just
+        # "transport error".
+        self.assertIn("tcp connect error", str(ctx.exception).lower())
+
     def test_interrupt_stream_response_on_main_thread_next(self) -> None:
         client = Client("http://127.0.0.1:50051")
         subscription = client.subscribe(query=Query([QueryItem(tags=[str(uuid4())])]))

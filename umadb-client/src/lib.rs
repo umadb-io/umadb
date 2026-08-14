@@ -1310,7 +1310,22 @@ impl AsyncUmaDbClient {
                 api_key,
                 registry: StreamRegistry::default(),
             }),
-            Err(err) => Err(DcbError::TransportError(format!("{err}"))),
+            Err(err) => {
+                use std::error::Error;
+                let mut msg = err.to_string();
+                let mut prev = msg.clone();
+                let mut source = err.source();
+                while let Some(s) = source {
+                    let segment = s.to_string();
+                    // Skip duplicate segments produced by tonic's nested wrappers
+                    if segment != prev {
+                        msg = format!("{}: {}", msg, segment);
+                        prev = segment;
+                    }
+                    source = s.source();
+                }
+                Err(DcbError::TransportError(msg))
+            }
         }
     }
 
