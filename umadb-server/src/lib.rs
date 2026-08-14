@@ -648,7 +648,11 @@ impl umadb_proto::v1::dcb_server::Dcb for UmaDbServer {
                     }
                     Err(e) => {
                         if matches!(e, DcbError::CancelledByUser()) {
-                            // Silently stop if cancelled by user
+                            // Silently stop if canceled by user, since
+                            // the client has already given up, and the
+                            // client already knows it has canceled, so
+                            // this simply avoids sending an error that
+                            // will go nowhere anyway.
                         } else {
                             let _ = tx.send(Err(status_from_dcb_error(e))).await;
                         }
@@ -834,7 +838,11 @@ impl umadb_proto::v1::dcb_server::Dcb for UmaDbServer {
                     }
                     Err(e) => {
                         if matches!(e, DcbError::CancelledByUser()) {
-                            // Silently stop if cancelled by user
+                            // Silently stop if canceled by user, since
+                            // the client has already given up, and the
+                            // client already knows it has canceled, so
+                            // this simply avoids sending an error that
+                            // will go nowhere anyway.
                         } else {
                             let _ = tx.send(Err(status_from_dcb_error(e))).await;
                         }
