@@ -5239,4 +5239,186 @@ mod high_level_mvcc_tests {
         assert_eq!(events_root_node_before, events_root_after.node);
         assert_eq!(tags_root_node_before, tags_root_after.node);
     }
+
+    /// Helper: compute the mmap chunk size the same way `Pager::new` does.
+    fn compute_chunk_size(page_size: usize) -> u64 {
+        let os_ps = unsafe {
+            let sz = libc::sysconf(libc::_SC_PAGESIZE);
+            if sz <= 0 { 4096usize } else { sz as usize }
+        };
+        let g = {
+            let (mut a, mut b) = (os_ps, page_size);
+            while b != 0 {
+                let t = b;
+                b = a % t;
+                a = t;
+            }
+            a
+        };
+        let align_pages = usize::max(1, os_ps / g);
+        let min_window_bytes: usize = 256 * 1024 * 1024;
+        let min_pages = min_window_bytes.div_ceil(page_size);
+        let k = if min_pages == 0 {
+            1
+        } else {
+            min_pages.div_ceil(align_pages)
+        };
+        let mmap_pages_per_map = align_pages * usize::max(1, k);
+        (mmap_pages_per_map * page_size) as u64
+    }
+
+    #[test]
+    #[serial]
+    fn test_truncate_below_logical_length_errors_on_reopen() {
+        let page_size = 4096;
+        let temp_dir = tempdir().unwrap();
+        let db_path = temp_dir.path().join("truncate-error.db");
+
+        // Create a database and write some events so logical length grows beyond headers.
+        {
+            let options = StorageOptions::default()
+                .db_path(&db_path)
+                .page_size(page_size);
+            let mvcc = Mvcc::new(true, options).expect("create db");
+            let uma = UmaDb::from_arc(Arc::new(mvcc));
+
+            for i in 0..5 {
+                let event = DcbEvent::new()
+                    .event_type("TestType")
+                    .data(vec![i; 64])
+                    .tags(vec![format!("tag-{i}")]);
+                uma.append(vec![event], None, None).expect("append event");
+            }
+        }
+
+        // Read the header to find logical length, then truncate below it.
+        let logical_len = {
+            let options = StorageOptions::default()
+                .db_path(&db_path)
+                .page_size(page_size);
+            let mvcc = Mvcc::new(true, options).expect("reopen for inspection");
+            let header = mvcc.get_latest_header_page().expect("header");
+            let header_node = header.as_header_node().expect("header node");
+            header_node.next_page_id.0 * (page_size as u64)
+        };
+
+        // Truncate the file below the logical data length.
+        assert!(logical_len > 0);
+        let truncate_to = logical_len - (page_size as u64);
+        {
+            let file = std::fs::OpenOptions::new()
+                .write(true)
+                .open(&db_path)
+                .expect("open for truncate");
+            file.set_len(truncate_to).expect("truncate");
+        }
+
+        // Reopening should fail with DatabaseCorrupted.
+        let result = Mvcc::new(
+            true,
+            StorageOptions::default()
+                .db_path(&db_path)
+                .page_size(page_size),
+        );
+        match result {
+            Err(DcbError::DatabaseCorrupted(msg)) => {
+                assert!(
+                    msg.contains("truncated"),
+                    "Expected truncation message, got: {msg}"
+                );
+            }
+            Ok(_) => panic!("Expected DatabaseCorrupted error, but Mvcc::new succeeded"),
+            Err(other) => panic!("Expected DatabaseCorrupted error, got: {other}"),
+        }
+    }
+
+    #[test]
+    #[serial]
+    fn test_truncate_below_aligned_length_recovers_on_reopen() {
+        let page_size = 4096;
+        let temp_dir = tempdir().unwrap();
+        let db_path = temp_dir.path().join("truncate-recover.db");
+        let chunk_size = compute_chunk_size(page_size);
+
+        // Create a database and write some events.
+        {
+            let options = StorageOptions::default()
+                .db_path(&db_path)
+                .page_size(page_size);
+            let mvcc = Mvcc::new(true, options).expect("create db");
+            let uma = UmaDb::from_arc(Arc::new(mvcc));
+
+            for i in 0..5 {
+                let event = DcbEvent::new()
+                    .event_type("TestType")
+                    .data(vec![i; 64])
+                    .tags(vec![format!("tag-{i}")]);
+                uma.append(vec![event], None, None).expect("append event");
+            }
+        }
+
+        // Read logical length and the full aligned file size.
+        let (logical_len, original_file_size) = {
+            let options = StorageOptions::default()
+                .db_path(&db_path)
+                .page_size(page_size);
+            let mvcc = Mvcc::new(true, options).expect("reopen for inspection");
+            let header = mvcc.get_latest_header_page().expect("header");
+            let header_node = header.as_header_node().expect("header node");
+            let logical = header_node.next_page_id.0 * (page_size as u64);
+            let file_size = std::fs::metadata(&db_path).expect("metadata").len();
+            (logical, file_size)
+        };
+
+        // The expected aligned size is logical_len rounded up to the next chunk boundary.
+        let expected_aligned_len = logical_len.div_ceil(chunk_size) * chunk_size;
+
+        // Sanity: the file should already be at the aligned size.
+        assert_eq!(
+            original_file_size, expected_aligned_len,
+            "File should be chunk-aligned before truncation"
+        );
+
+        // Truncate the file to a size above logical data but below the aligned boundary.
+        // Pick a point halfway between logical_len and expected_aligned_len.
+        let truncate_to = logical_len + (expected_aligned_len - logical_len) / 2;
+        assert!(
+            truncate_to >= logical_len && truncate_to < expected_aligned_len,
+            "Truncation point {truncate_to} should be in [{logical_len}, {expected_aligned_len})"
+        );
+        {
+            let file = std::fs::OpenOptions::new()
+                .write(true)
+                .open(&db_path)
+                .expect("open for truncate");
+            file.set_len(truncate_to).expect("truncate");
+        }
+
+        // Verify the file is now shorter than aligned.
+        let size_after_truncate = std::fs::metadata(&db_path).expect("metadata").len();
+        assert_eq!(size_after_truncate, truncate_to);
+
+        // Reopen — should succeed and recover the alignment.
+        {
+            let options = StorageOptions::default()
+                .db_path(&db_path)
+                .page_size(page_size);
+            let _mvcc = Mvcc::new(true, options).expect("reopen should recover alignment");
+        }
+
+        // After recovery, ensure_required_len grows the file from truncate_to by
+        // whole chunks, so the final size is truncate_to + ceil((expected - truncate_to) / chunk) * chunk.
+        let extra_needed = expected_aligned_len - truncate_to;
+        let final_expected = truncate_to + extra_needed.div_ceil(chunk_size) * chunk_size;
+
+        let size_after_reopen = std::fs::metadata(&db_path).expect("metadata").len();
+        assert_eq!(
+            size_after_reopen, final_expected,
+            "File should be re-extended to at least the chunk-aligned size after recovery"
+        );
+        assert!(
+            size_after_reopen >= expected_aligned_len,
+            "Recovered file ({size_after_reopen}) must be at least the expected aligned length ({expected_aligned_len})"
+        );
+    }
 }

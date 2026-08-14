@@ -172,16 +172,14 @@ impl Pager {
             )));
         }
 
-        // 2. Alignment Integrity Check: Ensure mmap window boundaries are satisfied.
+        // 2. Alignment Recovery: Re-extend the file if the preallocated alignment padding
+        //    is missing (e.g. a process was killed mid-preallocation, or a file copy stripped
+        //    trailing zeros). The missing region is beyond logical data, so extending is safe.
         let chunk_size = (self.mmap_pages_per_map * self.page_size) as u64;
         let expected_aligned_len = logical_len.div_ceil(chunk_size) * chunk_size;
 
         if physical_len < expected_aligned_len {
-            return Err(DcbError::DatabaseCorrupted(format!(
-                "Database file has lost its preallocated alignment (possibly due to a file copy stripping trailing zeros). \
-                Expected chunk-aligned size of at least {} bytes, but physical file is {} bytes.",
-                expected_aligned_len, physical_len
-            )));
+            self.ensure_required_len(expected_aligned_len)?;
         }
 
         Ok(())
