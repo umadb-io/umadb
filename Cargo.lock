@@ -3138,6 +3138,7 @@ dependencies = [
  "async-trait",
  "futures",
  "libc",
+ "prost",
  "rustc-hash 2.1.3",
  "tokio",
  "tokio-stream",

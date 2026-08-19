@@ -20,6 +20,7 @@ use std::task::{Context, Poll};
 use tonic::codegen::http;
 use tonic::server::NamedService;
 use tonic::transport::server::TcpIncoming;
+use prost::Message;
 use umadb_proto::status_from_dcb_error;
 
 mod handler;
@@ -606,19 +607,67 @@ impl umadb_proto::v1::dcb_server::Dcb for UmaDbServer {
 
                         let last_event_position = sequenced_event_protos.last().map(|e| e.position);
 
-                        let response = umadb_proto::v1::ReadResponse {
-                            events: sequenced_event_protos,
-                            head: if limit.is_some() {
-                                last_event_position
-                            } else {
-                                captured_db_head
-                            },
-                        };
+                        // Split the events into chunks that each fit within the gRPC message
+                        // size limit. The default gRPC max message size is 4 MiB; we use a
+                        // slightly smaller limit (3.5 MiB) to leave room for framing overhead.
+                        // For each SequencedEvent embedded in a `repeated` field, the wire
+                        // cost is: 1 byte tag + varint(len) + len. We conservatively add 11
+                        // bytes per event to account for the tag and the largest possible
+                        // length-prefix varint (10 bytes), which is more than enough in
+                        // practice.
+                        //
+                        // The `head` field is only meaningful on the final chunk; intermediate
+                        // chunks carry `head: None` so clients don't misinterpret a mid-batch
+                        // position as the stream head.
+                        const GRPC_MAX_MESSAGE_BYTES: usize = 3_670_016; // 3.5 MiB
+                        const PER_EVENT_FRAMING_OVERHEAD: usize = 11;
 
-                        if tx.send(Ok(response)).await.is_err() {
+                        let mut chunk_start = 0usize;
+                        let mut chunk_bytes = 0usize;
+                        let mut send_failed = false;
+
+                        for (i, event) in sequenced_event_protos.iter().enumerate() {
+                            let event_size = event.encoded_len() + PER_EVENT_FRAMING_OVERHEAD;
+                            // If adding this event would exceed the limit (and the chunk is
+                            // non-empty), flush the current chunk first.
+                            if chunk_bytes + event_size > GRPC_MAX_MESSAGE_BYTES && i > chunk_start {
+                                let chunk = sequenced_event_protos[chunk_start..i].to_vec();
+                                let response = umadb_proto::v1::ReadResponse {
+                                    events: chunk,
+                                    head: None,
+                                };
+                                if tx.send(Ok(response)).await.is_err() {
+                                    send_failed = true;
+                                    break;
+                                }
+                                sent_any = true;
+                                chunk_start = i;
+                                chunk_bytes = 0;
+                            }
+                            chunk_bytes += event_size;
+                        }
+
+                        // Send any remaining events as the final chunk, carrying the real head.
+                        if !send_failed && chunk_start < sequenced_event_protos.len() {
+                            let chunk = sequenced_event_protos[chunk_start..].to_vec();
+                            let response = umadb_proto::v1::ReadResponse {
+                                events: chunk,
+                                head: if limit.is_some() {
+                                    last_event_position
+                                } else {
+                                    captured_db_head
+                                },
+                            };
+                            if tx.send(Ok(response)).await.is_err() {
+                                send_failed = true;
+                            } else {
+                                sent_any = true;
+                            }
+                        }
+
+                        if send_failed {
                             break;
                         }
-                        sent_any = true;
 
                         // Advance the cursor (use a new reader on the next loop iteration)
                         next_start = last_event_position.map(|p| {
@@ -804,14 +853,48 @@ impl umadb_proto::v1::dcb_server::Dcb for UmaDbServer {
                         let count = sequenced_event_protos.len();
                         let last_seen_position = sequenced_event_protos.last().map(|e| e.position);
 
-                        let response = umadb_proto::v1::SubscribeResponse {
-                            events: sequenced_event_protos,
-                        };
+                        // Split the events into chunks that each fit within the gRPC message
+                        // size limit. The default gRPC max message size is 4 MiB; we use a
+                        // slightly smaller limit (3.5 MiB) to leave room for framing overhead.
+                        // For each SequencedEvent embedded in a `repeated` field, the wire
+                        // cost is: 1 byte tag + varint(len) + len. We conservatively add 11
+                        // bytes per event to account for the tag and the largest possible
+                        // length-prefix varint (10 bytes), which is more than enough in
+                        // practice.
+                        const GRPC_MAX_MESSAGE_BYTES: usize = 3_670_016; // 3.5 MiB
+                        const PER_EVENT_FRAMING_OVERHEAD: usize = 11;
 
-                        // TODO: Actually check the total size of payload,
-                        //  and chunk things if greater than the max size
-                        //  allowed by gRPC (which is 4MB?).
-                        if tx.send(Ok(response)).await.is_err() {
+                        let mut chunk_start = 0usize;
+                        let mut chunk_bytes = 0usize;
+                        let mut send_failed = false;
+
+                        for (i, event) in sequenced_event_protos.iter().enumerate() {
+                            let event_size = event.encoded_len() + PER_EVENT_FRAMING_OVERHEAD;
+                            // If adding this event would exceed the limit (and the chunk is
+                            // non-empty), flush the current chunk first.
+                            if chunk_bytes + event_size > GRPC_MAX_MESSAGE_BYTES && i > chunk_start {
+                                let chunk = sequenced_event_protos[chunk_start..i].to_vec();
+                                let response = umadb_proto::v1::SubscribeResponse { events: chunk };
+                                if tx.send(Ok(response)).await.is_err() {
+                                    send_failed = true;
+                                    break;
+                                }
+                                chunk_start = i;
+                                chunk_bytes = 0;
+                            }
+                            chunk_bytes += event_size;
+                        }
+
+                        // Send any remaining events that didn't fill a full chunk.
+                        if !send_failed && chunk_start < sequenced_event_protos.len() {
+                            let chunk = sequenced_event_protos[chunk_start..].to_vec();
+                            let response = umadb_proto::v1::SubscribeResponse { events: chunk };
+                            if tx.send(Ok(response)).await.is_err() {
+                                send_failed = true;
+                            }
+                        }
+
+                        if send_failed {
                             break;
                         }
 
