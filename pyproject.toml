@@ -1,6 +1,6 @@
 [project]
 name = "umadb-python"
-version = "0.7.7"
+version = "0.7.8"
 description = "Build and test environment for the umadb-python package"
 requires-python = ">=3.10"
 dependencies = [
