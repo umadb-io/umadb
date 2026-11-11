@@ -8,7 +8,6 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
-
 jobs:
   build:
     strategy:
@@ -17,9 +16,11 @@ jobs:
         python-version: ["3.10"]
 
     runs-on: ubuntu-latest
-
     steps:
     - uses: actions/checkout@v6
+    - name: Set temporary directory for entire job
+      # Redirects Rust's tempdir() to the large root disk
+      run: echo "TMPDIR=$RUNNER_TEMP" >> "$GITHUB_ENV"
     - name: Install Protoc
       uses: arduino/setup-protoc@v3
       with:
