@@ -15,7 +15,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.10"]
+        python-version: ["3.11"]
         target:
           # Note: We now specify the exact Rust target triple for Zig
           - x86_64-unknown-linux-gnu
@@ -67,10 +67,10 @@ jobs:
             -v ${{ github.workspace }}/dist:/dist
             --platform ${{ matrix.target == 'aarch64-unknown-linux-gnu' && 'linux/arm64' || 'linux/amd64' }}
           run: |
-            /opt/python/cp310-cp310/bin/pip install /dist/*.whl
-            /opt/python/cp310-cp310/bin/umadb &
+            /opt/python/cp311-cp311/bin/pip install /dist/*.whl
+            /opt/python/cp311-cp311/bin/umadb &
             sleep 1
-            /opt/python/cp310-cp310/bin/python - << 'END'
+            /opt/python/cp311-cp311/bin/python - << 'END'
             from umadb import Client, Event
 
             client = Client("http://127.0.0.1:50051")
@@ -101,7 +101,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.10"]
+        python-version: ["3.11"]
         platform:
           - runner: windows-latest
             target: x64
@@ -143,7 +143,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.10"]
+        python-version: ["3.11"]
         platform:
           - runner: macos-latest
             target: aarch64

@@ -2,7 +2,7 @@
 name = "umadb-python"
 version = "0.7.8"
 description = "Build and test environment for the umadb-python package"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 dependencies = [
     "maturin",
     "mypy",
