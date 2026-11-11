@@ -3,7 +3,9 @@ use serial_test::serial;
 use std::net::TcpListener;
 use umadb_client::{AsyncUmaDbClient, UmaDbClient, cancel_all_stream_responses};
 use umadb_core::mvcc::DEFAULT_PAGE_SIZE;
-use umadb_dcb::{DcbError, DcbEvent, DcbEventStoreAsync};
+use umadb_dcb::{
+    DcbAppendCondition, DcbError, DcbEvent, DcbEventStoreAsync, DcbQuery, DcbQueryItem,
+};
 use umadb_server::start_server;
 
 fn allocate_grpc_addr() -> (String, String) {
@@ -456,6 +458,79 @@ async fn grpc_append_event_with_duplicate_metadata_keys_rejects() {
         "rejected oversized-tag append should not leave any events"
     );
     assert_eq!(None, head);
+
+    let _ = shutdown_tx.send(());
+    let _ = server_task.await;
+}
+
+fn condition_failing_on_tag(tag: &str) -> DcbAppendCondition {
+    DcbAppendCondition::new(DcbQuery::new().item(DcbQueryItem::new().tags([tag.to_string()])))
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[serial]
+async fn grpc_append_conflicting_with_large_events_returns_integrity_error_and_keeps_connection() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let db_path = temp_dir.path().to_path_buf();
+    let (addr, addr_http) = allocate_grpc_addr();
+
+    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+    let server_task = tokio::spawn(async move {
+        let _ = start_server(db_path, &addr, shutdown_rx).await;
+    });
+
+    let client = connect_async_with_retry(addr_http).await;
+
+    let mut subscription = client
+        .subscribe(None, None)
+        .await
+        .expect("subscription stream");
+
+    for payload_bytes in [3_000, 20_000] {
+        let tag = format!("large-{payload_bytes}");
+        let recorded = DcbEvent::default()
+            .event_type("Recorded")
+            .tags([tag.clone()])
+            .data(vec![0xAB; payload_bytes]);
+        client
+            .append(vec![recorded], None, None)
+            .await
+            .expect("append recorded event");
+
+        let proposed = DcbEvent::default()
+            .event_type("Proposed")
+            .tags([tag.clone()]);
+        match client
+            .append(vec![proposed], Some(condition_failing_on_tag(&tag)), None)
+            .await
+        {
+            Err(DcbError::IntegrityError(_)) => {}
+            other => {
+                panic!("{payload_bytes}-byte conflict: expected IntegrityError, got {other:?}")
+            }
+        }
+    }
+
+    let after_conflicts = client
+        .append(
+            vec![DcbEvent::default().event_type("AfterConflicts")],
+            None,
+            None,
+        )
+        .await
+        .expect("append after the conflicts");
+
+    let mut last_delivered = 0;
+    while last_delivered < after_conflicts {
+        let batch = subscription
+            .next_batch_timeout(std::time::Duration::from_secs(5))
+            .await
+            .expect("subscription survives the conflicts");
+        if batch.is_empty() {
+            panic!("subscription ended before delivering position {after_conflicts}");
+        }
+        last_delivered = batch.last().map_or(last_delivered, |event| event.position);
+    }
 
     let _ = shutdown_tx.send(());
     let _ = server_task.await;

@@ -864,9 +864,7 @@ pub fn process_append_request<T: MvccSnapshot>(
                     ) {
                         Ok(Some(last_recorded_position)) => Ok(last_recorded_position),
                         Ok(None) => {
-                            // Propagate an integrity error for this item but continue with others
-                            let msg =
-                                format!("condition: {:?} matched: {:?}, ", cond.clone(), matched,);
+                            let msg = format!("matching event at position {}", matched.position);
                             Err(DcbError::IntegrityError(msg))
                         }
                         Err(err) => {
@@ -1374,6 +1372,38 @@ mod tests {
             if expected_position == 5 {
                 expected_position = 6;
             }
+        }
+    }
+
+    #[test]
+    #[serial]
+    fn append_condition_failure_reports_matched_position_without_event_content() {
+        let temp_dir = tempdir().unwrap();
+        let db_path = temp_dir.path().join("condition-failure.db");
+        let uma = UmaDb::new(db_path).unwrap();
+
+        let recorded = DcbEvent::new()
+            .event_type("Recorded")
+            .tags(["x"])
+            .data(vec![0xAB; 20_000])
+            .metadata([("note", "m".repeat(20_000))]);
+        let position = uma.append(vec![recorded], None, None).unwrap();
+
+        let condition = DcbAppendCondition::new(
+            DcbQuery::new().item(DcbQueryItem::new().types(["Recorded"]).tags(["x"])),
+        );
+        let err = uma
+            .append(
+                vec![DcbEvent::new().event_type("Proposed")],
+                Some(condition),
+                None,
+            )
+            .expect_err("expected error");
+        match err {
+            DcbError::IntegrityError(msg) => {
+                assert_eq!(format!("matching event at position {position}"), msg)
+            }
+            other => panic!("unexpected error: {:?}", other),
         }
     }
 
