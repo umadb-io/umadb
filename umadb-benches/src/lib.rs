@@ -800,7 +800,7 @@ mod memory_tests {
 
     #[test]
     fn compare_actual_vs_approx_memory_for_1000_page_clones() {
-        let mut sys = System::new_all();
+        let mut sys = System::new_all().expect("system info");
         let pid = Pid::from_u32(std::process::id());
 
         sys.refresh_processes(ProcessesToUpdate::Some(&[pid]), true);
@@ -864,7 +864,7 @@ mod memory_tests {
                 .unwrap_or_else(|| panic!("unknown page type requested: {}", kind));
             let copies = target_copies_for_page(&page);
             let mut retained_clones: Vec<Arc<umadb_core::page::Page>> = Vec::new();
-            let mut sys = System::new_all();
+            let mut sys = System::new_all().expect("system info");
             let pid = Pid::from_u32(std::process::id());
             let (actual_extra_bytes, approx_total_bytes, ratio) =
                 measure_clone_memory_ratio(&page, copies, &mut retained_clones, &mut sys, pid);

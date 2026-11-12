@@ -25,7 +25,7 @@ http-body-util = "0.1"
 
 # Add test dependencies as needed
 tempfile = "3.27.0"
-zstd = "0.13"
+zstd = "0.14"
 #criterion = { version = "0.7.1", features = ["html_reports", "csv_output"] }
 #pprof = { version = "0.15.0", features = ["criterion", "flamegraph"] }
 rcgen = "0.14"
