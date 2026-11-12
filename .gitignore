@@ -28,3 +28,7 @@ __pycache__/
 .ruff_cache/
 .coverage
 htmlcov/
+
+# Claude Code local overrides and transient state
+.claude/*.local.json
+.claude/cache/
