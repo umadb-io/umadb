@@ -1193,7 +1193,7 @@ impl AsyncUmaDbClient {
 
         use tokio::time::{Duration as TokioDuration, sleep};
 
-        let max_attempts = 10usize;
+        let max_attempts = 20usize;
         let mut attempts = 0usize;
         loop {
             match Self::connect_with_tls_options(
@@ -1210,7 +1210,7 @@ impl AsyncUmaDbClient {
                     if attempts >= max_attempts {
                         return Err(err);
                     }
-                    sleep(TokioDuration::from_millis(50)).await;
+                    sleep(TokioDuration::from_millis(100)).await;
                 }
             }
         }
