@@ -1,23 +1,20 @@
 use futures::StreamExt;
+use serial_test::serial;
 use umadb_client::UmaDbClient;
 use umadb_dcb::{DcbError, DcbEvent, DcbEventStoreAsync, DcbQuery, DcbQueryItem, TrackingInfo};
 use umadb_server::start_server;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[serial]
 async fn grpc_append_with_tracking_enforces_monotonicity() {
     // Arrange: start a gRPC server backed by a temporary directory
     let temp_dir = tempfile::tempdir().unwrap();
     let db_path = temp_dir.path().to_path_buf();
-    let addr = "127.0.0.1:50111"; // test-specific port
-    let addr_http = format!("http://{}", addr);
-
+    let (addr, addr_http) = tests_integration::allocate_grpc_addr();
     let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
     let server_task = tokio::spawn(async move {
         let _ = start_server(db_path, &addr, shutdown_rx).await;
     });
-
-    // Give server a brief moment to start
-    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
 
     // Connect async client
     let client = UmaDbClient::new(addr_http.clone())
@@ -128,20 +125,16 @@ async fn grpc_append_with_tracking_enforces_monotonicity() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[serial]
 async fn grpc_append_with_tracking_only_no_events() {
     // Arrange: start a gRPC server backed by a temporary directory
     let temp_dir = tempfile::tempdir().unwrap();
     let db_path = temp_dir.path().to_path_buf();
-    let addr = "127.0.0.1:50111"; // test-specific port
-    let addr_http = format!("http://{}", addr);
-
+    let (addr, addr_http) = tests_integration::allocate_grpc_addr();
     let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
     let server_task = tokio::spawn(async move {
         let _ = start_server(db_path, &addr, shutdown_rx).await;
     });
-
-    // Give server a brief moment to start
-    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
 
     // Connect async client
     let client = UmaDbClient::new(addr_http.clone())
