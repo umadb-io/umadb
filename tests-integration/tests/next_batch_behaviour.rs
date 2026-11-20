@@ -1,90 +1,18 @@
-use std::time::Duration;
 use serial_test::serial;
-use tempfile::tempdir;
-use tokio::time::sleep;
-
-use tonic_health::pb::HealthCheckRequest;
-use tonic_health::pb::health_check_response::ServingStatus as PbServingStatus;
-use tonic_health::pb::health_client::HealthClient;
-
-use umadb_client::UmaDbClient;
 use umadb_dcb::{DcbEvent, DcbEventStoreAsync};
-use umadb_server::start_server;
 use uuid::Uuid;
-use tests_integration::allocate_grpc_addr;
+use tests_integration::TempServer;
 
-async fn wait_for_health(url: &str) {
-    // Retry connect to channel
-    let channel = loop {
-        match tonic::transport::Channel::from_shared(url.to_string())
-            .unwrap()
-            .connect()
-            .await
-        {
-            Ok(ch) => break ch,
-            Err(_) => {
-                sleep(Duration::from_millis(50)).await;
-            }
-        }
-    };
-
-    let mut client = HealthClient::new(channel);
-
-    // overall
-    for _ in 0..60u32 {
-        if let Ok(resp) = client
-            .check(HealthCheckRequest {
-                service: "".to_string(),
-            })
-            .await
-        {
-            if resp.into_inner().status == PbServingStatus::Serving as i32 {
-                break;
-            }
-        }
-        sleep(Duration::from_millis(50)).await;
-    }
-
-    // UmaDB named service
-    for _ in 0..60u32 {
-        if let Ok(resp) = client
-            .check(HealthCheckRequest {
-                service: "umadb.v1.DCB".to_string(),
-            })
-            .await
-        {
-            if resp.into_inner().status == PbServingStatus::Serving as i32 {
-                return;
-            }
-        }
-        sleep(Duration::from_millis(50)).await;
-    }
-    panic!("server did not become SERVING in time");
-}
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[serial]
 async fn next_batch_returns_all_then_empty_when_unlimited_and_large_batch_size() {
     use futures::StreamExt;
 
-    // Start server
-    let temp_dir = tempdir().unwrap();
-    let db_path = temp_dir.path().to_path_buf();
-    let (addr, url) = allocate_grpc_addr();
-    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-
-    let server_task = tokio::spawn({
-        let db_clone = db_path.clone();
-        let addr_clone = addr.clone();
-        async move {
-            let _ = start_server(db_clone, &addr_clone, shutdown_rx).await;
-        }
-    });
-
-    wait_for_health(&url).await;
+    let server = TempServer::start_insecure().await;
 
     // Build client with large batch_size (greater than total events we'll append)
-    let client = UmaDbClient::new(url.clone())
+    let client = server.client()
         .batch_size(10)
         .connect_async()
         .await
@@ -127,6 +55,5 @@ async fn next_batch_returns_all_then_empty_when_unlimited_and_large_batch_size()
     assert!(resp.next().await.is_none());
 
     // Cleanup
-    let _ = shutdown_tx.send(());
-    let _ = server_task.await;
+    server.shutdown().await;
 }

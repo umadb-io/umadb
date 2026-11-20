@@ -6,16 +6,20 @@ repository.workspace = true
 publish = false
 
 
-[dev-dependencies]
-umadb-dcb = { path = "../umadb-dcb" }
-umadb-core = { path = "../umadb-core", features = ["test-utils"] }
+[dependencies]
 umadb-client = { path = "../umadb-client" }
 umadb-server = { path = "../umadb-server", features = ["test-utils"] }
-umadb-proto = { path = "../umadb-proto" }
-futures = { workspace = true }
+umadb-core = { path = "../umadb-core", features = ["test-utils"] }
 tokio = { workspace = true }
 tonic = { workspace = true }
 tonic-health = { workspace = true }
+tempfile = "3.27.0"
+rcgen = "0.14"
+
+[dev-dependencies]
+umadb-dcb = { path = "../umadb-dcb" }
+umadb-proto = { path = "../umadb-proto" }
+futures = { workspace = true }
 prost = "0.14"
 hyper = "1"
 hyper-util = { version = "0.1", features = ["client", "client-legacy", "http2", "tokio"] }
@@ -23,12 +27,9 @@ http-body-util = "0.1"
 
 #umadb-benches = { path = "../benches" }
 
-# Add test dependencies as needed
-tempfile = "3.27.0"
 zstd = "0.14"
 #criterion = { version = "0.7.1", features = ["html_reports", "csv_output"] }
 #pprof = { version = "0.15.0", features = ["criterion", "flamegraph"] }
-rcgen = "0.14"
 uuid = { workspace = true }
 serial_test = { workspace = true }
 #futures-util = "0.3.31"

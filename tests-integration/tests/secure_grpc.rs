@@ -1,92 +1,12 @@
-use std::time::Duration;
-
-use rcgen::generate_simple_self_signed;
 use serial_test::serial;
-use tempfile::tempdir;
-use tokio::time::sleep;
-use tests_integration::allocate_grpc_addr;
-use umadb_client::{AsyncUmaDbClient, ClientTlsOptions};
-use umadb_core::mvcc::StorageOptions;
-use umadb_dcb::{DcbEvent, DcbEventStoreAsync};
-use umadb_server::{ServerOptions, ServerTlsOptions, start_server_with_options};
-
-fn generate_self_signed_cert() -> (Vec<u8>, Vec<u8>) {
-    let certified_key =
-        generate_simple_self_signed(["localhost".to_string()]).expect("generate cert");
-    let cert_pem = certified_key.cert.pem();
-    let key_pem = certified_key.signing_key.serialize_pem();
-    (cert_pem.into_bytes(), key_pem.into_bytes())
-}
+use tests_integration::TempServer;
+use umadb_dcb::{DcbError, DcbEvent, DcbEventStoreAsync};
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[serial]
 async fn secure_grpc_end_to_end_append_and_read() {
-    // Arrange: temp DB and TLS materials
-    let temp_dir = tempdir().unwrap();
-    let db_path = temp_dir.path().to_path_buf();
-    let (addr, url) = allocate_grpc_addr();
-    let url = url.replace("http", "https");
-
-    let (cert_pem, key_pem) = generate_self_signed_cert();
-
-    // Start secure server
-    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-    let addr_clone = addr.clone();
-    let cert_pem_clone = cert_pem.clone();
-    let key_pem_clone = key_pem.clone();
-    let server_task = tokio::spawn(async move {
-        let _ = start_server_with_options(
-            ServerOptions {
-                listen_addr: addr_clone,
-                tls: Some(ServerTlsOptions {
-                    cert_pem: cert_pem_clone,
-                    key_pem: key_pem_clone,
-                }),
-                api_key: None,
-                storage: StorageOptions::default().db_path(db_path),
-            },
-            shutdown_rx,
-        )
-        .await;
-    });
-
-    // Build TLS opts for client (trust the self-signed cert and use SNI localhost)
-    let tls = ClientTlsOptions {
-        domain: Some("localhost".to_string()),
-        ca_pem: Some(cert_pem),
-    };
-
-    // Retry connect loop to avoid race with server startup
-    let client = {
-        let mut last_err = None;
-        let mut client: Option<AsyncUmaDbClient> = None;
-        for _ in 0..40 {
-            // up to ~2s
-            match AsyncUmaDbClient::connect_with_tls_options(
-                url.clone(),
-                Some(tls.clone()),
-                None,
-                None,
-            )
-            .await
-            {
-                Ok(c) => {
-                    client = Some(c);
-                    break;
-                }
-                Err(e) => {
-                    last_err = Some(e);
-                    sleep(Duration::from_millis(50)).await;
-                }
-            }
-        }
-        client.unwrap_or_else(|| {
-            panic!(
-                "failed to connect to secure server after retries: {:?}",
-                last_err
-            )
-        })
-    };
+    let server = TempServer::start_secure().await;
+    let client = server.client().tls_domain("localhost").connect_async().await.expect("Failed to connect");
 
     // Append a handful of events
     let events: Vec<DcbEvent> = (0..25)
@@ -124,6 +44,31 @@ async fn secure_grpc_end_to_end_append_and_read() {
     assert!(total >= 25, "should read back at least appended events");
 
     // Cleanup
-    let _ = shutdown_tx.send(());
-    let _ = server_task.await;
+    server.shutdown().await;
+}
+
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn wrong_tls_domain() {
+    let server = TempServer::start_secure().await;
+
+    // This should all work.
+    let client = server.client().tls_domain("localhost").connect_async().await.expect("Failed to connect");
+    client.head().await.expect("Failed to get head");
+
+    // This connection should fail.
+    let err = server.client().tls_domain("wrong").connect_async().await.err().expect("Should have failed to connect");
+
+    match err {
+        DcbError::TransportError(msg) => assert_eq!(msg, "transport error: invalid peer certificate: certificate not valid for name \"wrong\"; certificate is only valid for DnsName(\"localhost\")"),
+        other => panic!("unexpected error type: {:?}", other),
+    }
+
+    // This connection should fail (127.0.0.1 isn't included in the certificate).
+    let err = server.client().connect_async().await.err().expect("Should have failed to connect");
+
+    match err {
+        DcbError::TransportError(msg) => assert_eq!(msg, "transport error: invalid peer certificate: certificate not valid for name \"127.0.0.1\"; certificate is only valid for DnsName(\"localhost\")"),
+        other => panic!("unexpected error type: {:?}", other),
+    }
 }

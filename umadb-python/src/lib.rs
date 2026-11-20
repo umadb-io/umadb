@@ -551,6 +551,7 @@ impl Client {
     /// Args:
     ///     url: The server URL (e.g., "http://localhost:50051" or "https://server:50051")
     ///     ca_path: Optional path to CA certificate for TLS
+    ///     tls_domain: Optional domain name in CA certificate for TLS
     ///     batch_size: Optional batch size for reading events
     ///     api_key: Optional API key for authenticating clients
     ///
@@ -558,17 +559,23 @@ impl Client {
     /// Returns:
     ///     A connected UmaDB client
     #[new]
-    #[pyo3(signature = (url, ca_path=None, batch_size=None, api_key=None))]
+    #[pyo3(signature = (url, ca_path=None, tls_domain=None, batch_size=None, api_key=None))]
     fn new(
         py: Python<'_>,
         url: String,
         ca_path: Option<String>,
+        tls_domain: Option<String>,
         batch_size: Option<u32>,
         api_key: Option<String>,
     ) -> PyResult<Self> {
         let client = umadb_client::UmaDbClient::new(url);
         let client = if let Some(ca) = ca_path {
             client.ca_path(ca)
+        } else {
+            client
+        };
+        let client = if let Some(domain) = tls_domain {
+            client.tls_domain(domain)
         } else {
             client
         };

@@ -1,37 +1,25 @@
+use std::net::TcpListener;
 use std::time::Duration;
 use serial_test::serial;
-use tempfile::tempdir;
-use tokio::time::sleep;
 
 // tonic-health client API
 use tonic_health::pb::HealthCheckRequest;
 use tonic_health::pb::health_check_response::ServingStatus as PbServingStatus;
 use tonic_health::pb::health_client::HealthClient;
-use tests_integration::allocate_grpc_addr;
-use umadb_server::start_server;
+use tests_integration::{allocate_grpc_addr, TempServer};
+use umadb_client::UmaDbClient;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[serial]
 async fn grpc_health_check_serving() {
-    // Arrange: temp DB and free port
-    let temp_dir = tempdir().unwrap();
-    let db_path = temp_dir.path().to_path_buf();
-    let (addr, url) = allocate_grpc_addr();
-
-    // Start server
-    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-    let db_path_clone = db_path.clone();
-    let addr_clone = addr.clone();
-    let server_task = tokio::spawn(async move {
-        let _ = start_server(db_path_clone, &addr_clone, shutdown_rx).await;
-    });
+    let server = TempServer::start_insecure().await;
 
     // Retry connect loop to avoid race with server startup
     let mut client: Option<HealthClient<tonic::transport::Channel>> = None;
     let mut last_err: Option<tonic::transport::Error> = None;
     for _ in 0..40 {
         // up to ~2s
-        match tonic::transport::Channel::from_shared(url.clone())
+        match tonic::transport::Channel::from_shared(server.url.clone())
             .unwrap()
             .connect()
             .await
@@ -42,7 +30,7 @@ async fn grpc_health_check_serving() {
             }
             Err(e) => {
                 last_err = Some(e);
-                sleep(Duration::from_millis(50)).await;
+                tokio::time::sleep(Duration::from_millis(50)).await;
             }
         }
     }
@@ -72,46 +60,19 @@ async fn grpc_health_check_serving() {
     assert_eq!(resp.into_inner().status, PbServingStatus::Serving as i32);
 
     // Cleanup
-    let _ = shutdown_tx.send(());
-    let _ = server_task.await;
+    server.shutdown().await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[serial]
 async fn grpc_health_check_via_umadb_client() {
-    use umadb_client::{ServingStatus, UmaDbClient};
+    use umadb_client::ServingStatus;
 
-    // Arrange: temp DB and free port
-    let temp_dir = tempdir().unwrap();
-    let db_path = temp_dir.path().to_path_buf();
-    let (addr, url) = allocate_grpc_addr();
-
-    // Start server
-    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-    let db_path_clone = db_path.clone();
-    let addr_clone = addr.clone();
-    let server_task = tokio::spawn(async move {
-        let _ = start_server(db_path_clone, &addr_clone, shutdown_rx).await;
-    });
-
-    // Connect via UmaDbClient (retry loop handled internally by connect)
-    let client = {
-        let mut last_err = None;
-        let mut c = None;
-        for _ in 0..40 {
-            match UmaDbClient::new(url.clone()).connect_async().await {
-                Ok(cl) => {
-                    c = Some(cl);
-                    break;
-                }
-                Err(e) => {
-                    last_err = Some(e);
-                    sleep(Duration::from_millis(50)).await;
-                }
-            }
-        }
-        c.unwrap_or_else(|| panic!("failed to connect: {:?}", last_err))
-    };
+    let server = TempServer::start_insecure().await;
+    let client = server.client()
+        .connect_async()
+        .await
+        .expect("connect async client");
 
     // Act + Assert: check_health for overall service
     let status = client.check_health("").await.unwrap();
@@ -132,10 +93,7 @@ async fn grpc_health_check_via_umadb_client() {
         assert_eq!(first, ServingStatus::Serving);
     } // watch dropped here so the server can shut down cleanly
 
-    // Cleanup: drop client before signalling shutdown so all streams are closed
-    drop(client);
-    let _ = shutdown_tx.send(());
-    let _ = server_task.await;
+    server.shutdown().await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -171,42 +129,20 @@ async fn grpc_async_watch_health_server_not_started() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[serial]
 async fn grpc_async_check_health_server_shutdown_before_client() {
-    use umadb_client::{ServingStatus, UmaDbClient};
+    use umadb_client::ServingStatus;
 
-    let temp_dir = tempdir().unwrap();
-    let db_path = temp_dir.path().to_path_buf();
-    let (addr, url) = allocate_grpc_addr();
-
-    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-    let db_path_clone = db_path.clone();
-    let addr_clone = addr.clone();
-    let server_task = tokio::spawn(async move {
-        let _ = start_server(db_path_clone, &addr_clone, shutdown_rx).await;
-    });
-
-    let client = {
-        let mut c = None;
-        for _ in 0..40 {
-            match UmaDbClient::new(url.clone()).connect_async().await {
-                Ok(cl) => {
-                    c = Some(cl);
-                    break;
-                }
-                Err(_) => {
-                    sleep(Duration::from_millis(50)).await;
-                }
-            }
-        }
-        c.expect("failed to connect")
-    };
+    let server = TempServer::start_insecure().await;
+    let client = server.client()
+        .connect_async()
+        .await
+        .expect("connect async client");
 
     // Verify health is serving
     let status = client.check_health("").await.unwrap();
     assert_eq!(status, ServingStatus::Serving);
 
     // Shutdown server
-    let _ = shutdown_tx.send(());
-    let _ = server_task.await;
+    server.shutdown().await;
 
     // After shutdown, check_health should fail
     let result = client.check_health("").await;
@@ -219,34 +155,13 @@ async fn grpc_async_check_health_server_shutdown_before_client() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[serial]
 async fn grpc_async_watch_health_server_shutdown_before_client() {
-    use umadb_client::{ServingStatus, UmaDbClient};
+    use umadb_client::ServingStatus;
 
-    let temp_dir = tempdir().unwrap();
-    let db_path = temp_dir.path().to_path_buf();
-    let (addr, url) = allocate_grpc_addr();
-
-    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-    let db_path_clone = db_path.clone();
-    let addr_clone = addr.clone();
-    let server_task = tokio::spawn(async move {
-        let _ = start_server(db_path_clone, &addr_clone, shutdown_rx).await;
-    });
-
-    let client = {
-        let mut c = None;
-        for _ in 0..40 {
-            match UmaDbClient::new(url.clone()).connect_async().await {
-                Ok(cl) => {
-                    c = Some(cl);
-                    break;
-                }
-                Err(_) => {
-                    sleep(Duration::from_millis(50)).await;
-                }
-            }
-        }
-        c.expect("failed to connect")
-    };
+    let server = TempServer::start_insecure().await;
+    let client = server.client()
+        .connect_async()
+        .await
+        .expect("connect async client");
 
     // Open a health watch stream
     let mut watch = client.watch_health("").await.unwrap();
@@ -254,7 +169,7 @@ async fn grpc_async_watch_health_server_shutdown_before_client() {
     assert_eq!(first, ServingStatus::Serving);
 
     // Shutdown server (signal first, then wait)
-    let _ = shutdown_tx.send(());
+    let shutdownn_future = server.shutdown();
 
     // After shutdown signal, the watch stream should eventually end or report
     // a non-SERVING status. The server may send NOT_SERVING before closing.
@@ -285,7 +200,7 @@ async fn grpc_async_watch_health_server_shutdown_before_client() {
     // Clean up: drop watch and client before awaiting server task
     drop(watch);
     drop(client);
-    let _ = server_task.await;
+    shutdownn_future.await;
 }
 
 #[test]
@@ -316,106 +231,89 @@ fn grpc_sync_watch_health_server_not_started() {
     );
 }
 
-#[test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[serial]
-fn grpc_sync_check_health_server_shutdown_before_client() {
-    use umadb_client::{ServingStatus, UmaDbClient};
+async fn grpc_sync_check_health_server_shutdown_before_client() {
+    use umadb_client::ServingStatus;
 
-    let temp_dir = tempdir().unwrap();
-    let db_path = temp_dir.path().to_path_buf();
-    let (addr, url) = allocate_grpc_addr();
+    let server = TempServer::start_insecure().await;
+    let http_url = server.url.clone();
 
-    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-    let db_path_clone = db_path.clone();
-    let addr_clone = addr.clone();
-    let server_thread = std::thread::spawn(move || {
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        rt.block_on(async move {
-            let _ = start_server(db_path_clone, &addr_clone, shutdown_rx).await;
-        });
-    });
+    // PHASE 1: Connect and verify health while server is UP
+    let client = tokio::task::spawn_blocking(move || {
+        let client = UmaDbClient::new(http_url)
+            .connect()
+            .expect("connect sync client");
 
-    // Wait for server to start
-    for _ in 0..40 {
-        if std::net::TcpStream::connect(&addr).is_ok() {
-            break;
-        }
-        std::thread::sleep(Duration::from_millis(50));
-    }
+        let status = client.check_health("").unwrap();
+        assert_eq!(status, ServingStatus::Serving);
 
-    let client = UmaDbClient::new(url).connect().expect("failed to connect");
+        client // Return the connected client to the main async thread
+    })
+        .await
+        .unwrap();
 
-    let status = client.check_health("").unwrap();
-    assert_eq!(status, ServingStatus::Serving);
+    // PHASE 2: Shut down the server
+    // We .await this directly in the main async thread so we are 100%
+    // guaranteed the server has completely exited and dropped the TCP connection.
+    server.shutdown().await;
 
-    // Shutdown server
-    let _ = shutdown_tx.send(());
-    let _ = server_thread.join();
+    // PHASE 3: Try to use the client while server is DOWN
+    tokio::task::spawn_blocking(move || {
+        // We moved the existing `client` into this new blocking task
+        let result = client.check_health("");
 
-    // After shutdown, check_health should fail
-    let result = client.check_health("");
-    assert!(
-        result.is_err(),
-        "expected check_health to fail after server shutdown"
-    );
+        assert!(
+            result.is_err(),
+            "expected check_health to fail after server shutdown"
+        );
+    })
+        .await
+        .unwrap();
 }
 
-#[test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[serial]
-fn grpc_sync_watch_health_server_shutdown_before_client() {
-    use umadb_client::{ServingStatus, UmaDbClient};
+async fn grpc_sync_watch_health_server_shutdown_before_client() {
+    use umadb_client::ServingStatus;
 
-    let temp_dir = tempdir().unwrap();
-    let db_path = temp_dir.path().to_path_buf();
-    let (addr, url) = allocate_grpc_addr();
+    let server = TempServer::start_insecure().await;
+    let http_url = server.url.clone();
 
-    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-    let db_path_clone = db_path.clone();
-    let addr_clone = addr.clone();
-    let server_thread = std::thread::spawn(move || {
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        rt.block_on(async move {
-            let _ = start_server(db_path_clone, &addr_clone, shutdown_rx).await;
-        });
-    });
+    let shutdown_future = tokio::task::spawn_blocking(move || {
+        // Build client with small batch_size so we can test next_batch
+        let client = UmaDbClient::new(http_url)
+            .connect()
+            .expect("connect sync client");
 
-    // Wait for server to start
-    for _ in 0..40 {
-        if std::net::TcpStream::connect(&addr).is_ok() {
-            break;
-        }
-        std::thread::sleep(Duration::from_millis(50));
-    }
+        let mut watch = client.watch_health("").unwrap();
+        let first = watch.next().unwrap().expect("expected first status");
+        assert_eq!(first, ServingStatus::Serving);
 
-    let client = UmaDbClient::new(url).connect().expect("failed to connect");
+        // Shutdown server (signal first)
+        let shutdown_future = server.shutdown();
 
-    let mut watch = client.watch_health("").unwrap();
-    let first = watch.next().unwrap().expect("expected first status");
-    assert_eq!(first, ServingStatus::Serving);
-
-    // Shutdown server (signal first)
-    let _ = shutdown_tx.send(());
-
-    // After shutdown signal, the watch stream should eventually end or report
-    // a non-SERVING status. The server may send NOT_SERVING before closing.
-    let mut got_end_or_non_serving = false;
-    for _ in 0..10 {
-        let result = watch.next_timeout(Duration::from_secs(2));
-        match result {
-            Ok(Some(ServingStatus::Serving)) => continue,
-            _ => {
-                got_end_or_non_serving = true;
-                break;
+        // After shutdown signal, the watch stream should eventually end or report
+        // a non-SERVING status. The server may send NOT_SERVING before closing.
+        let mut got_end_or_non_serving = false;
+        for _ in 0..10 {
+            let result = watch.next_timeout(Duration::from_secs(2));
+            match result {
+                Ok(Some(ServingStatus::Serving)) => continue,
+                _ => {
+                    got_end_or_non_serving = true;
+                    break;
+                }
             }
         }
-    }
-    assert!(
-        got_end_or_non_serving,
-        "expected watch to end, error, or report non-SERVING after server shutdown"
-    );
+        assert!(
+            got_end_or_non_serving,
+            "expected watch to end, error, or report non-SERVING after server shutdown"
+        );
 
-    // Clean up
-    drop(watch);
-    drop(client);
-    let _ = server_thread.join();
+        shutdown_future
+
+    }).await.unwrap();
+
+    shutdown_future.await;
 }

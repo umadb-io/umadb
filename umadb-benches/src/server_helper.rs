@@ -89,7 +89,7 @@ pub fn start_bench_server(db_path: String, addr: String) -> BenchServerHandle {
                 .build()
                 .expect("build tokio rt for server");
             rt.block_on(async move {
-                start_server(db_path_clone, &addr_clone, rx)
+                start_server(db_path_clone, &addr_clone, rx, None)
                     .await
                     .expect("start server");
             });

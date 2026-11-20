@@ -1,27 +1,13 @@
 use futures::StreamExt;
 use serial_test::serial;
-use tests_integration::allocate_grpc_addr;
-use umadb_client::UmaDbClient;
+use tests_integration::TempServer;
 use umadb_dcb::{DcbError, DcbEvent, DcbEventStoreAsync, DcbQuery, DcbQueryItem, TrackingInfo};
-use umadb_server::start_server;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[serial]
 async fn grpc_append_with_tracking_enforces_monotonicity() {
-    // Arrange: start a gRPC server backed by a temporary directory
-    let temp_dir = tempfile::tempdir().unwrap();
-    let db_path = temp_dir.path().to_path_buf();
-    let (addr, url) = allocate_grpc_addr();
-    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-    let server_task = tokio::spawn(async move {
-        let _ = start_server(db_path, &addr, shutdown_rx).await;
-    });
-
-    // Connect async client
-    let client = UmaDbClient::new(url.clone())
-        .connect_async()
-        .await
-        .expect("client connect");
+    let server = TempServer::start_insecure().await;
+    let client = server.client().connect_async().await.expect("Failed to connect");
 
     // Build a simple event
     let ev = DcbEvent {
@@ -120,28 +106,14 @@ async fn grpc_append_with_tracking_enforces_monotonicity() {
         }
     }
 
-    // Cleanup
-    let _ = shutdown_tx.send(());
-    let _ = server_task.await;
+    server.shutdown().await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[serial]
 async fn grpc_append_with_tracking_only_no_events() {
-    // Arrange: start a gRPC server backed by a temporary directory
-    let temp_dir = tempfile::tempdir().unwrap();
-    let db_path = temp_dir.path().to_path_buf();
-    let (addr, addr_http) = allocate_grpc_addr();
-    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-    let server_task = tokio::spawn(async move {
-        let _ = start_server(db_path, &addr, shutdown_rx).await;
-    });
-
-    // Connect async client
-    let client = UmaDbClient::new(addr_http.clone())
-        .connect_async()
-        .await
-        .expect("client connect");
+    let server = TempServer::start_insecure().await;
+    let client = server.client().connect_async().await.expect("Failed to connect");
 
     assert_eq!(None, client.get_tracking_info("srcC").await.unwrap());
     assert_eq!(None, client.get_tracking_info("srcD").await.unwrap());
@@ -232,6 +204,5 @@ async fn grpc_append_with_tracking_only_no_events() {
     }
 
     // Cleanup
-    let _ = shutdown_tx.send(());
-    let _ = server_task.await;
+    server.shutdown().await;
 }

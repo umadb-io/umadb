@@ -274,12 +274,14 @@ fn raise_open_file_limit_inner() {}
 pub async fn start_server_with_options(
     options: ServerOptions,
     shutdown_rx: oneshot::Receiver<()>,
+    ready_tx: Option<oneshot::Sender<std::net::SocketAddr>>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     // Ensure we can accept many concurrent client connections (one fd each).
     let _ = server_uptime();
     raise_open_file_limit();
 
-    let addr = options.listen_addr.parse()?;
+    let listen_addr = options.listen_addr;
+    let addr = listen_addr.parse()?;
     // ---- Bind incoming manually like tonic ----
     let incoming = match TcpIncoming::bind(addr) {
         Ok(incoming) => incoming,
@@ -292,6 +294,12 @@ pub async fn start_server_with_options(
     }
     .with_nodelay(Some(true))
     .with_keepalive(Some(Duration::from_secs(60)));
+
+    let local_addr = incoming.local_addr()?;
+
+    if let Some(tx) = ready_tx {
+        let _ = tx.send(local_addr);
+    }
 
     // Create a shutdown broadcast channel for terminating ongoing subscriptions
     let (srv_shutdown_tx, srv_shutdown_rx) = watch::channel(false);
@@ -346,7 +354,7 @@ pub async fn start_server_with_options(
     builder = builder.add_service(dcb_server.into_service());
     let router = builder;
 
-    println!("UmaDB is listening on {addr} ({tls_mode_display_str}, {api_key_display_str})");
+    println!("UmaDB is listening on {local_addr} ({tls_mode_display_str}, {api_key_display_str})");
     println!("UmaDB started in {:?}", server_uptime());
     // let incoming = router.server.bind_incoming();
     router
@@ -1057,6 +1065,7 @@ pub async fn start_server<P: AsRef<std::path::Path>>(
     db_path: P,
     addr: &str,
     shutdown_rx: oneshot::Receiver<()>,
+    ready_tx: Option<oneshot::Sender<std::net::SocketAddr>>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let pipelined_writer = std::env::var("UMADB_PIPELINED_WRITER")
         .ok()
@@ -1077,5 +1086,5 @@ pub async fn start_server<P: AsRef<std::path::Path>>(
             .pipelined_writer(pipelined_writer)
             .page_cache_max_mb(page_cache_max_mb),
     };
-    start_server_with_options(options, shutdown_rx).await
+    start_server_with_options(options, shutdown_rx, ready_tx).await
 }

@@ -201,7 +201,7 @@ pub fn start_server_with_cli_options(
 
     rt.block_on(async {
         let (shutdown_rx, _) = spawn_shutdown_on_signal();
-        start_server_with_options(server_options, shutdown_rx).await
+        start_server_with_options(server_options, shutdown_rx, None).await
     })
 }
 

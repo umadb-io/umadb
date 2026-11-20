@@ -1,13 +1,12 @@
-use std::net::TcpListener;
+use serial_test::serial;
 use tempfile::tempdir;
-use tokio::runtime::Builder as RtBuilder;
 use umadb_client::UmaDbClient;
 use umadb_core::db::UmaDb;
 use umadb_dcb::{
     DcbAppendCondition, DcbError, DcbEvent, DcbEventStoreSync, DcbQuery, DcbQueryItem,
 };
-use umadb_server::start_server;
 use uuid::Uuid;
+use tests_integration::TempServer;
 
 // Helper function to run the test with implementations of the DCBEventStoreSync trait
 pub fn dcb_event_store_test<T: DcbEventStoreSync>(event_store: &T) {
@@ -1455,52 +1454,23 @@ fn test_direct_event_store() {
 }
 
 // Also test gRPC by wrapping the async client with a small sync adapter used only in tests.
-#[test]
-fn test_grpc_event_store_client() {
-    // Pick a free port
-    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-    let addr = listener.local_addr().unwrap();
-    drop(listener);
-    let addr_noscheme = format!("{}", addr);
-    let addr_with_scheme = format!("http://{}", addr);
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[serial]
+async fn test_subscribe_at_head() {
+    let server = TempServer::start_insecure().await;
+    let http_url = server.url.clone();
 
-    // Build a multi-threaded runtime for server and client
-    let rt = RtBuilder::new_multi_thread().enable_all().build().unwrap();
+    tokio::task::spawn_blocking(move || {
+        // Build client with small batch_size so we can test next_batch
+        let client = UmaDbClient::new(http_url)
+            .connect()
+            .expect("connect sync client");
 
-    // Prepare shutdown channel for the server
-    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
-
-    // Temporary directory for the database server
-    let temp_dir = tempdir().unwrap();
-
-    // Start the server
-    let data_dir = temp_dir.path().to_path_buf();
-    rt.spawn(async move {
-        let _ = start_server(data_dir, &addr_noscheme, shutdown_rx).await;
-    });
-
-    // Connect the client (retry until server is ready)
-    let client = {
-        use std::{thread, time::Duration};
-        let mut attempts = 0;
-        loop {
-            match UmaDbClient::new(addr_with_scheme.clone()).connect() {
-                Ok(c) => break c,
-                Err(e) => {
-                    attempts += 1;
-                    if attempts >= 50 {
-                        panic!("failed to connect to grpc server after retries: {:?}", e);
-                    }
-                    thread::sleep(Duration::from_millis(50));
-                }
-            }
-        }
-    };
-
-    dcb_event_store_test(&client);
+        dcb_event_store_test(&client);
+    }).await.unwrap();
 
     // Shutdown server
-    let _ = shutdown_tx.send(());
+    server.shutdown().await;
 }
 
 #[test]

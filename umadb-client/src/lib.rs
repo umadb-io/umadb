@@ -1170,6 +1170,7 @@ impl AsyncUmaDbClient {
     pub async fn connect(
         url: String,
         ca_path: Option<String>,
+        tls_domain: Option<String>,
         batch_size: Option<u32>,
         api_key: Option<String>,
     ) -> DcbResult<Self> {
@@ -1187,7 +1188,7 @@ impl AsyncUmaDbClient {
         };
 
         let client_tls_options = Some(ClientTlsOptions {
-            domain: None,
+            domain: tls_domain,
             ca_pem,
         });
 
@@ -1451,12 +1452,13 @@ impl SyncUmaDbClient {
     pub fn connect(
         url: String,
         ca_path: Option<String>,
+        tls_domain: Option<String>,
         batch_size: Option<u32>,
         api_key: Option<String>,
     ) -> DcbResult<Self> {
         let (rt, handle) = Self::get_rt_handle();
         let async_client =
-            handle.block_on(AsyncUmaDbClient::connect(url, ca_path, batch_size, api_key))?;
+            handle.block_on(AsyncUmaDbClient::connect(url, ca_path, tls_domain, batch_size, api_key))?;
         Ok(Self {
             async_client,
             _runtime: rt, // Keep runtime alive for the client lifetime
@@ -1594,30 +1596,39 @@ impl DcbEventStoreSync for SyncUmaDbClient {
 pub struct UmaDbClient {
     url: String,
     ca_path: Option<String>,
+    tls_domain: Option<String>,
     batch_size: Option<u32>,
     api_key: Option<String>,
 }
 
 impl UmaDbClient {
-    pub fn new(url: String) -> Self {
+    pub fn new(url: impl Into<String>) -> Self {
         Self {
-            url,
+            url: url.into(),
             ca_path: None,
+            tls_domain: None,
             batch_size: None,
             api_key: None,
         }
     }
 
-    pub fn ca_path(self, ca_path: String) -> Self {
+    pub fn ca_path(self, ca_path: impl Into<String>) -> Self {
         Self {
-            ca_path: Some(ca_path),
+            ca_path: Some(ca_path.into()),
             ..self
         }
     }
 
-    pub fn api_key(self, api_key: String) -> Self {
+    pub fn api_key(self, api_key: impl Into<String>) -> Self {
         Self {
-            api_key: Some(api_key),
+            api_key: Some(api_key.into()),
+            ..self
+        }
+    }
+
+    pub fn tls_domain(self, domain: impl Into<String>) -> Self {
+        Self {
+            tls_domain: Some(domain.into()),
             ..self
         }
     }
@@ -1633,6 +1644,7 @@ impl UmaDbClient {
         let client = SyncUmaDbClient::connect(
             self.url.clone(),
             self.ca_path.clone(),
+            self.tls_domain.clone(),
             self.batch_size,
             self.api_key.clone(),
         );
@@ -1642,6 +1654,7 @@ impl UmaDbClient {
         let client = AsyncUmaDbClient::connect(
             self.url.clone(),
             self.ca_path.clone(),
+            self.tls_domain.clone(),
             self.batch_size,
             self.api_key.clone(),
         )

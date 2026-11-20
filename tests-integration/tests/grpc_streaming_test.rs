@@ -1,32 +1,21 @@
 use futures::StreamExt;
 use serial_test::serial;
-use tests_integration::allocate_grpc_addr;
-use umadb_client::{AsyncUmaDbClient, UmaDbClient, cancel_all_stream_responses};
+use tests_integration::TempServer;
+use umadb_client::cancel_all_stream_responses;
 use umadb_core::mvcc::DEFAULT_PAGE_SIZE;
 use umadb_dcb::{
     DcbAppendCondition, DcbError, DcbEvent, DcbEventStoreAsync, DcbQuery, DcbQueryItem,
 };
-use umadb_server::start_server;
 
-async fn connect_async(url: String) -> AsyncUmaDbClient {
-    UmaDbClient::new(url).connect_async().await.expect("client connection")
-}
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[serial]
 async fn grpc_async_streams_large_reads_total_count() {
-    // Arrange: start a gRPC server backed by a temporary directory
-    let temp_dir = tempfile::tempdir().unwrap();
-    let db_path = temp_dir.path().to_path_buf();
-    let (addr, url) = allocate_grpc_addr();
-
-    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-    let server_task = tokio::spawn(async move {
-        let _ = start_server(db_path, &addr, shutdown_rx).await;
-    });
-
-    // Connect client
-    let client = connect_async(url).await;
+    let server = TempServer::start_insecure().await;
+    let client = server.client()
+        .connect_async()
+        .await
+        .expect("connect async client");
 
     // Append 1000 events
     let events: Vec<DcbEvent> = (0..1000)
@@ -61,24 +50,17 @@ async fn grpc_async_streams_large_reads_total_count() {
     assert_eq!(1000, total, "should read exactly 1000 events");
 
     // Cleanup
-    let _ = shutdown_tx.send(());
-    let _ = server_task.await;
+    server.shutdown().await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[serial]
 async fn grpc_async_does_not_stream_past_starting_head() {
-    // Arrange
-    let temp_dir = tempfile::tempdir().unwrap();
-    let db_path = temp_dir.path().to_path_buf();
-    let (addr, url) = allocate_grpc_addr();
-
-    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-    let server_task = tokio::spawn(async move {
-        let _ = start_server(db_path, &addr, shutdown_rx).await;
-    });
-
-    let client = connect_async(url).await;
+    let server = TempServer::start_insecure().await;
+    let client = server.client()
+        .connect_async()
+        .await
+        .expect("connect async client");
 
     // Append initial 300 events
     let initial_events: Vec<DcbEvent> = (0..300)
@@ -153,24 +135,17 @@ async fn grpc_async_does_not_stream_past_starting_head() {
         other => panic!("Expected CancelledByUser, got {other:?}"),
     }
 
-    let _ = shutdown_tx.send(());
-    let _ = server_task.await;
+    server.shutdown().await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[serial]
 async fn grpc_async_subscription_catch_up_and_continue() {
-    // Arrange
-    let temp_dir = tempfile::tempdir().unwrap();
-    let db_path = temp_dir.path().to_path_buf();
-    let (addr, url) = allocate_grpc_addr();
-
-    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-    let server_task = tokio::spawn(async move {
-        let _ = start_server(db_path, &addr, shutdown_rx).await;
-    });
-
-    let client = connect_async(url).await;
+    let server = TempServer::start_insecure().await;
+    let client = server.client()
+        .connect_async()
+        .await
+        .expect("connect async client");
 
     // Append initial events
     let initial_count = 40usize;
@@ -268,23 +243,17 @@ async fn grpc_async_subscription_catch_up_and_continue() {
         other => panic!("Expected CancelledByUser, got {other:?}"),
     }
 
-    let _ = shutdown_tx.send(());
-    let _ = server_task.await;
+    server.shutdown().await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[serial]
 async fn grpc_async_stream_catch_up_and_continue() {
-    let temp_dir = tempfile::tempdir().unwrap();
-    let db_path = temp_dir.path().to_path_buf();
-    let (addr, url) = allocate_grpc_addr();
-
-    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-    let server_task = tokio::spawn(async move {
-        let _ = start_server(db_path, &addr, shutdown_rx).await;
-    });
-
-    let client = connect_async(url).await;
+    let server = TempServer::start_insecure().await;
+    let client = server.client()
+        .connect_async()
+        .await
+        .expect("connect async client");
 
     // Append initial events via async API
     let initial_count = 15usize;
@@ -350,23 +319,17 @@ async fn grpc_async_stream_catch_up_and_continue() {
         }
     }
 
-    let _ = shutdown_tx.send(());
-    let _ = server_task.await;
+    server.shutdown().await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[serial]
 async fn grpc_append_event_with_tag_larger_than_page_size_rejects_and_leaves_no_events() {
-    let temp_dir = tempfile::tempdir().unwrap();
-    let db_path = temp_dir.path().to_path_buf();
-    let (addr, url) = allocate_grpc_addr();
-
-    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-    let server_task = tokio::spawn(async move {
-        let _ = start_server(db_path, &addr, shutdown_rx).await;
-    });
-
-    let client = connect_async(url).await;
+    let server = TempServer::start_insecure().await;
+    let client = server.client()
+        .connect_async()
+        .await
+        .expect("connect async client");
 
     let large_tag = "t".repeat(DEFAULT_PAGE_SIZE + 1);
     assert!(large_tag.len() > DEFAULT_PAGE_SIZE);
@@ -394,23 +357,17 @@ async fn grpc_append_event_with_tag_larger_than_page_size_rejects_and_leaves_no_
     );
     assert_eq!(None, head);
 
-    let _ = shutdown_tx.send(());
-    let _ = server_task.await;
+    server.shutdown().await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[serial]
 async fn grpc_append_event_with_duplicate_metadata_keys_rejects() {
-    let temp_dir = tempfile::tempdir().unwrap();
-    let db_path = temp_dir.path().to_path_buf();
-    let (addr, url) = allocate_grpc_addr();
-
-    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-    let server_task = tokio::spawn(async move {
-        let _ = start_server(db_path, &addr, shutdown_rx).await;
-    });
-
-    let client = connect_async(url).await;
+    let server = TempServer::start_insecure().await;
+    let client = server.client()
+        .connect_async()
+        .await
+        .expect("connect async client");
 
     let event = DcbEvent {
         event_type: "Type".to_string(),
@@ -440,8 +397,7 @@ async fn grpc_append_event_with_duplicate_metadata_keys_rejects() {
     );
     assert_eq!(None, head);
 
-    let _ = shutdown_tx.send(());
-    let _ = server_task.await;
+    server.shutdown().await;
 }
 
 fn condition_failing_on_tag(tag: &str) -> DcbAppendCondition {
@@ -451,16 +407,11 @@ fn condition_failing_on_tag(tag: &str) -> DcbAppendCondition {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[serial]
 async fn grpc_append_conflicting_with_large_events_returns_integrity_error_and_keeps_connection() {
-    let temp_dir = tempfile::tempdir().unwrap();
-    let db_path = temp_dir.path().to_path_buf();
-    let (addr, url) = allocate_grpc_addr();
-
-    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-    let server_task = tokio::spawn(async move {
-        let _ = start_server(db_path, &addr, shutdown_rx).await;
-    });
-
-    let client = connect_async(url).await;
+    let server = TempServer::start_insecure().await;
+    let client = server.client()
+        .connect_async()
+        .await
+        .expect("connect async client");
 
     let mut subscription = client
         .subscribe(None, None)
@@ -513,6 +464,5 @@ async fn grpc_append_conflicting_with_large_events_returns_integrity_error_and_k
         last_delivered = batch.last().map_or(last_delivered, |event| event.position);
     }
 
-    let _ = shutdown_tx.send(());
-    let _ = server_task.await;
+    server.shutdown().await;
 }

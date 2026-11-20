@@ -11,66 +11,10 @@
 /// 3. All appended events are eventually received (no data is lost).
 use std::time::Duration;
 use serial_test::serial;
-use tempfile::tempdir;
-use tokio::time::sleep;
 
-use tonic_health::pb::HealthCheckRequest;
-use tonic_health::pb::health_check_response::ServingStatus as PbServingStatus;
-use tonic_health::pb::health_client::HealthClient;
-
-use umadb_client::UmaDbClient;
 use umadb_dcb::{DcbEvent, DcbEventStoreAsync};
-use umadb_server::start_server;
 use uuid::Uuid;
-use tests_integration::allocate_grpc_addr;
-// ---------------------------------------------------------------------------
-// Shared helpers (duplicated from next_batch_behaviour.rs to keep each file
-// self-contained, as is idiomatic for Rust integration-test files).
-// ---------------------------------------------------------------------------
-
-async fn wait_for_health(url: &str) {
-    let channel = loop {
-        match tonic::transport::Channel::from_shared(url.to_string())
-            .unwrap()
-            .connect()
-            .await
-        {
-            Ok(ch) => break ch,
-            Err(_) => sleep(Duration::from_millis(50)).await,
-        }
-    };
-
-    let mut client = HealthClient::new(channel);
-
-    for _ in 0..120u32 {
-        if let Ok(resp) = client
-            .check(HealthCheckRequest {
-                service: "".to_string(),
-            })
-            .await
-        {
-            if resp.into_inner().status == PbServingStatus::Serving as i32 {
-                break;
-            }
-        }
-        sleep(Duration::from_millis(50)).await;
-    }
-
-    for _ in 0..120u32 {
-        if let Ok(resp) = client
-            .check(HealthCheckRequest {
-                service: "umadb.v1.DCB".to_string(),
-            })
-            .await
-        {
-            if resp.into_inner().status == PbServingStatus::Serving as i32 {
-                return;
-            }
-        }
-        sleep(Duration::from_millis(50)).await;
-    }
-    panic!("server did not become SERVING in time");
-}
+use tests_integration::TempServer;
 
 /// Build a `DcbEvent` whose `data` payload is approximately `payload_bytes` bytes.
 fn large_event(payload_bytes: usize) -> DcbEvent {
@@ -92,25 +36,13 @@ fn large_event(payload_bytes: usize) -> DcbEvent {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[serial]
 async fn read_response_is_chunked_when_payload_exceeds_grpc_limit() {
+
     const EVENT_COUNT: usize = 4_000;
     const PAYLOAD_BYTES: usize = 10_240; // ~10 kB per event → ~40 MB total
     const BATCH_SIZE: u32 = 1_000; // ~10MB larger than grpc 4MB message limit, so force chunking
 
-    let temp_dir = tempdir().unwrap();
-    let (addr, url) = allocate_grpc_addr();
-    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-
-    let server_task = tokio::spawn({
-        let db_path = temp_dir.path().to_path_buf();
-        let addr_clone = addr.clone();
-        async move {
-            let _ = start_server(db_path, &addr_clone, shutdown_rx).await;
-        }
-    });
-
-    wait_for_health(&url).await;
-
-    let client = UmaDbClient::new(url.clone())
+    let server = TempServer::start_insecure().await;
+    let client = server.client()
         .batch_size(BATCH_SIZE)
         .connect_async()
         .await
@@ -161,8 +93,7 @@ async fn read_response_is_chunked_when_payload_exceeds_grpc_limit() {
         "expected multiple batches (chunking), but got only {batch_count}"
     );
 
-    let _ = shutdown_tx.send(());
-    let _ = server_task.await;
+    server.shutdown().await;
 }
 
 // ---------------------------------------------------------------------------
@@ -180,21 +111,8 @@ async fn subscribe_response_is_chunked_when_payload_exceeds_grpc_limit() {
     const PAYLOAD_BYTES: usize = 10_240; // ~10 kB per event → ~40 MB total
     const BATCH_SIZE: u32 = 1_000; // ~10MB larger than grpc 4MB message limit, so force chunking
 
-    let temp_dir = tempdir().unwrap();
-    let (addr, url) = allocate_grpc_addr();
-    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-
-    let server_task = tokio::spawn({
-        let db_path = temp_dir.path().to_path_buf();
-        let addr_clone = addr.clone();
-        async move {
-            let _ = start_server(db_path, &addr_clone, shutdown_rx).await;
-        }
-    });
-
-    wait_for_health(&url).await;
-
-    let client = UmaDbClient::new(url.clone())
+    let server = TempServer::start_insecure().await;
+    let client = server.client()
         .batch_size(BATCH_SIZE)
         .connect_async()
         .await
@@ -253,6 +171,5 @@ async fn subscribe_response_is_chunked_when_payload_exceeds_grpc_limit() {
         "expected multiple batches (chunking), but got only {batch_count}"
     );
 
-    let _ = shutdown_tx.send(());
-    let _ = server_task.await;
+    server.shutdown().await;
 }

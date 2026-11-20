@@ -1,191 +1,110 @@
-use std::time::Duration;
 use serial_test::serial;
-use tempfile::tempdir;
-use tokio::runtime::Builder as RtBuilder;
-use tokio::time::sleep;
 use tonic::Request;
-use tonic_health::pb::HealthCheckRequest;
-use tonic_health::pb::health_check_response::ServingStatus as PbServingStatus;
-use tonic_health::pb::health_client::HealthClient;
 
+use tests_integration::TempServer;
 use umadb_client::UmaDbClient;
 use umadb_dcb::{
     DcbAppendCondition, DcbEvent, DcbEventStoreAsync, DcbEventStoreSync, DcbQuery, DcbQueryItem,
 };
-use umadb_server::start_server;
 use uuid::Uuid;
-use tests_integration::allocate_grpc_addr;
 
-
-// Waits for the gRPC health service to report SERVING for the overall service and UmaDB service
-async fn wait_for_health(url: &str) {
-    // Retry connect to channel
-    let channel = loop {
-        match tonic::transport::Channel::from_shared(url.to_string())
-            .unwrap()
-            .connect()
-            .await
-        {
-            Ok(ch) => break ch,
-            Err(_) => {
-                sleep(Duration::from_millis(50)).await;
-            }
-        }
-    };
-
-    let mut client = HealthClient::new(channel);
-
-    // overall
-    for _ in 0..60u32 {
-        if let Ok(resp) = client
-            .check(HealthCheckRequest {
-                service: "".to_string(),
-            })
-            .await
-        {
-            if resp.into_inner().status == PbServingStatus::Serving as i32 {
-                break;
-            }
-        }
-        sleep(Duration::from_millis(50)).await;
-    }
-
-    // UmaDB named service
-    for _ in 0..60u32 {
-        if let Ok(resp) = client
-            .check(HealthCheckRequest {
-                service: "umadb.v1.DCB".to_string(),
-            })
-            .await
-        {
-            if resp.into_inner().status == PbServingStatus::Serving as i32 {
-                return;
-            }
-        }
-        sleep(Duration::from_millis(50)).await;
-    }
-    panic!("server did not become SERVING in time");
-}
-
-#[test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[serial]
-fn client_sync_covers_all_methods() {
-    // Arrange: start server on a free port
-    let temp_dir = tempdir().unwrap();
-    let db_path = temp_dir.path().to_path_buf();
-    let (addr, url) = allocate_grpc_addr();
+async fn client_sync_covers_all_methods() {
+    // 1. Start the server asynchronously
+    let server = TempServer::start_insecure().await;
 
-    let rt = RtBuilder::new_multi_thread().enable_all().build().unwrap();
-    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+    // We need to clone the url to move it into the blocking thread
+    let http_url = server.url.clone();
 
-    // Start server in background
-    let db_clone = db_path.clone();
-    let addr_clone = addr.clone();
-    rt.spawn(async move {
-        let _ = start_server(db_clone, &addr_clone, shutdown_rx).await;
-    });
+    // 2. Offload ALL synchronous client logic to a dedicated blocking thread
+    tokio::task::spawn_blocking(move || {
+        // Build client with small batch_size so we can test next_batch
+        let client = UmaDbClient::new(http_url)
+            .batch_size(2)
+            .connect()
+            .expect("connect sync client");
 
-    // Wait until health is serving on same port
-    rt.block_on(wait_for_health(&url));
+        // Head on empty store should be None
+        let empty_head = client.head().expect("head on empty");
+        assert!(empty_head.is_none());
 
-    // Build client using UmaDBClient builder (sync) and force small batch_size so we can test next_batch
-    let client = UmaDbClient::new(url.clone())
-        .batch_size(2)
-        .connect()
-        .expect("connect sync client");
+        // Prepare some events
+        let mk_event = |i: u8| {
+            DcbEvent::default()
+                .event_type("ExampleEvent")
+                .tags(["tagA", "tagB"])
+                .data(vec![i])
+                .uuid(Uuid::new_v4())
+        };
+        let e1 = mk_event(1);
+        let e2 = mk_event(2);
+        let e3 = mk_event(3);
 
-    // Head on empty store should be None
-    let empty_head = client.head().expect("head on empty");
-    assert!(empty_head.is_none());
+        // Append events unconditionally
+        let p1 = client.append(vec![e1.clone()], None, None).unwrap();
+        let p2 = client.append(vec![e2.clone()], None, None).unwrap();
+        let p3 = client.append(vec![e3.clone()], None, None).unwrap();
+        assert!(p1 < p2 && p2 < p3);
 
-    // Prepare some events
-    let mk_event = |i: u8| {
-        DcbEvent::default()
-            .event_type("ExampleEvent")
-            .tags(["tagA", "tagB"])
-            .data(vec![i])
-            .uuid(Uuid::new_v4())
-    };
-    let e1 = mk_event(1);
-    let e2 = mk_event(2);
-    let e3 = mk_event(3);
+        // Exercise: iterate over all events, then retrieve head()
+        let mut resp = client.read(None, None, false, None).expect("read all");
+        let mut positions = Vec::new();
+        while let Some(item) = resp.next() {
+            let ev = item.expect("stream item");
+            positions.push(ev.position);
+        }
+        assert_eq!(positions, vec![p1, p2, p3]);
+        let head_after_iter = resp.head().unwrap();
+        assert_eq!(head_after_iter, Some(p3));
 
-    // Append events unconditionally
-    let p1 = client.append(vec![e1.clone()], None, None).unwrap();
-    let p2 = client.append(vec![e2.clone()], None, None).unwrap();
-    let p3 = client.append(vec![e3.clone()], None, None).unwrap();
-    assert!(p1 < p2 && p2 < p3);
+        // Also check client.head()
+        let client_head = client.head().unwrap();
+        assert_eq!(client_head, Some(p3));
 
-    // Exercise: iterate over all events, then retrieve head()
-    let mut resp = client.read(None, None, false, None).expect("read all");
-    let mut positions = Vec::new();
-    while let Some(item) = resp.next() {
-        let ev = item.expect("stream item");
-        positions.push(ev.position);
-    }
-    assert_eq!(positions, vec![p1, p2, p3]);
-    let head_after_iter = resp.head().unwrap();
-    assert_eq!(head_after_iter, Some(p3));
+        // Exercise: collect_with_head via response
+        let mut resp2 = client
+            .read(None, None, false, None)
+            .expect("read for collect");
+        let (events, head2) = resp2.collect_with_head().unwrap();
+        assert_eq!(events.len(), 3);
+        assert_eq!(head2, Some(p3));
 
-    // Also check client.head()
-    let client_head = client.head().unwrap();
-    assert_eq!(client_head, Some(p3));
+        // Exercise: next_batch with a limit
+        let mut resp3 = client.read(None, None, false, None).expect("read batched");
+        let b1 = resp3.next_batch().unwrap();
+        assert_eq!(b1.len(), 2);
+        let b2 = resp3.next_batch().unwrap();
+        assert_eq!(b2.len(), 1);
 
-    // Exercise: collect_with_head via response
-    let mut resp2 = client
-        .read(None, None, false, None)
-        .expect("read for collect");
-    let (events, head2) = resp2.collect_with_head().unwrap();
-    assert_eq!(events.len(), 3);
-    assert_eq!(head2, Some(p3));
+        // Exercise: read_with_head helper with a boundary and after parameter
+        let boundary = DcbQuery::new().item(DcbQueryItem::new().types(["ExampleEvent"]).tags(["tagA"]));
+        let (vec_events, head3) = client
+            .read_with_head(Some(boundary.clone()), None, false, None)
+            .unwrap();
+        assert_eq!(vec_events.len(), 3);
+        assert_eq!(head3, Some(p3));
 
-    // Exercise: next_batch with a limit
-    let mut resp3 = client.read(None, None, false, None).expect("read batched");
-    let b1 = resp3.next_batch().unwrap();
-    assert_eq!(b1.len(), 2);
-    let b2 = resp3.next_batch().unwrap();
-    assert_eq!(b2.len(), 1);
+        // Now try conditional append using last-known head
+        let cond = DcbAppendCondition::new(boundary).after(head3);
+        let e4 = mk_event(4);
+        let p4 = client.append(vec![e4.clone()], Some(cond), None).unwrap();
+        assert!(p4 > p3);
+    })
+        .await // Wait for the blocking thread to finish
+        .unwrap(); // Bubble up any panics from assertions inside the blocking thread
 
-    // Exercise: read_with_head helper with a boundary and after parameter
-    let boundary = DcbQuery::new().item(DcbQueryItem::new().types(["ExampleEvent"]).tags(["tagA"]));
-    let (vec_events, head3) = client
-        .read_with_head(Some(boundary.clone()), None, false, None)
-        .unwrap();
-    assert_eq!(vec_events.len(), 3);
-    assert_eq!(head3, Some(p3));
-
-    // Now try conditional append using last-known head
-    let cond = DcbAppendCondition::new(boundary).after(head3);
-    let e4 = mk_event(4);
-    let p4 = client.append(vec![e4.clone()], Some(cond), None).unwrap();
-    assert!(p4 > p3);
-
-    // Shutdown server
-    let _ = shutdown_tx.send(());
+    // 3. Shutdown server gracefully
+    server.shutdown().await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[serial]
 async fn read_with_subscribe_true_returns_invalid_argument_error() {
-    // Arrange: start server on a free port
-    let temp_dir = tempdir().unwrap();
-    let db_path = temp_dir.path().to_path_buf();
-    let (addr, url) = allocate_grpc_addr();
-
-    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-
-    // Start server task
-    let db_clone = db_path.clone();
-    let addr_clone = addr.clone();
-    let server_task = tokio::spawn(async move {
-        let _ = start_server(db_clone, &addr_clone, shutdown_rx).await;
-    });
-
-    // Wait for health
-    wait_for_health(&url).await;
+    let server = TempServer::start_insecure().await;
 
     // Build basic gRPC client directly from generated proto client.
-    let mut client = umadb_proto::v1::dcb_client::DcbClient::connect(url.clone())
+    let mut client = umadb_proto::v1::dcb_client::DcbClient::connect(server.url.clone())
         .await
         .expect("connect grpc client");
 
@@ -207,8 +126,7 @@ async fn read_with_subscribe_true_returns_invalid_argument_error() {
     assert!(err.message().contains("subscribe"));
 
     // Shutdown server
-    let _ = shutdown_tx.send(());
-    let _ = server_task.await;
+    server.shutdown().await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -216,25 +134,10 @@ async fn read_with_subscribe_true_returns_invalid_argument_error() {
 async fn client_async_covers_all_methods() {
     use futures::StreamExt; // for next() on Stream
 
-    // Arrange: start server on a free port
-    let temp_dir = tempdir().unwrap();
-    let db_path = temp_dir.path().to_path_buf();
-    let (addr, url) = allocate_grpc_addr();
-
-    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-
-    // Start server task
-    let db_clone = db_path.clone();
-    let addr_clone = addr.clone();
-    let server_task = tokio::spawn(async move {
-        let _ = start_server(db_clone, &addr_clone, shutdown_rx).await;
-    });
-
-    // Wait for health
-    wait_for_health(&url).await;
+    let server = TempServer::start_insecure().await;
 
     // Build async client via UmaDBClient builder
-    let client = UmaDbClient::new(url.clone())
+    let client = server.client()
         .batch_size(2)
         .connect_async()
         .await
@@ -311,6 +214,5 @@ async fn client_async_covers_all_methods() {
     assert!(p4 > p3);
 
     // Cleanup
-    let _ = shutdown_tx.send(());
-    let _ = server_task.await;
+    server.shutdown().await;
 }

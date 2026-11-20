@@ -1,34 +1,20 @@
-use std::net::TcpListener;
-use tempfile::tempdir;
-use tokio::time::{Duration as TokioDuration, sleep};
+use serial_test::serial;
+use tests_integration::TempServer;
 use umadb_client::UmaDbClient;
 use umadb_dcb::{DcbEvent, DcbEventStoreAsync, DcbEventStoreSync};
-use umadb_server::start_server;
 
 // ----------------------
 // Async subscribe() tests
 // ----------------------
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[serial]
 async fn grpc_async_subscribe_catch_up_and_continue() {
-    // Arrange: start a gRPC server backed by a temporary directory
-    let temp_dir = tempfile::tempdir().unwrap();
-    let db_path = temp_dir.path().to_path_buf();
-    let addr = "127.0.0.1:50076"; // dedicated port for this test
-    let addr_http = format!("http://{}", addr);
-
-    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-    let server_task = tokio::spawn(async move {
-        let _ = start_server(db_path, &addr, shutdown_rx).await;
-    });
-
-    sleep(TokioDuration::from_millis(200)).await;
-
-    // Connect async client
-    let client = UmaDbClient::new(addr_http.clone())
+    let server = TempServer::start_insecure().await;
+    let client = server.client()
         .connect_async()
         .await
-        .expect("client connect");
+        .expect("connect async client");
 
     // Append initial events
     let initial_count = 30usize;
@@ -99,28 +85,17 @@ async fn grpc_async_subscribe_catch_up_and_continue() {
     }
 
     // Cleanup
-    let _ = shutdown_tx.send(());
-    let _ = server_task.await;
+    server.shutdown().await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[serial]
 async fn grpc_async_subscribe_with_after_position() {
-    // Arrange
-    let temp_dir = tempfile::tempdir().unwrap();
-    let db_path = temp_dir.path().to_path_buf();
-    let addr = "127.0.0.1:50077";
-    let addr_http = format!("http://{}", addr);
-
-    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-    let server_task = tokio::spawn(async move {
-        let _ = start_server(db_path, &addr, shutdown_rx).await;
-    });
-    sleep(TokioDuration::from_millis(200)).await;
-
-    let client = UmaDbClient::new(addr_http.clone())
+    let server = TempServer::start_insecure().await;
+    let client = server.client()
         .connect_async()
         .await
-        .expect("client connect");
+        .expect("connect async client");
 
     // Append A initial events
     let a = 20usize;
@@ -199,107 +174,75 @@ async fn grpc_async_subscribe_with_after_position() {
         }
     }
 
-    let _ = shutdown_tx.send(());
-    let _ = server_task.await;
+    server.shutdown().await;
 }
 
 // ----------------------
 // Sync subscribe() test
 // ----------------------
 
-#[test]
-fn grpc_sync_subscribe_catch_up_and_continue() {
-    // Pick a free port
-    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-    let addr = listener.local_addr().unwrap();
-    drop(listener);
-    let addr_noscheme = format!("{}", addr);
-    let addr_with_scheme = format!("http://{}", addr);
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[serial]
+async fn grpc_sync_subscribe_catch_up_and_continue() {
+    let server = TempServer::start_insecure().await;
+    let http_url = server.url.clone();
 
-    // Build a multi-threaded runtime for server
-    let rt = tokio::runtime::Builder::new_multi_thread()
-        .enable_all()
-        .build()
-        .unwrap();
+    tokio::task::spawn_blocking(move || {
+        // Build client with small batch_size so we can test next_batch
+        let client = UmaDbClient::new(http_url)
+            .connect()
+            .expect("connect sync client");
 
-    // Prepare shutdown channel for the server
-    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
 
-    // Temporary directory for the database server
-    let temp_dir = tempdir().unwrap();
+        // Append initial events via sync API
+        let initial_count = 20usize;
+        let initial_events: Vec<DcbEvent> = (0..initial_count as u64)
+            .map(|i| DcbEvent {
+                event_type: "SyncSubEvent".to_string(),
+                data: format!("init-{i}").into_bytes(),
+                tags: vec!["grpc-sync-sub".to_string()],
+                uuid: None,
+                metadata: Vec::new(),
+            })
+            .collect();
+        let _ = client.append(initial_events, None, None).unwrap();
 
-    // Start the server
-    let data_dir = temp_dir.path().to_path_buf();
-    rt.spawn(async move {
-        let _ = start_server(data_dir, &addr_noscheme, shutdown_rx).await;
-    });
+        // Subscribe explicitly
+        let mut resp = client.subscribe(None, None).expect("sync subscribe stream");
 
-    // Connect the sync client (retry until server is ready)
-    let client = {
-        use std::{thread, time::Duration};
-        let mut attempts = 0;
-        loop {
-            match UmaDbClient::new(addr_with_scheme.clone()).connect() {
-                Ok(c) => break c,
-                Err(_e) => {
-                    attempts += 1;
-                    if attempts >= 50 {
-                        panic!("failed to connect to grpc server after retries");
-                    }
-                    thread::sleep(Duration::from_millis(50));
-                }
-            }
+        // Catch up
+        let mut received = 0usize;
+        while received < initial_count {
+            let batch = resp.next_batch().expect("next_batch catching up");
+            // Since it's a live subscription, batches should be non-empty here until we reach the target
+            assert!(!batch.is_empty(), "empty batch while catching up");
+            received += batch.len();
         }
-    };
 
-    // Append initial events via sync API
-    let initial_count = 20usize;
-    let initial_events: Vec<DcbEvent> = (0..initial_count as u64)
-        .map(|i| DcbEvent {
-            event_type: "SyncSubEvent".to_string(),
-            data: format!("init-{i}").into_bytes(),
-            tags: vec!["grpc-sync-sub".to_string()],
-            uuid: None,
-            metadata: Vec::new(),
-        })
-        .collect();
-    let _ = client.append(initial_events, None, None).unwrap();
+        // Append more and ensure they arrive
+        let new_count = 11usize;
+        let new_events: Vec<DcbEvent> = (0..new_count as u64)
+            .map(|i| DcbEvent {
+                event_type: "SyncSubEvent2".to_string(),
+                data: format!("new-{i}").into_bytes(),
+                tags: vec!["grpc-sync-sub".to_string()],
+                uuid: None,
+                metadata: Vec::new(),
+            })
+            .collect();
+        let _ = client.append(new_events, None, None).unwrap();
 
-    // Subscribe explicitly
-    let mut resp = client.subscribe(None, None).expect("sync subscribe stream");
-
-    // Catch up
-    let mut received = 0usize;
-    while received < initial_count {
-        let batch = resp.next_batch().expect("next_batch catching up");
-        // Since it's a live subscription, batches should be non-empty here until we reach the target
-        assert!(!batch.is_empty(), "empty batch while catching up");
-        received += batch.len();
-    }
-
-    // Append more and ensure they arrive
-    let new_count = 11usize;
-    let new_events: Vec<DcbEvent> = (0..new_count as u64)
-        .map(|i| DcbEvent {
-            event_type: "SyncSubEvent2".to_string(),
-            data: format!("new-{i}").into_bytes(),
-            tags: vec!["grpc-sync-sub".to_string()],
-            uuid: None,
-            metadata: Vec::new(),
-        })
-        .collect();
-    let _ = client.append(new_events, None, None).unwrap();
-
-    let mut received_new = 0usize;
-    while received_new < new_count {
-        let batch = resp.next_batch().expect("next_batch for new events");
-        assert!(
-            !batch.is_empty(),
-            "empty batch before receiving all new events"
-        );
-        received_new += batch.len();
-    }
+        let mut received_new = 0usize;
+        while received_new < new_count {
+            let batch = resp.next_batch().expect("next_batch for new events");
+            assert!(
+                !batch.is_empty(),
+                "empty batch before receiving all new events"
+            );
+            received_new += batch.len();
+        }
+    }).await.unwrap();
 
     // Shutdown server
-    let _ = shutdown_tx.send(());
+    server.shutdown().await;
 }
