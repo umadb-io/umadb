@@ -49,6 +49,7 @@ UVX ?= uvx@$(UV_VERSION)
 .PHONY: test-umadb-python
 .PHONY: test-umadb-python-unittests
 .PHONY: test-umadb-python-examples-basic-usage
+.PHONY: test-umadb-python-examples-pytest-fixture-example
 .PHONY: python-stubs
 .PHONY: maturin-python-develop
 .PHONY: maturin-python-build
@@ -477,6 +478,7 @@ maturin-python-build-release:
 test-umadb-python:
 	$(MAKE) test-umadb-python-unittests
 	$(MAKE) test-umadb-python-examples-basic-usage
+	$(MAKE) test-umadb-python-examples-pytest-fixture-example
 
 test-umadb-python-examples-basic-usage:
 	$(MAKE) self-signed-cert
@@ -494,6 +496,9 @@ test-umadb-python-examples-basic-usage:
 	  $(UV) run python ./umadb-python/examples/basic_usage.py; \
 	  echo 'Python basic usage examples succeeded'; \
 	}
+
+test-umadb-python-examples-pytest-fixture-example:
+	$(UV) run python -m pytest -v ./umadb-python/examples/pytest_fixture_example.py
 
 test-umadb-python-unittests:
 	{ \
