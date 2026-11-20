@@ -46,3 +46,18 @@ jobs:
       run: make test-compare-actual-vs-approx-memory-per-page
     - name: Profile page weigher
       run: make bench-page-approx-deserialized-bytes
+
+  windows:
+    runs-on: windows-latest
+    steps:
+    - uses: actions/checkout@v6
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@stable
+    - name: Install Protoc
+      uses: arduino/setup-protoc@v3
+      with:
+        repo-token: ${{ secrets.GITHUB_TOKEN }}
+    - name: Build server
+      run: cargo build --bin umadb --release
+    - name: Test workspace
+      run: cargo test --workspace --exclude umadb-python --exclude umadb-benches --exclude umadb-tools

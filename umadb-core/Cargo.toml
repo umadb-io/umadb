@@ -16,17 +16,19 @@ rustc-hash = { workspace = true }
 crc32fast = "1"
 itertools = "0.15"
 uuid = { workspace = true }
-libc = { workspace = true }
 tokio = { workspace = true }
 memmap2 = "0.9"
 rand = "0.10"
 byteorder = "1"
 bitflags = "2"
-nix = { version = "0.31", features = ["fs"] }
 fs2 = "0.4"
 moka = { version = "0.12", features = ["sync"] }
 arc-swap = "1.9"
 parking_lot = { workspace = true }
+
+[target.'cfg(unix)'.dependencies]
+libc = { workspace = true }
+nix = { version = "0.31", features = ["fs"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 tokio-uring = "0.5.0"

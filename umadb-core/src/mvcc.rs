@@ -5242,10 +5242,13 @@ mod high_level_mvcc_tests {
 
     /// Helper: compute the mmap chunk size the same way `Pager::new` does.
     fn compute_chunk_size(page_size: usize) -> u64 {
+        #[cfg(unix)]
         let os_ps = unsafe {
             let sz = libc::sysconf(libc::_SC_PAGESIZE);
             if sz <= 0 { 4096usize } else { sz as usize }
         };
+        #[cfg(windows)]
+        let os_ps = 64 * 1024usize;
         let g = {
             let (mut a, mut b) = (os_ps, page_size);
             while b != 0 {

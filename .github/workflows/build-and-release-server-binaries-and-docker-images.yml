@@ -42,6 +42,10 @@ jobs:
             rust_target: aarch64-apple-darwin
             cpu_level: generic
             artifact_name: umadb-aarch64-apple-darwin
+          - os: windows-latest
+            rust_target: x86_64-pc-windows-msvc
+            cpu_level: generic
+            artifact_name: umadb-x86_64-pc-windows-msvc
 
     steps:
       - uses: actions/checkout@v6
@@ -57,18 +61,28 @@ jobs:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build binary
+        if: runner.os != 'Windows'
         run: make build-zig-umadb-${{ matrix.rust_target }} CPU_LEVEL=${{ matrix.cpu_level }}
 
+      - name: Build Windows binary
+        if: runner.os == 'Windows'
+        run: cargo build --bin umadb --release --target ${{ matrix.rust_target }}
+
       - name: Compress binary
+        if: runner.os != 'Windows'
         run: |
           cd target/${{ matrix.rust_target }}/release
           tar czf ../../../${{ matrix.artifact_name }}.tar.gz umadb
+
+      - name: Compress Windows binary
+        if: runner.os == 'Windows'
+        run: Compress-Archive -Path "target/${{ matrix.rust_target }}/release/umadb.exe" -DestinationPath "${{ matrix.artifact_name }}.zip"
 
       - name: Upload binary artifact
         uses: actions/upload-artifact@v6
         with:
           name: ${{ matrix.artifact_name }}
-          path: ${{ matrix.artifact_name }}.tar.gz
+          path: ${{ matrix.artifact_name }}.*
           if-no-files-found: ignore
 
   create-release:
@@ -96,7 +110,9 @@ jobs:
           name: Release ${{ github.event.inputs.tag || github.ref_name }}
           draft: false
           prerelease: false
-          files: artifacts/**/*.tar.gz
+          files: |
+            artifacts/**/*.tar.gz
+            artifacts/**/*.zip
 
   docker:
     name: Create Docker Images
