@@ -1,14 +1,12 @@
 use crate::common::PageID;
 use fs2::FileExt as Fs2FileExt;
 use memmap2::{Mmap, MmapOptions};
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 use nix::fcntl;
 use parking_lot::Mutex;
 use rustc_hash::FxHashMap;
-use std::convert::TryInto;
 use std::fs::{File, OpenOptions};
 use std::io;
-use std::os::fd::{AsRawFd, RawFd};
-use std::os::unix::fs::FileExt;
 use std::path::Path;
 use std::str::FromStr;
 use std::sync::{Arc, RwLock};
@@ -38,7 +36,6 @@ impl FromStr for ReadMethod {
 pub struct Pager {
     pub file: File,
     file_len: Mutex<u64>,
-    pub writer_raw_fd: RawFd,
     pub page_size: usize,
     pub is_file_new: bool,
     // Number of logical database pages contained in a single mmap window.
@@ -81,12 +78,10 @@ impl Pager {
             }
         };
 
-        let writer_raw_fd = file.as_raw_fd();
-
         // Acquire advisory file lock using fs2 on the actual database file
         if let Err(err) = Fs2FileExt::try_lock_exclusive(&file) {
             use std::io::ErrorKind;
-            if err.kind() == ErrorKind::WouldBlock {
+            if err.kind() == ErrorKind::WouldBlock || is_windows_lock_violation(&err) {
                 return Err(DcbError::InitializationError(format!(
                     "Database file {} is already locked (another process/container may be using it).",
                     path.display()
@@ -125,7 +120,6 @@ impl Pager {
         Ok(Self {
             file,
             file_len: Mutex::new(file_len),
-            writer_raw_fd,
             page_size,
             is_file_new,
             mmap_pages_per_map,
@@ -155,6 +149,12 @@ impl Pager {
                 sz as usize
             }
         }
+    }
+
+    #[cfg(windows)]
+    fn os_page_size() -> usize {
+        // Windows memory-map offsets must be aligned to allocation granularity.
+        64 * 1024
     }
 
     /// Verifies that the physical file length safely supports the logical database size
@@ -188,7 +188,7 @@ impl Pager {
     pub fn read_page_from_file(&self, page_id: PageID) -> io::Result<Vec<u8>> {
         let offset = page_id.0 * (self.page_size as u64);
         let mut page = vec![0u8; self.page_size];
-        let bytes_read = self.file.read_at(&mut page, offset)?;
+        let bytes_read = read_at(&self.file, &mut page, offset)?;
         if bytes_read < self.page_size {
             return Err(io::Error::new(
                 io::ErrorKind::UnexpectedEof,
@@ -332,8 +332,7 @@ impl Pager {
         self.ensure_required_len(required_len)?;
 
         // Write the page data
-        self.file
-            .write_all_at(page_data, page_id.0 * (self.page_size as u64))?;
+        write_all_at(&self.file, page_data, page_id.0 * (self.page_size as u64))?;
 
         Ok(())
     }
@@ -357,7 +356,7 @@ impl Pager {
 
         // Now issue disk write without holding the file_len lock
         let start_byte_offset = start_page_id.0 * (self.page_size as u64);
-        self.file.write_all_at(data, start_byte_offset)?;
+        write_all_at(&self.file, data, start_byte_offset)?;
 
         Ok(())
     }
@@ -484,6 +483,7 @@ impl Pager {
             }
 
             // Now extend file size (macOS requirement)
+            use std::os::fd::AsRawFd;
             let fd = file.as_raw_fd();
             unsafe {
                 if libc::ftruncate(fd, new_len_i64) != 0 {
@@ -513,13 +513,8 @@ impl Pager {
         }
 
         #[cfg(target_os = "macos")]
-        unsafe {
-            let result = libc::fsync(self.writer_raw_fd);
-            if result != 0 {
-                Err(io::Error::last_os_error())
-            } else {
-                Ok(())
-            }
+        {
+            self.file.sync_all()
         }
 
         #[cfg(target_os = "linux")]
@@ -530,7 +525,12 @@ impl Pager {
             self.file.sync_data()
         }
 
-        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+        #[cfg(target_os = "windows")]
+        {
+            self.file.sync_all()
+        }
+
+        #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
         {
             Err(io::Error::new(
                 io::ErrorKind::Other,
@@ -548,6 +548,56 @@ impl Pager {
     pub fn debug_pages_per_mmap(&self) -> usize {
         self.mmap_pages_per_map
     }
+}
+
+#[cfg(windows)]
+fn is_windows_lock_violation(err: &io::Error) -> bool {
+    // Windows reports ERROR_LOCK_VIOLATION (33) instead of ErrorKind::WouldBlock.
+    err.raw_os_error() == Some(33)
+}
+
+#[cfg(not(windows))]
+fn is_windows_lock_violation(_: &io::Error) -> bool {
+    false
+}
+
+#[cfg(unix)]
+fn read_at(file: &File, buf: &mut [u8], offset: u64) -> io::Result<usize> {
+    use std::os::unix::fs::FileExt;
+    file.read_at(buf, offset)
+}
+
+#[cfg(windows)]
+fn read_at(file: &File, buf: &mut [u8], offset: u64) -> io::Result<usize> {
+    use std::os::windows::fs::FileExt;
+    file.seek_read(buf, offset)
+}
+
+#[cfg(unix)]
+fn write_all_at(file: &File, buf: &[u8], offset: u64) -> io::Result<()> {
+    use std::os::unix::fs::FileExt;
+    file.write_all_at(buf, offset)
+}
+
+#[cfg(windows)]
+fn write_all_at(file: &File, buf: &[u8], offset: u64) -> io::Result<()> {
+    use std::os::windows::fs::FileExt;
+
+    let mut written = 0;
+    while written < buf.len() {
+        let write_offset = offset
+            .checked_add(written as u64)
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "write offset overflow"))?;
+        let count = file.seek_write(&buf[written..], write_offset)?;
+        if count == 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::WriteZero,
+                "failed to write the entire buffer",
+            ));
+        }
+        written += count;
+    }
+    Ok(())
 }
 
 // A zero-copy view over a page backed by a memory map. Holds an Arc to keep the mapping alive.

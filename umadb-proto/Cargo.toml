@@ -21,3 +21,6 @@ uuid = { workspace = true }
 tonic-prost-build = "0.14.5"
 #protobuf-src = "2.1.1"
 
+[target.'cfg(windows)'.build-dependencies]
+protoc-bin-vendored = "3"
+
