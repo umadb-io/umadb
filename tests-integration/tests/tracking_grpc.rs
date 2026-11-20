@@ -219,7 +219,7 @@ async fn grpc_append_with_tracking_only_no_events() {
     let mut response = client
         .read(Some(query), None, false, None)
         .await
-        .expect("appended events");
+        .expect("read events");
     let mut count = 0;
     let mut expected_position = 5;
     while let Some(result) = response.next().await {

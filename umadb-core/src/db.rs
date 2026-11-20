@@ -1356,7 +1356,7 @@ mod tests {
         };
         let mut response = uma
             .read(Some(query), None, false, None)
-            .expect("appended events");
+            .expect("read events");
         let mut count = 0;
         let mut expected_position = 5;
         while let Some(result) = response.next() {
