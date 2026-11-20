@@ -1,4 +1,3 @@
-use std::net::TcpListener;
 use std::time::Duration;
 use serial_test::serial;
 
