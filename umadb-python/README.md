@@ -80,6 +80,7 @@ Use the `Client` class as the main entry point for connecting to an UmaDB server
 class Client(
     url: str,
     ca_path: str | None = None,
+    tls_domain: str | None = None,
     api_key: str | None = None,
     batch_size: int | None = None,
 ):
@@ -88,11 +89,12 @@ class Client(
 
 ### Parameters
 
-| Name      | Type        | Description                                                                                                                                         |
-|-----------|-------------|-----------------------------------------------------------------------------------------------------------------------------------------------------|
-| `url`     | `str`       | Required connection string. If the argument starts with `https` or `grpcs`, a secure TLS channel is created; otherwise an insecure channel is used. |
-| `ca_path` | `str\|None` | Optional path to a PEM-encoded root/CA certificate for TLS connections (useful for self-signed servers).                                            |
-| `api_key` | `str\|None` | Optional API key used for authenticating with the server.                                                                                           |
+| Name         | Type        | Description                                                                                                                                         |
+|--------------|-------------|-----------------------------------------------------------------------------------------------------------------------------------------------------|
+| `url`        | `str`       | Required connection string. If the argument starts with `https` or `grpcs`, a secure TLS channel is created; otherwise an insecure channel is used. |
+| `ca_path`    | `str\|None` | Optional path to a PEM-encoded root/CA certificate for TLS connections (useful for self-signed servers).                                            |
+| `tls_domain` | `str\|None` | Optional override of the domain name used for TLS certificate verification and SNI.                                                                 |
+| `api_key`    | `str\|None` | Optional API key used for authenticating with the server.                                                                                           |
 | `batch_size` | `int\|None` | Optional hint for how many events to buffer per batch when reading. The server may cap this; a sensible default is used if unset..                  |
 
 ### Connection Examples
