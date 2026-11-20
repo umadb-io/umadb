@@ -552,8 +552,9 @@ impl Pager {
 
 #[cfg(windows)]
 fn is_windows_lock_violation(err: &io::Error) -> bool {
-    // Windows reports ERROR_LOCK_VIOLATION (33) instead of ErrorKind::WouldBlock.
-    err.raw_os_error() == Some(33)
+    let code = err.raw_os_error();
+    // 32 = ERROR_SHARING_VIOLATION, 33 = ERROR_LOCK_VIOLATION
+    code == Some(32) || code == Some(33)
 }
 
 #[cfg(not(windows))]
