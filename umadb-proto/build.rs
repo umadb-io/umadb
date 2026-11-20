@@ -1,4 +1,5 @@
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    #[allow(unused_mut)]
     let mut config = tonic_prost_build::Config::new();
 
     #[cfg(windows)]
