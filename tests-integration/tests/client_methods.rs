@@ -1,6 +1,5 @@
-use std::net::{Ipv4Addr, TcpListener};
 use std::time::Duration;
-
+use serial_test::serial;
 use tempfile::tempdir;
 use tokio::runtime::Builder as RtBuilder;
 use tokio::time::sleep;
@@ -15,14 +14,8 @@ use umadb_dcb::{
 };
 use umadb_server::start_server;
 use uuid::Uuid;
+use tests_integration::allocate_grpc_addr;
 
-// Helper to pick a free localhost port
-fn get_free_port() -> u16 {
-    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("bind :0");
-    let port = listener.local_addr().unwrap().port();
-    drop(listener);
-    port
-}
 
 // Waits for the gRPC health service to report SERVING for the overall service and UmaDB service
 async fn wait_for_health(url: &str) {
@@ -75,13 +68,12 @@ async fn wait_for_health(url: &str) {
 }
 
 #[test]
+#[serial]
 fn client_sync_covers_all_methods() {
     // Arrange: start server on a free port
     let temp_dir = tempdir().unwrap();
     let db_path = temp_dir.path().to_path_buf();
-    let port = get_free_port();
-    let addr = format!("127.0.0.1:{}", port);
-    let url = format!("http://{}", addr);
+    let (addr, url) = allocate_grpc_addr();
 
     let rt = RtBuilder::new_multi_thread().enable_all().build().unwrap();
     let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
@@ -173,13 +165,12 @@ fn client_sync_covers_all_methods() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[serial]
 async fn read_with_subscribe_true_returns_invalid_argument_error() {
     // Arrange: start server on a free port
     let temp_dir = tempdir().unwrap();
     let db_path = temp_dir.path().to_path_buf();
-    let port = get_free_port();
-    let addr = format!("127.0.0.1:{}", port);
-    let url = format!("http://{}", addr);
+    let (addr, url) = allocate_grpc_addr();
 
     let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
 
@@ -221,15 +212,14 @@ async fn read_with_subscribe_true_returns_invalid_argument_error() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[serial]
 async fn client_async_covers_all_methods() {
     use futures::StreamExt; // for next() on Stream
 
     // Arrange: start server on a free port
     let temp_dir = tempdir().unwrap();
     let db_path = temp_dir.path().to_path_buf();
-    let port = get_free_port();
-    let addr = format!("127.0.0.1:{}", port);
-    let url = format!("http://{}", addr);
+    let (addr, url) = allocate_grpc_addr();
 
     let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
 

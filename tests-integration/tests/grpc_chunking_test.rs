@@ -9,9 +9,8 @@
 /// 2. No individual batch contains more events than the requested batch size (the
 ///    server's own DB-read batching limit was respected within every chunk).
 /// 3. All appended events are eventually received (no data is lost).
-use std::net::{Ipv4Addr, TcpListener};
 use std::time::Duration;
-
+use serial_test::serial;
 use tempfile::tempdir;
 use tokio::time::sleep;
 
@@ -23,18 +22,11 @@ use umadb_client::UmaDbClient;
 use umadb_dcb::{DcbEvent, DcbEventStoreAsync};
 use umadb_server::start_server;
 use uuid::Uuid;
-
+use tests_integration::allocate_grpc_addr;
 // ---------------------------------------------------------------------------
 // Shared helpers (duplicated from next_batch_behaviour.rs to keep each file
 // self-contained, as is idiomatic for Rust integration-test files).
 // ---------------------------------------------------------------------------
-
-fn get_free_port() -> u16 {
-    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("bind :0");
-    let port = listener.local_addr().unwrap().port();
-    drop(listener);
-    port
-}
 
 async fn wait_for_health(url: &str) {
     let channel = loop {
@@ -98,15 +90,14 @@ fn large_event(payload_bytes: usize) -> DcbEvent {
 /// that no individual batch exceeds `batch_size` events, and that the total
 /// number of received events equals `event_count`.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[serial]
 async fn read_response_is_chunked_when_payload_exceeds_grpc_limit() {
     const EVENT_COUNT: usize = 4_000;
     const PAYLOAD_BYTES: usize = 10_240; // ~10 kB per event → ~40 MB total
     const BATCH_SIZE: u32 = 1_000; // ~10MB larger than grpc 4MB message limit, so force chunking
 
     let temp_dir = tempdir().unwrap();
-    let port = get_free_port();
-    let addr = format!("127.0.0.1:{}", port);
-    let url = format!("http://{}", addr);
+    let (addr, url) = allocate_grpc_addr();
     let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
 
     let server_task = tokio::spawn({
@@ -183,15 +174,14 @@ async fn read_response_is_chunked_when_payload_exceeds_grpc_limit() {
 /// and we use `next_batch_timeout` to drain the stream without waiting forever
 /// once we have received all expected events.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[serial]
 async fn subscribe_response_is_chunked_when_payload_exceeds_grpc_limit() {
     const EVENT_COUNT: usize = 4_000;
     const PAYLOAD_BYTES: usize = 10_240; // ~10 kB per event → ~40 MB total
     const BATCH_SIZE: u32 = 1_000; // ~10MB larger than grpc 4MB message limit, so force chunking
 
     let temp_dir = tempdir().unwrap();
-    let port = get_free_port();
-    let addr = format!("127.0.0.1:{}", port);
-    let url = format!("http://{}", addr);
+    let (addr, url) = allocate_grpc_addr();
     let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
 
     let server_task = tokio::spawn({

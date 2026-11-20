@@ -1,6 +1,5 @@
-use std::net::{Ipv4Addr, TcpListener};
 use std::time::Duration;
-
+use serial_test::serial;
 use tempfile::tempdir;
 use tokio::time::sleep;
 
@@ -8,24 +7,16 @@ use tokio::time::sleep;
 use tonic_health::pb::HealthCheckRequest;
 use tonic_health::pb::health_check_response::ServingStatus as PbServingStatus;
 use tonic_health::pb::health_client::HealthClient;
+use tests_integration::allocate_grpc_addr;
 use umadb_server::start_server;
 
-// Helper to pick a free localhost port
-fn get_free_port() -> u16 {
-    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("bind :0");
-    let port = listener.local_addr().unwrap().port();
-    drop(listener);
-    port
-}
-
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[serial]
 async fn grpc_health_check_serving() {
     // Arrange: temp DB and free port
     let temp_dir = tempdir().unwrap();
     let db_path = temp_dir.path().to_path_buf();
-    let port = get_free_port();
-    let addr = format!("127.0.0.1:{}", port);
-    let url = format!("http://{}", addr);
+    let (addr, url) = allocate_grpc_addr();
 
     // Start server
     let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
@@ -86,15 +77,14 @@ async fn grpc_health_check_serving() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[serial]
 async fn grpc_health_check_via_umadb_client() {
     use umadb_client::{ServingStatus, UmaDbClient};
 
     // Arrange: temp DB and free port
     let temp_dir = tempdir().unwrap();
     let db_path = temp_dir.path().to_path_buf();
-    let port = get_free_port();
-    let addr = format!("127.0.0.1:{}", port);
-    let url = format!("http://{}", addr);
+    let (addr, url) = allocate_grpc_addr();
 
     // Start server
     let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
@@ -149,12 +139,12 @@ async fn grpc_health_check_via_umadb_client() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[serial]
 async fn grpc_async_check_health_server_not_started() {
     use umadb_client::UmaDbClient;
 
     // Use a port where no server is listening
-    let port = get_free_port();
-    let url = format!("http://127.0.0.1:{}", port);
+    let (_, url) = allocate_grpc_addr();
 
     // connect will fail because no server is running
     let result = UmaDbClient::new(url).connect_async().await;
@@ -165,11 +155,11 @@ async fn grpc_async_check_health_server_not_started() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[serial]
 async fn grpc_async_watch_health_server_not_started() {
     use umadb_client::UmaDbClient;
 
-    let port = get_free_port();
-    let url = format!("http://127.0.0.1:{}", port);
+    let (_, url) = allocate_grpc_addr();
 
     let result = UmaDbClient::new(url).connect_async().await;
     assert!(
@@ -179,14 +169,13 @@ async fn grpc_async_watch_health_server_not_started() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[serial]
 async fn grpc_async_check_health_server_shutdown_before_client() {
     use umadb_client::{ServingStatus, UmaDbClient};
 
     let temp_dir = tempdir().unwrap();
     let db_path = temp_dir.path().to_path_buf();
-    let port = get_free_port();
-    let addr = format!("127.0.0.1:{}", port);
-    let url = format!("http://{}", addr);
+    let (addr, url) = allocate_grpc_addr();
 
     let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
     let db_path_clone = db_path.clone();
@@ -228,14 +217,13 @@ async fn grpc_async_check_health_server_shutdown_before_client() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[serial]
 async fn grpc_async_watch_health_server_shutdown_before_client() {
     use umadb_client::{ServingStatus, UmaDbClient};
 
     let temp_dir = tempdir().unwrap();
     let db_path = temp_dir.path().to_path_buf();
-    let port = get_free_port();
-    let addr = format!("127.0.0.1:{}", port);
-    let url = format!("http://{}", addr);
+    let (addr, url) = allocate_grpc_addr();
 
     let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
     let db_path_clone = db_path.clone();
@@ -301,11 +289,11 @@ async fn grpc_async_watch_health_server_shutdown_before_client() {
 }
 
 #[test]
+#[serial]
 fn grpc_sync_check_health_server_not_started() {
     use umadb_client::UmaDbClient;
 
-    let port = get_free_port();
-    let url = format!("http://127.0.0.1:{}", port);
+    let (_, url) = allocate_grpc_addr();
 
     let result = UmaDbClient::new(url).connect();
     assert!(
@@ -315,11 +303,11 @@ fn grpc_sync_check_health_server_not_started() {
 }
 
 #[test]
+#[serial]
 fn grpc_sync_watch_health_server_not_started() {
     use umadb_client::UmaDbClient;
 
-    let port = get_free_port();
-    let url = format!("http://127.0.0.1:{}", port);
+    let (_, url) = allocate_grpc_addr();
 
     let result = UmaDbClient::new(url).connect();
     assert!(
@@ -329,14 +317,13 @@ fn grpc_sync_watch_health_server_not_started() {
 }
 
 #[test]
+#[serial]
 fn grpc_sync_check_health_server_shutdown_before_client() {
     use umadb_client::{ServingStatus, UmaDbClient};
 
     let temp_dir = tempdir().unwrap();
     let db_path = temp_dir.path().to_path_buf();
-    let port = get_free_port();
-    let addr = format!("127.0.0.1:{}", port);
-    let url = format!("http://{}", addr);
+    let (addr, url) = allocate_grpc_addr();
 
     let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
     let db_path_clone = db_path.clone();
@@ -374,14 +361,13 @@ fn grpc_sync_check_health_server_shutdown_before_client() {
 }
 
 #[test]
+#[serial]
 fn grpc_sync_watch_health_server_shutdown_before_client() {
     use umadb_client::{ServingStatus, UmaDbClient};
 
     let temp_dir = tempdir().unwrap();
     let db_path = temp_dir.path().to_path_buf();
-    let port = get_free_port();
-    let addr = format!("127.0.0.1:{}", port);
-    let url = format!("http://{}", addr);
+    let (addr, url) = allocate_grpc_addr();
 
     let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
     let db_path_clone = db_path.clone();

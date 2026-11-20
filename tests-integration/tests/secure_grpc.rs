@@ -1,21 +1,14 @@
-use std::net::{Ipv4Addr, TcpListener};
 use std::time::Duration;
 
 use rcgen::generate_simple_self_signed;
+use serial_test::serial;
 use tempfile::tempdir;
 use tokio::time::sleep;
+use tests_integration::allocate_grpc_addr;
 use umadb_client::{AsyncUmaDbClient, ClientTlsOptions};
 use umadb_core::mvcc::StorageOptions;
 use umadb_dcb::{DcbEvent, DcbEventStoreAsync};
 use umadb_server::{ServerOptions, ServerTlsOptions, start_server_with_options};
-
-// Helper to pick a free localhost port
-fn get_free_port() -> u16 {
-    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("bind :0");
-    let port = listener.local_addr().unwrap().port();
-    drop(listener);
-    port
-}
 
 fn generate_self_signed_cert() -> (Vec<u8>, Vec<u8>) {
     let certified_key =
@@ -26,13 +19,13 @@ fn generate_self_signed_cert() -> (Vec<u8>, Vec<u8>) {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[serial]
 async fn secure_grpc_end_to_end_append_and_read() {
     // Arrange: temp DB and TLS materials
     let temp_dir = tempdir().unwrap();
     let db_path = temp_dir.path().to_path_buf();
-    let port = get_free_port();
-    let addr = format!("127.0.0.1:{}", port);
-    let url = format!("grpcs://localhost:{}", port);
+    let (addr, url) = allocate_grpc_addr();
+    let url = url.replace("http", "https");
 
     let (cert_pem, key_pem) = generate_self_signed_cert();
 

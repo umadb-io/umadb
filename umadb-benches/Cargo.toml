@@ -12,21 +12,22 @@ umadb-dcb = { path = "../umadb-dcb", version = "0.7.10"}
 umadb-core = { path = "../umadb-core", version = "0.7.10", features = ["test-utils"]}
 umadb-client = { path = "../umadb-client", version = "0.7.10"}
 umadb-server = { path = "../umadb-server", version = "0.7.10", features = ["test-utils"]}
-memory-stats = "1.2"
 futures = { workspace = true }
-sysinfo = "0.40"
 tempfile = { workspace = true }
 tokio = { workspace = true }
-criterion = { version = "0.8.2", features = ["html_reports", "csv_output"] }
-pprof = { version = "0.15.0", features = ["criterion", "flamegraph"] }
 uuid = { version = "1.23.0", features = ["v4"] }
 clap = { version = "4.6.0", features = ["derive"] }
-ahash = "0.8"
 rustc-hash = { workspace = true }
-dashmap = "6"
 parking_lot = { workspace = true }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+
+[dev-dependencies]
+criterion = { version = "0.8.2", features = ["html_reports", "csv_output"] }
+dashmap = "6"
+memory-stats = "1.2"
+pprof = { version = "0.15.0", features = ["criterion", "flamegraph"] }
+sysinfo = "0.40"
 
 [package.metadata.release]
 release = false

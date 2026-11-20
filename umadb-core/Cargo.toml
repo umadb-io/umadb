@@ -18,8 +18,6 @@ itertools = "0.15"
 uuid = { workspace = true }
 tokio = { workspace = true }
 memmap2 = "0.9"
-rand = "0.10"
-byteorder = "1"
 bitflags = "2"
 fs2 = "0.4"
 moka = { version = "0.12", features = ["sync"] }
@@ -38,6 +36,8 @@ futures = { workspace = true }
 tempfile = { workspace = true }
 serial_test = { workspace = true }
 umadb-core = { path = ".", features = ["test-utils"] }
+byteorder = "1"
+rand = "0.10"
 
 [features]
 test-utils = []

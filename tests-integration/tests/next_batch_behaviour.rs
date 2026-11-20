@@ -1,6 +1,5 @@
-use std::net::{Ipv4Addr, TcpListener};
 use std::time::Duration;
-
+use serial_test::serial;
 use tempfile::tempdir;
 use tokio::time::sleep;
 
@@ -12,14 +11,7 @@ use umadb_client::UmaDbClient;
 use umadb_dcb::{DcbEvent, DcbEventStoreAsync};
 use umadb_server::start_server;
 use uuid::Uuid;
-
-// Helper to pick a free localhost port
-fn get_free_port() -> u16 {
-    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("bind :0");
-    let port = listener.local_addr().unwrap().port();
-    drop(listener);
-    port
-}
+use tests_integration::allocate_grpc_addr;
 
 async fn wait_for_health(url: &str) {
     // Retry connect to channel
@@ -71,15 +63,14 @@ async fn wait_for_health(url: &str) {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[serial]
 async fn next_batch_returns_all_then_empty_when_unlimited_and_large_batch_size() {
     use futures::StreamExt;
 
     // Start server
     let temp_dir = tempdir().unwrap();
     let db_path = temp_dir.path().to_path_buf();
-    let port = get_free_port();
-    let addr = format!("127.0.0.1:{}", port);
-    let url = format!("http://{}", addr);
+    let (addr, url) = allocate_grpc_addr();
     let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
 
     let server_task = tokio::spawn({
