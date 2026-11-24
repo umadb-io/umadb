@@ -625,7 +625,58 @@ except IntegrityError as e:
 
 ## Testing
 
-The Python bindings can be tested by running a UmaDB server and executing Python code against it.
+The `umadb` package includes helpers for running isolated tests against a temporary UmaDB server. Each helper starts a fresh server on an ephemeral port using a temporary database directory and shuts it down automatically when the test finishes.
+
+### Using `pytest`
+
+When `umadb` is installed, its `pytest` plugin is discovered automatically—no imports or configuration required. Two fixtures are available:
+
+* **`umadb_client`** — yields a connected `Client` instance and closes it on teardown.
+* **`umadb_server_url`** — yields the server URI (e.g., `http://127.0.0.1:<port>`) if you want to construct your own `Client`.
+
+```python
+from umadb import Client, Event
+
+
+def test_append_and_read(umadb_client: Client) -> None:
+    event = Event(event_type="UserCreated", data=b"user data", tags=["user:123"])
+    position = umadb_client.append([event])
+    events = list(umadb_client.read())
+
+    assert len(events) == 1
+    assert events[0].position == position
+
+```
+
+*(To disable the auto-loaded plugin, run `pytest -p no:umadb`.)*
+
+### Using `unittest` (or plain Python)
+
+The `umadb.testing` module provides context managers with no `pytest` dependency:
+
+* **`umadb_test_client()`** — starts a temporary server and yields a connected `Client`.
+* **`umadb_server()`** — starts a temporary server and yields its connection URI.
+
+```python
+import unittest
+from umadb import Event
+from umadb.testing import umadb_test_client
+
+
+class TestUmaDb(unittest.TestCase):
+    def setUp(self) -> None:
+        self.client = self.enterContext(umadb_test_client())
+
+    def test_append_and_read(self) -> None:
+        event = Event(event_type="UserCreated", data=b"user data", tags=["user:123"])
+        position = self.client.append([event])
+        events = list(self.client.read())
+
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0].position, position)
+
+```
+
 
 ## License
 

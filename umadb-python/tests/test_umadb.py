@@ -1,16 +1,18 @@
 import datetime
 import os
 import signal
+import socket
+import subprocess
+import tempfile
 import threading
+import time
 import unittest
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-import time
-import socket
-import subprocess
-import tempfile
 from umadb import (
     AppendCondition,
     Client,
@@ -25,9 +27,13 @@ from umadb import (
     CancelledByUserError,
     ServingStatus,
 )
+from umadb.testing import umadb_test_client, umadb_server
 
 
 class TestUmaDbClient(unittest.TestCase):
+    def setUp(self) -> None:
+        self.client = self.enterContext(umadb_test_client())
+
     def _generate_tagged_event(self, tag: str) -> Event:
         return Event(
             uuid=uuid4(),
@@ -46,9 +52,13 @@ class TestUmaDbClient(unittest.TestCase):
         # "transport error".
         self.assertIn("tcp connect error", str(ctx.exception).lower())
 
+    def test_client_url_and_repr(self) -> None:
+        self.assertIsInstance(self.client.url, str)
+        self.assertIn("http://127.0.0.1", self.client.url)
+        self.assertIn(self.client.url, repr(self.client))
+
     def test_interrupt_stream_response_on_main_thread_next(self) -> None:
-        client = Client("http://127.0.0.1:50051")
-        subscription = client.subscribe(query=Query([QueryItem(tags=[str(uuid4())])]))
+        subscription = self.client.subscribe(query=Query([QueryItem(tags=[str(uuid4())])]))
 
         def send_sigint_after_one_second() -> None:
             time.sleep(1)
@@ -61,8 +71,7 @@ class TestUmaDbClient(unittest.TestCase):
             next(subscription)
 
     def test_interrupt_stream_response_on_main_thread_next_batch(self) -> None:
-        client = Client("http://127.0.0.1:50051")
-        subscription = client.subscribe(query=Query([QueryItem(tags=[str(uuid4())])]))
+        subscription = self.client.subscribe(query=Query([QueryItem(tags=[str(uuid4())])]))
 
         def send_sigint_after_one_second() -> None:
             time.sleep(1)
@@ -75,8 +84,7 @@ class TestUmaDbClient(unittest.TestCase):
             subscription.next_batch()
 
     def test_cancel_all_stream_responses_after_one_second_with_subscription_next_on_main_thread(self) -> None:
-        client = Client("http://127.0.0.1:50051")
-        subscription = client.subscribe(query=Query([QueryItem(tags=[str(uuid4())])]))
+        subscription = self.client.subscribe(query=Query([QueryItem(tags=[str(uuid4())])]))
 
         def cancel_all_after_one_second() -> None:
             time.sleep(1)
@@ -89,8 +97,7 @@ class TestUmaDbClient(unittest.TestCase):
             next(subscription)
 
     def test_cancel_all_stream_responses_after_one_second_with_subscription_next_on_daemon_thread(self) -> None:
-        client = Client("http://127.0.0.1:50051")
-        subscription1 = client.subscribe(query=Query([QueryItem(tags=[str(uuid4())])]))
+        subscription1 = self.client.subscribe(query=Query([QueryItem(tags=[str(uuid4())])]))
 
         subscription_thread_errors = []
 
@@ -99,7 +106,7 @@ class TestUmaDbClient(unittest.TestCase):
             cancel_all_stream_responses()
 
         def block_on_subscription() -> None:
-            subscription2 = client.subscribe(
+            subscription2 = self.client.subscribe(
                 query=Query([QueryItem(tags=[str(uuid4())])])
             )
             try:
@@ -123,8 +130,7 @@ class TestUmaDbClient(unittest.TestCase):
         self.assertIsInstance(subscription_thread_errors[0], CancelledByUserError)
 
     def test_cancel_subscription_after_one_second(self) -> None:
-        client = Client("http://127.0.0.1:50051")
-        subscription = client.subscribe(query=Query([QueryItem(tags=[str(uuid4())])]))
+        subscription = self.client.subscribe(query=Query([QueryItem(tags=[str(uuid4())])]))
 
         def cancel_after_one_second() -> None:
             time.sleep(1)
@@ -137,8 +143,7 @@ class TestUmaDbClient(unittest.TestCase):
             next(subscription)
 
     def test_sigint_handler_cancels_all_stream_responses_does_not_raise_keyboard_interrupt(self) -> None:
-        client = Client("http://127.0.0.1:50051")
-        subscription = client.subscribe(query=Query([QueryItem(tags=[str(uuid4())])]))
+        subscription = self.client.subscribe(query=Query([QueryItem(tags=[str(uuid4())])]))
 
         def sigint_handler(*args: Any) -> None:
             # print("Handling sigint")
@@ -162,8 +167,7 @@ class TestUmaDbClient(unittest.TestCase):
             signal.signal(signal.SIGINT, original_handler)
 
     def test_sigint_handler_cancels_all_stream_responses_does_raise_keyboard_interrupt(self) -> None:
-        client = Client("http://127.0.0.1:50051")
-        subscription = client.subscribe(query=Query([QueryItem(tags=[str(uuid4())])]))
+        subscription = self.client.subscribe(query=Query([QueryItem(tags=[str(uuid4())])]))
 
         def sigint_handler(*args: Any) -> None:
             # print("Handling sigint")
@@ -188,8 +192,6 @@ class TestUmaDbClient(unittest.TestCase):
             signal.signal(signal.SIGINT, original_handler)
 
     def test_default_python_sigint_handler_with_threaded_stream_responses(self) -> None:
-        client = Client("http://127.0.0.1:50051")
-
         def kill_after_one_second() -> None:
             time.sleep(1)
             os.kill(os.getpid(), signal.SIGINT)
@@ -197,7 +199,7 @@ class TestUmaDbClient(unittest.TestCase):
         subscription_errors = []
 
         def block_on_subscription() -> None:
-            subscription2 = client.subscribe(
+            subscription2 = self.client.subscribe(
                 query=Query([QueryItem(tags=[str(uuid4())])])
             )
             try:
@@ -227,7 +229,7 @@ class TestUmaDbClient(unittest.TestCase):
     def test_client_context_manager_auto_cancels_threaded_stream_response(self) -> None:
         subscription_errors = []
 
-        with Client("http://127.0.0.1:50051") as client:
+        with Client(self.client.url) as client:
 
             def block_on_subscription() -> None:
                 subscription = client.subscribe(
@@ -256,7 +258,7 @@ class TestUmaDbClient(unittest.TestCase):
             self.assertFalse(subscription_thread.is_alive())
 
     def test_client_context_manager_auto_stops_threaded_read_response_before_fetch_batch(self) -> None:
-        with Client("http://127.0.0.1:50051") as client:
+        with Client(self.client.url) as client:
 
             tag1 = self._generate_tag()
             client.append(
@@ -294,7 +296,7 @@ class TestUmaDbClient(unittest.TestCase):
             next(read_response)
 
     def test_client_context_manager_auto_stops_threaded_read_response_after_fetch_batch(self) -> None:
-        with Client("http://127.0.0.1:50051") as client:
+        with Client(self.client.url) as client:
 
             tag1 = self._generate_tag()
             client.append(
@@ -327,7 +329,7 @@ class TestUmaDbClient(unittest.TestCase):
             next(read_response)
 
     def test_client_del_auto_stops_threaded_stream_responses(self) -> None:
-        client = Client("http://127.0.0.1:50051")
+        client = Client(self.client.url)
 
         subscription_errors = []
 
@@ -361,8 +363,6 @@ class TestUmaDbClient(unittest.TestCase):
     # @skipIf("TEST_BENCHMARK_NUM_ITERS" not in os.environ, "Don't mess up the tags")
     def test_benchmark_dcb_append(self) -> None:
         # Just for comparison with Axon Server.
-        client = Client("http://127.0.0.1:50051")
-
         print()
         num_iters = int(os.environ.get("TEST_BENCHMARK_NUM_ITERS", 3))
         for i in range(num_iters):
@@ -370,7 +370,7 @@ class TestUmaDbClient(unittest.TestCase):
             num_per_iter = 1000
             for j in range(num_per_iter):
                 tag1 = self._generate_tag()
-                client.append(
+                self.client.append(
                     events=[self._generate_tagged_event(tag1)],
                     condition=AppendCondition(
                         fail_if_events_match=Query(
@@ -399,7 +399,8 @@ class TestBasicUsage(unittest.TestCase):
     """
 
     def setUp(self) -> None:
-        self.client = Client("http://127.0.0.1:50051")
+        self.client = self.enterContext(umadb_test_client())
+        # TODO: This 'run_tag' is not necessary when using unique client and server fixtures per test:
         # A tag unique to this test invocation, used to isolate the events this
         # test appends from anything else already present on the shared server.
         self.run_tag = "basic-usage:" + str(uuid4())
@@ -652,68 +653,43 @@ class TestBasicUsage(unittest.TestCase):
             self.client.append(events, tracking_info=tracking_info)
 
 
-def _get_free_port() -> int:
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.bind(("127.0.0.1", 0))
-        return int(s.getsockname()[1])
-
-
-def _start_server(port: int, db_path: str) -> subprocess.Popen[bytes]:
-    """Start a UmaDB server as a subprocess and wait until it is ready."""
-    repo_root = Path(__file__).resolve().parents[2]
-    umadb_bin = repo_root / "target" / "debug" / "umadb"
-
-    proc = subprocess.Popen(
-        [umadb_bin, "--db-path", db_path,
-         "--listen", f"127.0.0.1:{port}"],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-    )
-    # Wait for the server to accept connections.
-    for _ in range(80):  # up to ~4s
-        try:
-            with socket.create_connection(("127.0.0.1", port), timeout=0.5):
-                return proc
-        except OSError:
-            time.sleep(0.05)
-    proc.kill()
-    stdout, stderr = proc.communicate()
-
-
-    raise RuntimeError(f"server did not start in time: {stdout.decode()} {stderr.decode()}")
-
-
 class TestHealthCheckServerShutdown(unittest.TestCase):
     """Tests that verify health-check behaviour after the server is shut down."""
 
     def test_check_health_after_server_shutdown(self) -> None:
-        port = _get_free_port()
-        with tempfile.TemporaryDirectory() as tmp:
-            db_path = os.path.join(tmp, "test.db")
-            proc = _start_server(port, db_path)
-            try:
-                client = Client(f"http://127.0.0.1:{port}")
-                status = client.check_health()
-                self.assertEqual(status, ServingStatus.SERVING)
+        with umadb_server() as url:
+            client = Client(url)
+            self.assertEqual(client.check_health(), ServingStatus.SERVING)
 
-                # Shut down the server gracefully.
-                proc.send_signal(signal.SIGINT)
-                proc.wait(timeout=10)
+        # Exiting umadb_server() sends SIGINT and waits for shutdown.
+        with self.assertRaises(TransportError):
+            client.check_health()
 
-                # After shutdown, check_health should raise TransportError.
-                with self.assertRaises(TransportError):
-                    client.check_health()
-            finally:
-                if proc.poll() is None:
-                    proc.kill()
-                    proc.wait()
+    def test_watch_health_next_after_server_process_ended(self) -> None:
+        with umadb_server() as url:
+            client = Client(url)
+            watch = client.watch_health()
+            self.assertEqual(next(watch), ServingStatus.SERVING)
+
+        # After graceful shutdown, the stream yields NOT_SERVING then ends.
+        self.assertEqual(next(watch), ServingStatus.NOT_SERVING)
+        with self.assertRaises(StopIteration):
+            next(watch)
+
+    def test_watch_health_cancel(self) -> None:
+        with umadb_test_client() as client:
+            watch = client.watch_health()
+            self.assertEqual(next(watch), ServingStatus.SERVING)
+
+            watch.cancel()
+            with self.assertRaises(CancelledByUserError):
+                next(watch)
 
     def test_watch_health_next_after_server_sigint(self) -> None:
         port = _get_free_port()
         with tempfile.TemporaryDirectory() as tmp:
             db_path = os.path.join(tmp, "test.db")
-            proc = _start_server(port, db_path)
-            try:
+            with _start_server(port, db_path) as proc:
                 client = Client(f"http://127.0.0.1:{port}")
                 watch = client.watch_health()
 
@@ -729,93 +705,58 @@ class TestHealthCheckServerShutdown(unittest.TestCase):
                 with self.assertRaises(StopIteration):
                     next(watch)
 
-                # Now wait for the server to shutdown.
-                proc.wait(timeout=3)
-
-            finally:
-                if proc.poll() is None:
-                    proc.kill()
-                    proc.wait()
-
-    def test_watch_health_next_after_server_process_ended(self) -> None:
-        port = _get_free_port()
-        with tempfile.TemporaryDirectory() as tmp:
-            db_path = os.path.join(tmp, "test.db")
-            proc = _start_server(port, db_path)
-            try:
-                client = Client(f"http://127.0.0.1:{port}")
-                watch = client.watch_health()
-
-                self.assertEqual(next(watch), ServingStatus.SERVING)
-
-                # Interrupt the server.
-                proc.send_signal(signal.SIGINT)
-
-                # Now wait for the server to shutdown.
-                proc.wait(timeout=3)
-
-                # After shutdown, the watch stream should yield
-                # a "not serving" and then end (StopIteration).
-                self.assertEqual(next(watch), ServingStatus.NOT_SERVING)
-                with self.assertRaises(StopIteration):
-                    next(watch)
-
-            finally:
-                if proc.poll() is None:
-                    proc.kill()
-                    proc.wait()
-
     def test_watch_health_next_after_server_process_killed(self) -> None:
         port = _get_free_port()
         with tempfile.TemporaryDirectory() as tmp:
             db_path = os.path.join(tmp, "test.db")
-            proc = _start_server(port, db_path)
-            try:
+            with _start_server(port, db_path) as proc:
                 client = Client(f"http://127.0.0.1:{port}")
                 watch = client.watch_health()
 
                 self.assertEqual(next(watch), ServingStatus.SERVING)
 
-                # Kill the server.
                 proc.kill()
-
-                # Now wait for the server to shutdown.
-                proc.wait(timeout=3)
+                # proc.wait(timeout=3)
 
                 # After a hard kill the connection is severed abruptly,
                 # so the watch stream should raise TransportError.
                 with self.assertRaises(TransportError):
                     next(watch)
 
-            finally:
-                if proc.poll() is None:
-                    proc.kill()
-                    proc.wait()
-
-    def test_watch_health_cancel(self) -> None:
-        port = _get_free_port()
-        with tempfile.TemporaryDirectory() as tmp:
-            db_path = os.path.join(tmp, "test.db")
-            proc = _start_server(port, db_path)
-            try:
-                client = Client(f"http://127.0.0.1:{port}")
-                watch = client.watch_health()
-
-                self.assertEqual(next(watch), ServingStatus.SERVING)
-
-                watch.cancel()
-                with self.assertRaises(CancelledByUserError):
-                    next(watch)
-
-                # Interrupt the server.
-                proc.send_signal(signal.SIGINT)
-
-                # Now wait for the server to shutdown.
-                proc.wait(timeout=3)
+def _get_free_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind(("127.0.0.1", 0))
+        return int(s.getsockname()[1])
 
 
-            finally:
-                if proc.poll() is None:
-                    proc.kill()
-                    proc.wait()
+@contextmanager
+def _start_server(port: int, db_path: str) -> Iterator[subprocess.Popen[bytes]]:
+    """Start a UmaDB server as a subprocess and wait until it is ready."""
+    repo_root = Path(__file__).resolve().parents[2]
+    umadb_bin = repo_root / "target" / "debug" / "umadb"
+
+    with subprocess.Popen(
+            [umadb_bin, "--db-path", db_path, "--listen", f"127.0.0.1:{port}"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+    ) as proc:
+        try:
+            # Wait for the server to accept connections.
+            for _ in range(80):  # up to ~4s
+                try:
+                    with socket.create_connection(("127.0.0.1", port), timeout=0.5):
+                        break
+                except OSError:
+                    time.sleep(0.05)
+            else:
+                proc.kill()
+                stdout, stderr = proc.communicate()
+                raise RuntimeError(
+                    f"server did not start in time: {stdout.decode()} {stderr.decode()}"
+                )
+
+            yield proc
+        finally:
+            if proc.poll() is None:
+                proc.kill()
 

@@ -49,7 +49,7 @@ UVX ?= uvx@$(UV_VERSION)
 .PHONY: test-umadb-python
 .PHONY: test-umadb-python-unittests
 .PHONY: test-umadb-python-examples-basic-usage
-.PHONY: test-umadb-python-examples-pytest-fixture-example
+.PHONY: test-umadb-python-examples-pytest-fixtures
 .PHONY: python-stubs
 .PHONY: maturin-python-develop
 .PHONY: maturin-python-build
@@ -478,7 +478,7 @@ maturin-python-build-release:
 test-umadb-python:
 	$(MAKE) test-umadb-python-unittests
 	$(MAKE) test-umadb-python-examples-basic-usage
-	$(MAKE) test-umadb-python-examples-pytest-fixture-example
+	$(MAKE) test-umadb-python-examples-pytest-fixtures
 
 test-umadb-python-examples-basic-usage:
 	$(MAKE) self-signed-cert
@@ -497,20 +497,11 @@ test-umadb-python-examples-basic-usage:
 	  echo 'Python basic usage examples succeeded'; \
 	}
 
-test-umadb-python-examples-pytest-fixture-example:
-	$(UV) run python -m pytest -v ./umadb-python/examples/pytest_fixture_example.py
+test-umadb-python-examples-pytest-fixtures:
+	$(UV) run python -m pytest -v ./umadb-python/examples/pytest_fixtures.py
 
 test-umadb-python-unittests:
-	{ \
-	  set -e; \
-	  cargo build --bin umadb; \
-	  cargo run --bin umadb -- --db-path=./uma-tmp.db & \
-	  pid=$$!; \
-	  trap "echo 'Cleaning up…'; kill -SIGINT $$pid 2>/dev/null || true; rm -f ./uma-tmp.db" EXIT; \
-	  echo 'PID:' $$pid; \
-	  sleep 1; \
-	  $(UV) run python -m unittest discover -v ./umadb-python/tests; \
-	}
+	$(UV) run python -m unittest discover -v ./umadb-python/tests
 
 self-signed-cert:
 	openssl req \

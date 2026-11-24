@@ -35,6 +35,9 @@ Repository = "https://github.com/umadb-io/umadb"
 [project.scripts]
 umadb = "umadb.umadb_server_cli:main"
 
+[project.entry-points."pytest11"]
+umadb = "umadb.pytest_plugin"
+
 [tool.maturin]
 bindings = "pyo3"
 python-source = "python"
