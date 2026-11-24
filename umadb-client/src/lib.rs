@@ -1157,6 +1157,7 @@ async fn new_channel(
 
 // Async client implementation
 pub struct AsyncUmaDbClient {
+    url: String,
     client: umadb_proto::v1::dcb_client::DcbClient<Channel>,
     health_client: HealthClient<Channel>,
     batch_size: Option<u32>,
@@ -1215,6 +1216,12 @@ impl AsyncUmaDbClient {
                 }
             }
         }
+    }
+
+    pub async fn url(
+        &self,
+    ) -> String {
+        self.url.clone()
     }
 
     pub async fn subscribe(
@@ -1302,8 +1309,9 @@ impl AsyncUmaDbClient {
         api_key: Option<String>,
     ) -> DcbResult<Self> {
         let tls_enabled = url.starts_with("https://") || url.starts_with("grpcs://");
-        match new_channel(url, tls_options).await {
+        match new_channel(url.clone(), tls_options).await {
             Ok(channel) => Ok(Self {
+                url,
                 client: umadb_proto::v1::dcb_client::DcbClient::new(channel.clone()),
                 health_client: HealthClient::new(channel),
                 batch_size,
@@ -1464,6 +1472,12 @@ impl SyncUmaDbClient {
             _runtime: rt, // Keep runtime alive for the client lifetime
             handle,
         })
+    }
+
+    pub fn url(
+        &self,
+    ) -> String {
+        self.async_client.url.clone()
     }
 
     /// Subscribe to events starting from an optional position.

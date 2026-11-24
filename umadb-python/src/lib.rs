@@ -599,6 +599,12 @@ impl Client {
         })
     }
 
+    /// The server URL this client is connected to.
+    #[getter]
+    fn url(&self) -> String {
+        self.inner.url()
+    }
+
     /// Read events from the event store
     ///
     /// Args:
@@ -747,7 +753,7 @@ impl Client {
     }
 
     fn __repr__(&self) -> String {
-        "Client(connected)".to_string()
+        format!("Client(url='{}')", self.inner.url())
     }
 
     // --- CONTEXT MANAGER IMPLEMENTATION ---

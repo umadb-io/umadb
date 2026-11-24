@@ -46,6 +46,11 @@ class Client:
     r"""
     Python wrapper for the synchronous UmaDB client
     """
+    @property
+    def url(self) -> builtins.str:
+        r"""
+        The server URL this client is connected to.
+        """
     def __new__(cls, url: builtins.str, ca_path: typing.Optional[builtins.str] = None, tls_domain: typing.Optional[builtins.str] = None, batch_size: typing.Optional[builtins.int] = None, api_key: typing.Optional[builtins.str] = None) -> Client:
         r"""
         Create a new UmaDB client
