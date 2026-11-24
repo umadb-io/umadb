@@ -464,7 +464,7 @@ build-umadb-python: python-stubs maturin-python-develop
 
 python-stubs:
 	cargo run --bin stub_gen --no-default-features
-	$(UV) run mypy --strict ./umadb-python --exclude generate_stubs.py
+	$(UV) run mypy --strict ./umadb-python
 
 maturin-python-develop:
 	PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1 $(UV) run maturin develop --uv -m umadb-python/Cargo.toml

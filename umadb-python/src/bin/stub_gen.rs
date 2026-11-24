@@ -1,16 +1,25 @@
 use pyo3_stub_gen::Result;
+use std::fs;
+use std::path::PathBuf;
 
 fn main() -> Result<()> {
-    // `stub_info` is a function defined by `define_stub_info_gatherer!` macro.
     let stub = umadb::stub_info()?;
     stub.generate()?;
 
-    // Add import uuid to the generated file
-    let path = "umadb-python/python/umadb/__init__.pyi";
-    if let Ok(content) = std::fs::read_to_string(path) {
+    let pkg_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("python/umadb");
+    let generated_dir = pkg_dir.join("umadb");
+    let generated_file = generated_dir.join("__init__.pyi");
+    let target_file = pkg_dir.join("umadb.pyi");
+
+    if generated_file.exists() {
+        let mut content = fs::read_to_string(&generated_file)?;
         if !content.contains("import uuid as _uuid") {
-            std::fs::write(path, format!("import uuid as _uuid\n{}", content))?;
+            content = format!("import uuid as _uuid\n{content}");
         }
+        fs::write(&target_file, content)?;
+        fs::remove_file(&generated_file)?;
+        let _ = fs::remove_dir(&generated_dir);
     }
+
     Ok(())
 }

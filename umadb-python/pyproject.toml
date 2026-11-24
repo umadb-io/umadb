@@ -39,3 +39,4 @@ umadb = "umadb.umadb_server_cli:main"
 bindings = "pyo3"
 python-source = "python"
 exclude = ["python/**/__pycache__/*"]
+module-name = "umadb.umadb"

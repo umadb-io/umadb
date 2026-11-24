@@ -12,12 +12,12 @@ use umadb_dcb;
 use umadb_dcb::{DcbError, DcbEventStoreSync};
 use uuid::Uuid;
 
-create_exception!(umadb, IntegrityError, PyValueError);
-create_exception!(umadb, TransportError, PyRuntimeError);
-create_exception!(umadb, CorruptionError, PyRuntimeError);
-create_exception!(umadb, AuthenticationError, PyPermissionError);
-create_exception!(umadb, ServerStartError, PyRuntimeError);
-create_exception!(umadb, CancelledByUserError, PyException);
+create_exception!(umadb.umadb, IntegrityError, PyValueError);
+create_exception!(umadb.umadb, TransportError, PyRuntimeError);
+create_exception!(umadb.umadb, CorruptionError, PyRuntimeError);
+create_exception!(umadb.umadb, AuthenticationError, PyPermissionError);
+create_exception!(umadb.umadb, ServerStartError, PyRuntimeError);
+create_exception!(umadb.umadb, CancelledByUserError, PyException);
 
 /// Convert `umadb_dcb::DcbError` to Python exception
 fn dcb_error_to_py_err(err: DcbError) -> PyErr {
