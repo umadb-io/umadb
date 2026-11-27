@@ -1131,6 +1131,7 @@ fn new_endpoint(
     }
 
     let mut endpoint = Endpoint::from_shared(url_owned)?
+        .connect_timeout(Duration::from_secs(1))
         .tcp_nodelay(true)
         .http2_keep_alive_interval(Duration::from_secs(5))
         .keep_alive_timeout(Duration::from_secs(10))
@@ -1199,29 +1200,13 @@ impl AsyncUmaDbClient {
             ca_pem,
         });
 
-        use tokio::time::{Duration as TokioDuration, sleep};
-
-        let max_attempts = 20usize;
-        let mut attempts = 0usize;
-        loop {
-            match Self::connect_with_tls_options(
-                url.clone(),
-                client_tls_options.clone(),
-                batch_size,
-                api_key.clone(),
-            )
-            .await
-            {
-                Ok(client) => break Ok(client),
-                Err(err) => {
-                    attempts += 1;
-                    if attempts >= max_attempts {
-                        return Err(err);
-                    }
-                    sleep(TokioDuration::from_millis(100)).await;
-                }
-            }
-        }
+        Self::connect_with_tls_options(
+            url.clone(),
+            client_tls_options,
+            batch_size,
+            api_key,
+        )
+        .await
     }
 
     pub async fn url(
