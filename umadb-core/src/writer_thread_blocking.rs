@@ -1,7 +1,4 @@
-use crate::db::{
-    clone_dcb_error, is_integrity_error, is_invalid_argument_error, process_append_request,
-    shadow_for_batch_abort,
-};
+use crate::db::{clone_dcb_error, is_integrity_error, is_invalid_argument_error, process_append_request, shadow_for_batch_abort, UmaDb};
 use crate::mvcc::Mvcc;
 use crate::writer_thread_request::WriterThreadRequest;
 use std::sync::Arc;
@@ -165,12 +162,7 @@ pub fn writer_thread_blocking(
                             let _ = tx.send(res);
                         }
                         // After a successful batch commit, publish the updated head from writer.next_position.
-                        let last_committed = writer.next_position.0.saturating_sub(1);
-                        let new_head = if last_committed == 0 {
-                            None
-                        } else {
-                            Some(last_committed)
-                        };
+                        let new_head = UmaDb::head_from_next_position(writer.next_position);
                         let _ = head_watch_tx.send(new_head);
                     }
                     Err(e) => {

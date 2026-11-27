@@ -145,6 +145,40 @@ impl UmaDb {
         mvcc.commit(&mut writer)?;
         Ok(results)
     }
+
+    // TODO: Introduce and use Direction rather than `backwards: bool`:
+    // #[derive(Copy, Clone, PartialEq, Eq)]
+    // enum Direction {
+    //     Forwards,
+    //     Backwards,
+    // }
+    pub fn calc_read_response_head(start: Option<u64>, backwards: bool, limit: Option<u32>, last_committed_position: Option<u64>, last_event_position: Option<u64>) -> Option<u64> {
+        // Find a valid "after" position for append conditions.
+        match (backwards, start, limit) {
+            // Read everything: safe up to last committed position
+            (_, None, None) => last_committed_position,
+
+            // --- Forwards ---
+            // Missed the beginning, no safe cursor
+            (false, Some(2..), _) => None,
+            // Read with a limit: safe up to the last event read
+            (false, _, Some(_)) => last_event_position,
+            // Read everything: safe up to last committed position
+            (false, Some(0..2), None) => last_committed_position,
+
+            // --- Backwards ---
+            // Limited backwards read: doesn't reach the start, no safe cursor
+            (true, _, Some(_)) => None,
+            // Backwards before end: safe up to the `start` boundary
+            (true, Some(s), None) => last_committed_position.min(Some(s)),
+        }
+    }
+
+    pub fn head_from_next_position(next_position: Position) -> Option<u64> {
+        next_position.0
+            .checked_sub(1)
+            .filter(|&pos| pos > 0)
+    }
 }
 
 impl DcbEventStoreSync for UmaDb {
@@ -157,9 +191,6 @@ impl DcbEventStoreSync for UmaDb {
     ) -> DcbResult<Box<dyn DcbReadResponseSync + Send + 'static>> {
         let mvcc: &Mvcc = self.mvcc.as_ref();
         let reader = mvcc.reader()?;
-
-        // Compute last committed position for unlimited head
-        let last_committed_position = reader.next_position.0.saturating_sub(1);
 
         // Build query and after
         let q = query.unwrap_or(DcbQuery { items: vec![] });
@@ -179,20 +210,12 @@ impl DcbEventStoreSync for UmaDb {
             None,
         )?;
 
-        // Compute head according to semantics
-        let head = if limit.is_none() {
-            if last_committed_position == 0 {
-                None
-            } else {
-                Some(last_committed_position)
-            }
-        } else {
-            events.last().map(|e| e.position)
-        };
+        let db_head = Self::head_from_next_position(reader.next_position);
+        let read_response_head = Self::calc_read_response_head(start, backwards, limit, db_head, events.last().map(|e| e.position));
 
         Ok(Box::new(ReadResponse {
             events: VecDeque::from(events),
-            head,
+            head: read_response_head,
         }))
     }
 
@@ -200,8 +223,7 @@ impl DcbEventStoreSync for UmaDb {
         let db = &self.mvcc;
         let header_page = db.get_latest_header_page()?;
         let header = header_page.as_header_node()?;
-        let last = header.next_position.0.saturating_sub(1);
-        if last == 0 { Ok(None) } else { Ok(Some(last)) }
+        Ok(UmaDb::head_from_next_position(header.next_position))
     }
 
     fn get_tracking_info(&self, source: &str) -> DcbResult<Option<u64>> {

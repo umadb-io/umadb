@@ -21,6 +21,7 @@ use tonic::codegen::http;
 use tonic::server::NamedService;
 use tonic::transport::server::TcpIncoming;
 use prost::Message;
+use umadb_core::db::UmaDb;
 use umadb_proto::status_from_dcb_error;
 
 mod handler;
@@ -598,11 +599,7 @@ impl umadb_proto::v1::dcb_server::Dcb for UmaDbServer {
                                 // At least send an empty response to communicate head.
                                 let response = umadb_proto::v1::ReadResponse {
                                     events: vec![],
-                                    head: if limit.is_some() {
-                                        None
-                                    } else {
-                                        captured_db_head
-                                    },
+                                    head: UmaDb::calc_read_response_head(start, backwards, limit, captured_db_head, None)
                                 };
                                 let _ = tx.send(Ok(response)).await;
                             }
@@ -660,11 +657,7 @@ impl umadb_proto::v1::dcb_server::Dcb for UmaDbServer {
                             let chunk = sequenced_event_protos[chunk_start..].to_vec();
                             let response = umadb_proto::v1::ReadResponse {
                                 events: chunk,
-                                head: if limit.is_some() {
-                                    last_event_position
-                                } else {
-                                    captured_db_head
-                                },
+                                head: UmaDb::calc_read_response_head(start, backwards, limit, captured_db_head, last_event_position)
                             };
                             if tx.send(Ok(response)).await.is_err() {
                                 send_failed = true;

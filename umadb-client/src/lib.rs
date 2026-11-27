@@ -167,7 +167,7 @@ impl AsyncClientReadResponse {
             msg = self.stream.message() => {
                 match msg {
                     Ok(Some(resp)) => {
-                        self.last_head = Some(resp.head);
+                        self.update_last_head(resp.head);
                         self.buffer = convert_sequenced_events(resp.events)?;
                     }
                     Ok(None) => self.ended = true,
@@ -200,7 +200,7 @@ impl AsyncClientReadResponse {
             msg = self.stream.message() => {
                 match msg {
                     Ok(Some(resp)) => {
-                        self.last_head = Some(resp.head);
+                        self.update_last_head(resp.head);
                         self.buffer = convert_sequenced_events(resp.events)?;
                     }
                     Ok(None) => self.ended = true,
@@ -210,6 +210,13 @@ impl AsyncClientReadResponse {
         }
 
         Ok(())
+    }
+
+    fn update_last_head(&mut self, head: Option<u64>) {
+        // println!("Setting 'last_head' to {:?}", &resp.head);
+        if self.last_head.is_none() || self.last_head.unwrap().unwrap_or(0).lt(&head.unwrap_or(0)) {
+            self.last_head = Some(head);
+        }
     }
 }
 
@@ -310,8 +317,7 @@ impl Stream for AsyncClientReadResponse {
             // Poll the underlying tonic::Streaming
             return match ready!(Pin::new(&mut this.stream).poll_next(cx)) {
                 Some(Ok(resp)) => {
-                    this.last_head = Some(resp.head);
-
+                    this.update_last_head(resp.head);
                     this.buffer = match convert_sequenced_events(resp.events) {
                         Ok(buf) => buf,
                         Err(err) => return Poll::Ready(Some(Err(err))),

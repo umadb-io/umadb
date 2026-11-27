@@ -34,8 +34,7 @@ impl UmaDbServerRequestHandler {
         let init_head = {
             let header_page = mvcc.get_latest_header_page()?;
             let header = header_page.as_header_node()?;
-            let last = header.next_position.0.saturating_sub(1);
-            if last == 0 { None } else { Some(last) }
+            UmaDb::head_from_next_position(header.next_position)
         };
         let (head_watch_tx, _head_rx) = watch::channel::<Option<u64>>(init_head);
 
@@ -100,12 +99,6 @@ impl UmaDbServerRequestHandler {
         cancel: Option<Arc<std::sync::atomic::AtomicBool>>,
     ) -> DcbResult<(Vec<DcbSequencedEvent>, Option<u64>)> {
         let reader = self.mvcc.reader()?;
-        let db_head = if reader.next_position > Position(1) {
-            Some(reader.next_position.0.saturating_sub(1))
-        } else {
-            None
-        };
-
         let q = query.unwrap_or(DcbQuery { items: vec![] });
         let start_position = start.map(Position);
 
@@ -126,7 +119,7 @@ impl UmaDbServerRequestHandler {
             _ => DcbError::Corruption(format!("{e}")),
         })?;
 
-        Ok((events, db_head))
+        Ok((events, UmaDb::head_from_next_position(reader.next_position)))
     }
 
     pub fn head(&self) -> DcbResult<Option<u64>> {
@@ -137,8 +130,7 @@ impl UmaDbServerRequestHandler {
         let header = header_page
             .as_header_node()
             .map_err(|e| DcbError::Corruption(format!("{e}")))?;
-        let last = header.next_position.0.saturating_sub(1);
-        if last == 0 { Ok(None) } else { Ok(Some(last)) }
+        Ok(UmaDb::head_from_next_position(header.next_position))
     }
 
     pub async fn append(

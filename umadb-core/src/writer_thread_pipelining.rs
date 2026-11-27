@@ -1,8 +1,5 @@
 use crate::common::PageID;
-use crate::db::{
-    clone_dcb_error, is_integrity_error, is_invalid_argument_error, process_append_request,
-    shadow_for_batch_abort,
-};
+use crate::db::{clone_dcb_error, is_integrity_error, is_invalid_argument_error, process_append_request, shadow_for_batch_abort, UmaDb};
 use crate::io_shell::io_shell::IoJob;
 use crate::mvcc::{Mvcc, Writer, WriterSnapshot};
 use crate::page::Page;
@@ -264,12 +261,7 @@ pub fn writer_thread_pipelining(
                     // --- DISPATCH BATCH N+1 ---
                     match mvcc.prepare_commit(&mut active_writer, &snapshot) {
                         Ok((prepared_commit, new_wet_pages, wet_header)) => {
-                            let last_committed = active_writer.next_position.0.saturating_sub(1);
-                            let new_head = if last_committed == 0 {
-                                None
-                            } else {
-                                Some(last_committed)
-                            };
+                            let new_head = UmaDb::head_from_next_position(active_writer.next_position);
 
                             wet_pages = new_wet_pages.clone();
 
