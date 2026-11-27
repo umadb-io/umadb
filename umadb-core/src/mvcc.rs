@@ -534,7 +534,7 @@ impl Mvcc {
                     )));
                 };
             }
-            println!("UmaDB root pages found");
+            // println!("UmaDB root pages found");
             Ok(mvcc)
         }
     }
