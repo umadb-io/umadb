@@ -811,7 +811,6 @@ fn cancel_all_stream_responses() {
     umadb_client::cancel_all_stream_responses();
 }
 
-#[cfg(not(windows))]
 #[gen_stub_pyfunction]
 #[pyfunction]
 #[pyo3(signature = (args))]
@@ -827,17 +826,6 @@ fn run_server_from_args(py: Python<'_>, args: Vec<String>) -> PyResult<()> {
     });
 
     run_result.map_err(ServerStartError::new_err)
-}
-
-#[cfg(windows)]
-#[gen_stub_pyfunction]
-#[pyfunction]
-#[pyo3(signature = (args))]
-fn run_server_from_args(args: Vec<String>) -> PyResult<()> {
-    let _ = args;
-    Err(ServerStartError::new_err(
-        "Running the UmaDB server from the Python package is not supported on Windows.",
-    ))
 }
 
 // Define a function to gather stub information.

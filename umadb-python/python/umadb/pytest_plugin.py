@@ -1,16 +1,16 @@
 from collections.abc import Iterator
 import pytest
 from umadb import Client
-from umadb.testing import umadb_server
+import umadb.testing
 
 
 @pytest.fixture
 def umadb_server_url() -> Iterator[str]:
-    with umadb_server() as url:
+    with umadb.testing.umadb_server_url() as url:
         yield url
 
 
 @pytest.fixture
-def umadb_client(umadb_server_url: str) -> Iterator[Client]:
-    with Client(umadb_server_url) as client:
+def umadb_client() -> Iterator[Client]:
+    with umadb.testing.umadb_client() as client:
         yield client

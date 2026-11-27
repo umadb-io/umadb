@@ -36,11 +36,12 @@ jobs:
     
     - name: Install Rust
       uses: dtolnay/rust-toolchain@stable
-    
+
     - name: Install Protoc
       uses: arduino/setup-protoc@v3
       with:
         repo-token: ${{ secrets.GITHUB_TOKEN }}
+        version: '33.1'
 
     - name: Verify version in Cargo.toml
       run: |

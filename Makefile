@@ -51,6 +51,7 @@ UVX ?= uvx@$(UV_VERSION)
 .PHONY: test-umadb-python-examples-basic-usage
 .PHONY: test-umadb-python-examples-pytest-fixtures
 .PHONY: python-stubs
+.PHONY: lint-umadb-python
 .PHONY: maturin-python-develop
 .PHONY: maturin-python-build
 .PHONY: maturin-python-build-release
@@ -464,7 +465,12 @@ build-umadb-python: python-stubs maturin-python-develop
 
 python-stubs:
 	cargo run --bin stub_gen --no-default-features
-	$(UV) run mypy --strict ./umadb-python
+	$(MAKE) lint-umadb-python
+
+lint-umadb-python:
+	$(UV) run mypy --strict --platform linux ./umadb-python
+	$(UV) run mypy --strict --platform darwin ./umadb-python
+	$(UV) run mypy --strict --platform win32 ./umadb-python
 
 maturin-python-develop:
 	PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1 $(UV) run maturin develop --uv -m umadb-python/Cargo.toml

@@ -16,6 +16,7 @@ jobs:
       uses: arduino/setup-protoc@v3
       with:
         repo-token: ${{ secrets.GITHUB_TOKEN }}
+        version: '33.1'
     - uses: actions/setup-python@v6
       with:
         python-version: "3.11"
@@ -34,6 +35,7 @@ jobs:
       uses: arduino/setup-protoc@v3
       with:
         repo-token: ${{ secrets.GITHUB_TOKEN }}
+        version: '33.1'
     - uses: actions/setup-python@v6
       with:
         python-version: "3.11"

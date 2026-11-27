@@ -88,6 +88,27 @@ jobs:
                 print(f"Position {seq_event.position}: {seq_event.event.event_type}")
             END
 
+      - name: Test built wheel fixtures
+        uses: addnab/docker-run-action@v3
+        with:
+          image: quay.io/pypa/manylinux_2_34_${{ matrix.target == 'aarch64-unknown-linux-gnu' && 'aarch64' || 'x86_64' }}
+          options: |
+            -v ${{ github.workspace }}/dist:/dist
+            -v ${{ github.workspace }}/umadb-python/examples:/examples:ro
+            --platform ${{ matrix.target == 'aarch64-unknown-linux-gnu' && 'linux/arm64' || 'linux/amd64' }}
+          run: |
+            /opt/python/cp311-cp311/bin/python -m venv /tmp/venv-fixtures
+            source /tmp/venv-fixtures/bin/activate
+            
+            pip install pytest
+            pip install /dist/*.whl
+            
+            # Verify both CLI entry points (`umadb` script and `python -m umadb`)
+            which umadb
+            umadb --version
+            python -m umadb --version
+            pytest /examples/pytest_fixtures.py
+
       - name: Upload artifact
         uses: actions/upload-artifact@v6
         with:
@@ -105,8 +126,6 @@ jobs:
         platform:
           - runner: windows-latest
             target: x64
-          - runner: windows-latest
-            target: x86
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v6
@@ -118,6 +137,7 @@ jobs:
         uses: arduino/setup-protoc@v3
         with:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
+          version: '33.1'
 
       - name: Build wheels
         uses: PyO3/maturin-action@v1
@@ -126,9 +146,62 @@ jobs:
           args: --release --out dist --manifest-path umadb-python/Cargo.toml
 
       - name: Test built wheel
+        shell: bash
         run: |
+          python -m venv .venv
+          source .venv/Scripts/activate
           pip install umadb --no-index --find-links dist --force-reinstall
-          python -c "import umadb"
+          
+          # Verify `umadb` resolves to the virtual environment script
+          which umadb
+          
+          # Start the server in the background from the virtual environment
+          umadb &
+          SERVER_PID=$!
+          trap "kill $SERVER_PID 2>/dev/null || taskkill //F //PID $SERVER_PID 2>/dev/null || true" EXIT
+          
+          # Give it a few seconds to spin up and bind the port
+          sleep 3
+          
+          # Run the Python test against localhost
+          python - << 'END'
+          from umadb import Client, Event
+          
+          client = Client("http://127.0.0.1:50051")
+          
+          event = Event(
+              event_type="UserCreated",
+              data=b"user data",
+              tags=["user", "creation"],
+          )
+          position = client.append([event])
+          print(f"Event appended at position: {position}")
+          
+          events = client.read()
+          for seq_event in events:
+              print(f"Position {seq_event.position}: {seq_event.event.event_type}")
+          END
+
+      - name: Test built wheel fixtures
+        shell: bash
+        run: |
+          VENV_DIR="$RUNNER_TEMP/venv-fixtures"
+          python -m venv "$VENV_DIR"
+          source "$VENV_DIR/Scripts/activate"
+          
+          pip install pytest
+          pip install umadb --no-index --find-links dist --force-reinstall
+          
+          # Verify both CLI entry points (`umadb` script and `python -m umadb`)
+          which umadb
+          umadb --version
+          python -m umadb --version
+          
+          # Run pytest from an isolated temp directory so local repo files cannot shadow the wheel
+          SMOKE_DIR="$RUNNER_TEMP/wheel-smoke"
+          mkdir -p "$SMOKE_DIR"
+          cp umadb-python/examples/pytest_fixtures.py "$SMOKE_DIR/"
+          (cd "$SMOKE_DIR" && pytest -v pytest_fixtures.py)
 
       - name: Upload artifact
         uses: actions/upload-artifact@v6
@@ -159,6 +232,7 @@ jobs:
         uses: arduino/setup-protoc@v3
         with:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
+          version: '33.1'
 
       - name: Build wheels
         uses: PyO3/maturin-action@v1
@@ -196,6 +270,25 @@ jobs:
           for seq_event in events:
               print(f"Position {seq_event.position}: {seq_event.event.event_type}")
           END
+
+      - name: Test built wheel fixtures
+        run: |
+          VENV_DIR="$RUNNER_TEMP/venv-fixtures"
+          python -m venv "$VENV_DIR"
+          source "$VENV_DIR/bin/activate"
+          
+          pip install pytest
+          pip install umadb --no-index --find-links dist --force-reinstall
+          
+          # Verify both CLI entry points (`umadb` script and `python -m umadb`)
+          which umadb
+          umadb --version
+          python -m umadb --version
+          
+          # Run pytest from an isolated temp directory so local repo files cannot shadow the wheel
+          SMOKE_DIR="$(mktemp -d)"
+          cp umadb-python/examples/pytest_fixtures.py "$SMOKE_DIR/"
+          pytest -v "$SMOKE_DIR/pytest_fixtures.py"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v6

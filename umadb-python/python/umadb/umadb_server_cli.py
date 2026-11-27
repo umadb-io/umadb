@@ -1,19 +1,13 @@
 import sys
-import platform
 
 import umadb
 
 def main() -> None:
-    if platform.system() == "Windows":
-        raise SystemExit(
-            "The 'umadb' server script is not supported on Windows. "
-            "Please run the server on Linux or macOS."
-        )
-
     # sys.argv is a list where the first item is the executable name (e.g., 'umadb')
     # and the rest are the user's flags. Clap expects exactly this format.
+    args = ["umadb", *sys.argv[1:]]  # Normalize first element (avoid 'umadb.exe' on Windows)
     try:
-        umadb.run_server_from_args(sys.argv)
+        umadb.run_server_from_args(args)
     except umadb.ServerStartError as e:
         # Prints the exact error message from Rust to stderr and exits with code 1
         sys.exit(str(e))

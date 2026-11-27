@@ -654,18 +654,18 @@ def test_append_and_read(umadb_client: Client) -> None:
 
 The `umadb.testing` module provides context managers with no `pytest` dependency:
 
-* **`umadb_test_client()`** — starts a temporary server and yields a connected `Client`.
-* **`umadb_server()`** — starts a temporary server and yields its connection URI.
+* **`umadb_client()`** — starts a temporary server and yields a connected `Client`.
+* **`umadb_server_url()`** — starts a temporary server and yields its connection URI.
 
 ```python
 import unittest
 from umadb import Event
-from umadb.testing import umadb_test_client
+from umadb.testing import umadb_client
 
 
 class TestUmaDb(unittest.TestCase):
     def setUp(self) -> None:
-        self.client = self.enterContext(umadb_test_client())
+        self.client = self.enterContext(umadb_client())
 
     def test_append_and_read(self) -> None:
         event = Event(event_type="UserCreated", data=b"user data", tags=["user:123"])

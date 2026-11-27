@@ -25,6 +25,7 @@ jobs:
       uses: arduino/setup-protoc@v3
       with:
         repo-token: ${{ secrets.GITHUB_TOKEN }}
+        version: '33.1'
     - uses: actions/setup-python@v6
       with:
         python-version: ${{ matrix.python-version }}
@@ -57,6 +58,7 @@ jobs:
       uses: arduino/setup-protoc@v3
       with:
         repo-token: ${{ secrets.GITHUB_TOKEN }}
+        version: '33.1'
     - name: Build server
       run: cargo build --bin umadb --release
     - name: Test workspace

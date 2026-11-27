@@ -20,21 +20,25 @@ def _get_free_port() -> int:
         return cast(int, s.getsockname()[1])
 
 
-def _wait_for_port(host: str, port: int, process: subprocess.Popen[str], timeout: float = 5.0) -> None:
+def _wait_for_port(
+        host: str, port: int, process: subprocess.Popen[str], timeout: float = 10.0
+) -> None:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         if process.poll() is not None:
-            raise RuntimeError(f"UmaDB exited early with code {process.returncode}")
+            msg = f"UmaDB exited early with code {process.returncode}"
+            raise RuntimeError(msg)
         try:
             with socket.create_connection((host, port), timeout=0.1):
                 return
         except OSError:
             time.sleep(0.05)
-    raise TimeoutError(f"UmaDB did not start listening on {host}:{port} within {timeout}s")
+    msg = f"UmaDB did not start listening on {host}:{port} within {timeout}s"
+    raise TimeoutError(msg)
 
 
 @contextmanager
-def umadb_server() -> Iterator[str]:
+def umadb_server_url() -> Iterator[str]:
     """Start a temporary UmaDB server on an ephemeral port and yield its URI."""
     port = _get_free_port()
     listen_addr = f"127.0.0.1:{port}"
@@ -45,11 +49,16 @@ def umadb_server() -> Iterator[str]:
         log_path = Path(tmpdir) / "umadb.log"
 
         with log_path.open("w+") as log_file:
+            if sys.platform == "win32":
+                creationflags = subprocess.CREATE_NEW_PROCESS_GROUP
+            else:
+                creationflags = 0
+
             process = subprocess.Popen(
                 [
                     sys.executable,
-                    "-c",
-                    "from umadb.umadb_server_cli import main; main()",
+                    "-m",
+                    "umadb",
                     "--db-path",
                     str(db_path),
                     "--listen",
@@ -58,6 +67,7 @@ def umadb_server() -> Iterator[str]:
                 stdout=log_file,
                 stderr=subprocess.STDOUT,
                 text=True,
+                creationflags=creationflags,
             )
 
             try:
@@ -65,7 +75,10 @@ def umadb_server() -> Iterator[str]:
                 yield connection_uri
             finally:
                 if process.poll() is None:
-                    process.send_signal(signal.SIGINT)
+                    if sys.platform == "win32":
+                        process.terminate()
+                    else:
+                        process.send_signal(signal.SIGINT)
                     try:
                         process.wait(timeout=5)
                     except subprocess.TimeoutExpired:
@@ -74,7 +87,7 @@ def umadb_server() -> Iterator[str]:
 
 
 @contextmanager
-def umadb_test_client() -> Iterator[Client]:
+def umadb_client() -> Iterator[Client]:
     """Start a temporary UmaDB server and yield a connected Client."""
-    with umadb_server() as url, Client(url) as client:
+    with umadb_server_url() as url, Client(url) as client:
         yield client

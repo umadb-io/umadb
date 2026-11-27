@@ -27,12 +27,12 @@ from umadb import (
     CancelledByUserError,
     ServingStatus,
 )
-from umadb.testing import umadb_test_client, umadb_server
+from umadb.testing import umadb_client, umadb_server_url
 
 
 class TestUmaDbClient(unittest.TestCase):
     def setUp(self) -> None:
-        self.client = self.enterContext(umadb_test_client())
+        self.client = self.enterContext(umadb_client())
 
     def _generate_tagged_event(self, tag: str) -> Event:
         return Event(
@@ -399,7 +399,7 @@ class TestBasicUsage(unittest.TestCase):
     """
 
     def setUp(self) -> None:
-        self.client = self.enterContext(umadb_test_client())
+        self.client = self.enterContext(umadb_client())
         # TODO: This 'run_tag' is not necessary when using unique client and server fixtures per test:
         # A tag unique to this test invocation, used to isolate the events this
         # test appends from anything else already present on the shared server.
@@ -657,7 +657,7 @@ class TestHealthCheckServerShutdown(unittest.TestCase):
     """Tests that verify health-check behaviour after the server is shut down."""
 
     def test_check_health_after_server_shutdown(self) -> None:
-        with umadb_server() as url:
+        with umadb_server_url() as url:
             client = Client(url)
             self.assertEqual(client.check_health(), ServingStatus.SERVING)
 
@@ -666,7 +666,7 @@ class TestHealthCheckServerShutdown(unittest.TestCase):
             client.check_health()
 
     def test_watch_health_next_after_server_process_ended(self) -> None:
-        with umadb_server() as url:
+        with umadb_server_url() as url:
             client = Client(url)
             watch = client.watch_health()
             self.assertEqual(next(watch), ServingStatus.SERVING)
@@ -677,7 +677,7 @@ class TestHealthCheckServerShutdown(unittest.TestCase):
             next(watch)
 
     def test_watch_health_cancel(self) -> None:
-        with umadb_test_client() as client:
+        with umadb_client() as client:
             watch = client.watch_health()
             self.assertEqual(next(watch), ServingStatus.SERVING)
 
