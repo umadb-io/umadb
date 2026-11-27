@@ -63,3 +63,19 @@ jobs:
       run: cargo build --bin umadb --release
     - name: Test workspace
       run: cargo test --workspace --exclude umadb-python --exclude umadb-benches --exclude umadb-tools
+    - uses: actions/setup-python@v6
+      with:
+        python-version: "3.11"
+    - uses: astral-sh/setup-uv@v6
+      with:
+        version: "0.11.7"
+    - name: Build and test Python package
+      env:
+        PYO3_USE_ABI3_FORWARD_COMPATIBILITY: 1
+      run: |
+        uv sync
+        cargo run --bin stub_gen --no-default-features
+        uv run mypy --strict --platform win32 ./umadb-python
+        uv run maturin develop --uv -m umadb-python/Cargo.toml
+        uv run python -m unittest discover -v ./umadb-python/tests
+        uv run python -m pytest -v ./umadb-python/examples/pytest_fixtures.py
