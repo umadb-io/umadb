@@ -1065,6 +1065,7 @@ impl Writer {
     /// The current issue position.
     pub fn issue_position(&mut self) -> Position {
         let pos = self.next_position;
+        // TODO: Fix this to return an error rather than overflow.
         self.next_position = Position(self.next_position.0 + 1);
         pos
     }

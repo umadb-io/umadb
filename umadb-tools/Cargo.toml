@@ -16,6 +16,6 @@ name = "umadb-check"
 path = "src/bin/umadb-check.rs"
 
 [dependencies]
-umadb-core = { path = "../umadb-core", version = "0.7.11" }
-umadb-dcb = { path = "../umadb-dcb", version = "0.7.11" }
+umadb-core = { path = "../umadb-core", version = "0.7.12" }
+umadb-dcb = { path = "../umadb-dcb", version = "0.7.12" }
 rustc-hash = { workspace = true }
